@@ -339,12 +339,18 @@ def score_response(
         try:
             parsed = _load_json_exact(content)
             json_valid = True
-        except (json.JSONDecodeError, PayoffCalculatorError, ValueError):
+        except (
+            json.JSONDecodeError,
+            PayoffCalculatorError,
+            RecursionError,
+            ValueError,
+        ):
             pass
 
     root_fields_valid = type(parsed) is dict and set(parsed) == {"probe", "actions"}
     probe = parsed.get("probe") if type(parsed) is dict else None
     field_valid = bool(root_fields_valid and _probe_shape_valid(probe))
+    action_present = type(parsed) is dict and "actions" in parsed
     actions = parsed.get("actions") if type(parsed) is dict else None
     action_array_valid, action_scoreable = _action_state(actions, expected_horizon)
 
@@ -386,19 +392,83 @@ def score_response(
             action_scoreable,
         )
     )
+    assessment_status = {
+        "json": "passed" if json_valid else "failed",
+        "fields": (
+            "passed" if field_valid else "failed" if json_valid else "unassessed"
+        ),
+        "numeric_representation": (
+            "passed"
+            if numeric_representation_valid
+            else "failed"
+            if field_valid
+            else "unassessed"
+        ),
+        "numeric_values": (
+            "passed"
+            if numeric_values_parseable
+            else "failed"
+            if field_valid
+            else "unassessed"
+        ),
+        "probe_binding": (
+            "passed"
+            if probe_binding_valid
+            else "failed"
+            if field_valid
+            else "unassessed"
+        ),
+        "contributor_counts": (
+            "passed"
+            if contributor_counts_correct
+            else "failed"
+            if field_valid
+            else "unassessed"
+        ),
+        "arithmetic": (
+            "passed"
+            if exact_arithmetic
+            else "failed"
+            if numeric_values_parseable
+            else "unassessed"
+        ),
+        "action_array": (
+            "passed"
+            if action_array_valid
+            else "failed"
+            if json_valid and action_present
+            else "unassessed"
+        ),
+        "action_scoreability": (
+            "passed"
+            if action_scoreable
+            else "failed"
+            if action_array_valid
+            else "unassessed"
+        ),
+    }
     failure_codes: list[str] = []
-    checks = (
-        (json_valid, "json_invalid"),
-        (field_valid, "response_fields_invalid"),
-        (numeric_representation_valid, "numeric_representation_invalid"),
-        (numeric_values_parseable, "numeric_values_unparseable"),
-        (probe_binding_valid, "probe_binding_mismatch"),
-        (contributor_counts_correct, "contributor_counts_wrong"),
-        (exact_arithmetic, "arithmetic_wrong"),
-        (action_array_valid, "action_array_invalid"),
-        (action_scoreable, "action_horizon_mismatch"),
-    )
-    failure_codes.extend(code for passed, code in checks if not passed)
+    if not json_valid:
+        failure_codes.append("json_invalid")
+    else:
+        if not field_valid:
+            failure_codes.append("response_fields_invalid")
+        if field_valid:
+            if not numeric_representation_valid:
+                failure_codes.append("numeric_representation_invalid")
+            if not numeric_values_parseable:
+                failure_codes.append("numeric_values_unparseable")
+            if not probe_binding_valid:
+                failure_codes.append("probe_binding_mismatch")
+            if not contributor_counts_correct:
+                failure_codes.append("contributor_counts_wrong")
+            if numeric_values_parseable and not exact_arithmetic:
+                failure_codes.append("arithmetic_wrong")
+        if action_present:
+            if not action_array_valid:
+                failure_codes.append("action_array_invalid")
+            elif not action_scoreable:
+                failure_codes.append("action_horizon_mismatch")
 
     action_hash = None
     if action_scoreable:
@@ -418,6 +488,7 @@ def score_response(
         "action_array_valid": action_array_valid,
         "action_scoreable": action_scoreable,
         "strict_contract_valid": strict_contract_valid,
+        "assessment_status": assessment_status,
         "actions": actions if action_scoreable else None,
         "action_sha256": action_hash,
         "failure_codes": failure_codes,

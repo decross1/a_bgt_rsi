@@ -63,6 +63,12 @@ It reports these dimensions separately:
 - binary action-array validity; and
 - action scoreability at the declared horizon.
 
+Each dimension is marked `passed`, `failed`, or `unassessed`. Dependent
+diagnoses are emitted only when their prerequisites were measurable: invalid
+JSON cannot be called an arithmetic failure, an unparseable number cannot be
+called arithmetically wrong, and an invalid action array cannot be called a
+horizon mismatch. Deeply nested JSON is contained as a parse failure.
+
 The strict contract uses exact-number objects. The diagnostic arithmetic path
 also understands exact JSON integers/decimals and canonical rational strings,
 so representation failure can be distinguished from substantive arithmetic
