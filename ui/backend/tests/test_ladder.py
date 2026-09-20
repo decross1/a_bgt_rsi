@@ -94,6 +94,25 @@ def _write_ledger(tmp_path, lines: list[str]) -> None:
     )
 
 
+def _write_sources(
+    tmp_path,
+    iterations: list[dict],
+    *,
+    surfaced: list[dict] | None = None,
+    feedback: list[dict] | None = None,
+) -> None:
+    memory = tmp_path / "coord_memory"
+    memory.mkdir(parents=True, exist_ok=True)
+    for name, rows in (
+        ("loop_memory.jsonl", iterations),
+        ("surfaced_findings.jsonl", surfaced or []),
+        ("loop_feedback.jsonl", feedback or []),
+    ):
+        (memory / name).write_text(
+            "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+        )
+
+
 def test_ladder_absent_is_204(tmp_path):
     client = _client(tmp_path)
     resp = client.get("/api/ladder")
@@ -103,6 +122,31 @@ def test_ladder_absent_is_204(tmp_path):
 def test_ladder_reduces_fixture_ledger(tmp_path):
     client = _client(tmp_path)
     _write_ledger(tmp_path, [json.dumps(e) for e in FIXTURE_EVENTS])
+    _write_sources(
+        tmp_path,
+        [
+            {
+                "iteration_id": "iter-001",
+                "hypothesis": {"text": "A bounded legacy test claim."},
+                "retrieval": {"relevance": {"low_confidence": False}},
+                "novelty": {"class": "novel"},
+                "critique": {"verdict": "survives"},
+                "redteam": {"verdict": "proceed"},
+                "experiment_outcome": {
+                    "trials": 30, "summary": "Recorded synthetic result."
+                },
+                "cross_tier_comparison": {"replicated": True},
+            },
+            {"iteration_id": "iter-002", "hypothesis": {"text": "Killed."}},
+            {"iteration_id": "iter-003", "hypothesis": {"text": "Open."}},
+        ],
+        surfaced=[{
+            "finding_id": "sf-iter-001",
+            "source_iteration_id": "iter-001",
+            "promoted_at": "2026-08-02T00:00:00Z",
+            "adversarial": {"survived": True},
+        }],
+    )
     resp = client.get("/api/ladder")
     assert resp.status_code == 200
     body = resp.json()
@@ -114,6 +158,14 @@ def test_ladder_reduces_fixture_ledger(tmp_path):
     a = by_id["cl-a"]
     assert a["status"] == "surfaced"
     assert a["evidence_level"] == "L4"
+    assert a["historical_evidence_level"] == "L4"
+    assert a["evidence_qualification"] == {
+        "status": "rederived",
+        "exact_source_count": 1,
+        "unresolved_member_count": 0,
+        "provisional": [],
+    }
+    assert a["claim_source_status"] == "legacy_unverified"
     assert a["stem"] == "KV-cache eviction bias"  # elite claim's problem
     assert a["member_count"] == 1
     # The member IDS ship too (R1 peek panel links iteration-shaped members
@@ -143,6 +195,126 @@ def test_ladder_reduces_fixture_ledger(tmp_path):
     # next_owed names a test for every rung (the histogram's labels).
     assert sorted(body["next_owed"]) == ["L0", "L1", "L2", "L3", "L4", "L5"]
     assert all(isinstance(v, str) and v for v in body["next_owed"].values())
+
+
+def test_ladder_rederives_stale_v2_rung_and_labels_recovered_source(tmp_path):
+    client = _client(tmp_path)
+    events = [
+        {
+            "event_type": "cluster_created",
+            "ts": "2026-09-15T00:00:00Z",
+            "cluster_id": "cl-raw",
+            "member_id": "iter-raw",
+            "origin": "consolidation",
+        },
+        {
+            "event_type": "evidence_level_changed",
+            "ts": "2026-09-15T00:01:00Z",
+            "cluster_id": "cl-raw",
+            "evidence_level": "L1",
+        },
+    ]
+    _write_ledger(tmp_path, [json.dumps(event) for event in events])
+    _write_sources(tmp_path, [{
+        "iteration_id": "iter-raw",
+        "campaign": {"schema_version": "research-campaign-link/v1"},
+        "hypothesis": {
+            "text": '{"chosen":"Readable recovered claim","candidates":["x"]}',
+            "candidates_considered": 1,
+        },
+        "retrieval": {"relevance": {"low_confidence": False}},
+        "novelty": {"class": "novel"},
+        "critique": {"verdict": "survives"},
+    }])
+
+    body = client.get("/api/ladder").json()
+    cluster = body["clusters"][0]
+    assert cluster["historical_evidence_level"] == "L1"
+    assert cluster["evidence_level"] == "L0"
+    assert cluster["historical_status"] == "open"
+    assert cluster["status"] == "open"
+    assert cluster["claim_source_status"] == "v2_contract_invalid"
+    assert cluster["evidence_qualification"]["status"] == "rederived"
+    assert body["histogram"] == {
+        "L0": 1, "L1": 0, "L2": 0, "L3": 0, "L4": 0, "L5": 0,
+    }
+
+
+def test_ladder_duplicate_member_source_has_no_effective_rung(tmp_path):
+    client = _client(tmp_path)
+    _write_ledger(tmp_path, [json.dumps({
+        "event_type": "cluster_created",
+        "ts": "2026-09-15T00:00:00Z",
+        "cluster_id": "cl-ambiguous",
+        "member_id": "iter-duplicate",
+        "origin": "consolidation",
+        "evidence_level": "L1",
+    })])
+    _write_sources(tmp_path, [
+        {"iteration_id": "iter-duplicate", "hypothesis": {"text": "first"}},
+        {"iteration_id": "iter-duplicate", "hypothesis": {"text": "second"}},
+    ])
+
+    cluster = client.get("/api/ladder").json()["clusters"][0]
+    assert cluster["historical_evidence_level"] == "L1"
+    assert cluster["evidence_level"] is None
+    assert cluster["evidence_qualification"] == {
+        "status": "source_ambiguous",
+        "exact_source_count": 0,
+        "unresolved_member_count": 1,
+        "provisional": [],
+    }
+
+
+def test_ladder_duplicate_finding_cannot_donate_adversarial_rung(tmp_path):
+    client = _client(tmp_path)
+    _write_ledger(tmp_path, [
+        json.dumps({
+            "event_type": "cluster_created",
+            "ts": "2026-08-01T00:00:00Z",
+            "cluster_id": "cl-duplicate-finding",
+            "member_id": "iter-duplicate-finding",
+            "origin": "consolidation",
+        }),
+        json.dumps({
+            "event_type": "evidence_level_changed",
+            "ts": "2026-08-02T00:00:00Z",
+            "cluster_id": "cl-duplicate-finding",
+            "evidence_level": "L4",
+        }),
+    ])
+    _write_sources(
+        tmp_path,
+        [{
+            "iteration_id": "iter-duplicate-finding",
+            "hypothesis": {"text": "A bounded legacy test claim."},
+            "retrieval": {"relevance": {"low_confidence": False}},
+            "novelty": {"class": "novel"},
+            "critique": {"verdict": "survives"},
+            "redteam": {"verdict": "proceed"},
+            "experiment_outcome": {"trials": 30, "summary": "Recorded."},
+            "cross_tier_comparison": {"replicated": True},
+        }],
+        surfaced=[
+            {
+                "finding_id": "sf-iter-duplicate-finding",
+                "source_iteration_id": "iter-duplicate-finding",
+                "promoted_at": "2026-08-02T00:00:00Z",
+                "adversarial": {"survived": True},
+            },
+            {
+                "finding_id": "sf-iter-duplicate-finding",
+                "source_iteration_id": "iter-duplicate-finding",
+                "promoted_at": "2026-08-02T00:01:00Z",
+                "adversarial": {"survived": True},
+            },
+        ],
+    )
+
+    cluster = client.get("/api/ladder").json()["clusters"][0]
+    assert cluster["historical_evidence_level"] == "L4"
+    assert cluster["evidence_level"] == "L3"
+    assert cluster["status"] == "open"
 
 
 def test_ladder_malformed_ledger_is_honest_500(tmp_path):

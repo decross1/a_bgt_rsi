@@ -6,6 +6,7 @@ import EndpointMissingNote, {
   isVersionSkew404,
 } from "../components/EndpointMissingNote";
 import ResearchScopeBar from "../components/ResearchScopeBar";
+import { ResearchFocusCard, researchFocusFromStatus } from "../components/ResearchFocusCard";
 import MiniMarkdown from "../components/MiniMarkdown";
 import KillsByRung from "../components/ladder/KillsByRung";
 import LadderBoard from "../components/ladder/LadderBoard";
@@ -22,7 +23,8 @@ import Card from "../design/Card";
 import PeekPanel from "../design/PeekPanel";
 import { SkeletonCard } from "../design/Skeleton";
 import { registerPaletteActions } from "../design/CommandPalette";
-import { getIdeas, getIterationJourney } from "../api/http";
+import { getIdeas, getIterationJourney, getResearchOpsStatus } from "../api/http";
+import { usePolled } from "../api/pollhub";
 import { researchScopedHref, useResearchScope } from "../researchScope";
 import type { LadderCluster, LadderResponse } from "../types/schemas";
 import type { ResearchApplicationAgendaResponse } from "../types/researchApplicationAgenda";
@@ -80,6 +82,7 @@ interface Props {
   initialIdeas?: string | null;
   initialIterations?: unknown[];
   initialApplicationAgenda?: ResearchApplicationAgendaResponse | null;
+  initialResearchOps?: unknown;
   pollMs?: number;
 }
 
@@ -89,9 +92,16 @@ function receivedAt(at: number | null) {
   return at === null ? "not fetched in this view" : new Date(at).toISOString();
 }
 
-export default function Ladder({ initial, initialIdeas, initialIterations, initialApplicationAgenda, pollMs = 30_000 }: Props) {
+export default function Ladder({ initial, initialIdeas, initialIterations, initialApplicationAgenda, initialResearchOps, pollMs = 30_000 }: Props) {
   const researchScope = useResearchScope();
   const source = useLadderSources({ initial, initialIterations, pollMs, researchScope });
+  const researchOpsPoll = usePolled("research_ops_status", getResearchOpsStatus, {
+    enabled: initial === undefined,
+    intervalMs: 60_000,
+    initialDelayMs: 100,
+    deadlineMs: 20_000,
+  });
+  const researchOps = initial === undefined ? researchOpsPoll.data : initialResearchOps;
   const { data, loaded, error } = source;
   const skew = isVersionSkew404(error, LADDER_ENDPOINT);
   const [view, setView] = useState<View>("collections");
@@ -186,6 +196,13 @@ export default function Ladder({ initial, initialIdeas, initialIterations, initi
       </header>
 
       <ResearchScopeBar fetchMetadata={initial === undefined} />
+
+      {researchOps !== undefined && researchOps !== null && (
+        <ResearchFocusCard
+          focus={researchFocusFromStatus(researchOps)}
+          className="mb-5"
+        />
+      )}
 
       {error != null && (!skew || loaded) && (
         <div

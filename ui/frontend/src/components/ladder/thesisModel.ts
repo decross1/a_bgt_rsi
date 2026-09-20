@@ -548,6 +548,16 @@ export function buildThesisFamilies(
   for (const family of families) {
     family.records.sort(compareFamilyRecords);
     family.topicLabels.sort(compareText);
+    // A producer can put an entire paper prompt or abstract in seed.topic.
+    // Keep the exact topic as family identity/search evidence, but use the
+    // existing hypothesis-derived formatter for a scannable display title.
+    // Short, intentional topic labels remain unchanged.
+    if (!family.id.startsWith("collection:") && family.title.length > 120) {
+      family.title = collectionDisplayTitle(
+        family.records.flatMap((record) =>
+          record.iterations.map((iteration) => iteration.source)),
+      ) ?? family.title;
+    }
   }
   families.sort(
     (a, b) =>

@@ -178,13 +178,14 @@ def replenish(campaign: dict, loop_rows: list[dict], *,
             "topic_registration_sha256": topic["topic_registration_sha256"]}
 
 
-def campaign_test_debt(rows: list[dict]) -> list[dict]:
+def campaign_test_debt(rows: list[dict], *, repo_root: Path = REPO_ROOT) -> list[dict]:
     """Expose next-test debt without granting experiment execution authority."""
-    from workers.evidence_ladder import derive_level, next_test_owed
+    from orchestrator.experiment_admission import derive_verified_level
+    from workers.evidence_ladder import next_test_owed
 
     debt = []
     for row in rows:
-        level = derive_level(row, None, None, [])
+        level = derive_verified_level(row, None, None, [], repo_root=repo_root)
         if level.get("level") in {"L1", "L2"}:
             debt.append({"iteration_id": row.get("iteration_id"),
                          "evidence_level": level["level"],

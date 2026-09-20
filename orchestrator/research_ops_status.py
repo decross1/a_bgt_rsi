@@ -516,7 +516,7 @@ def project_research_ops_status(
                 [row for row, _sha_row in rows], campaign, identity_field="iteration_id")
             from orchestrator.daily_research import campaign_test_debt
 
-            out["campaign_test_debt"] = campaign_test_debt(members)
+            out["campaign_test_debt"] = campaign_test_debt(members, repo_root=repo_root)
             if members:
                 last = max(members, key=lambda item: _time(item.get("ended_at"))
                            or datetime.min.replace(tzinfo=timezone.utc))
@@ -559,6 +559,26 @@ def project_research_ops_status(
                     }
             except (CampaignError, OSError, ValueError):
                 pass
+    from orchestrator.research_focus import project_focus
+
+    focus = project_focus(repo_root)
+    out["research_focus"] = focus
+    if (focus["status"] == "selected"
+            and focus["intake_policy"] == "focus_before_new_topics"):
+        out["next_work"] = {
+            "code": "research_focus_next_gate", "focus_id": focus["focus_id"],
+            "source_iteration_id": focus["source_iteration_id"],
+            "source_campaign_id": focus["source_campaign_id"],
+            "source_campaign_manifest_sha256": focus["source_campaign_manifest_sha256"],
+            "campaign_id": (out["active_campaign"] or {}).get("campaign_id"),
+            "manifest_sha256": (out["active_campaign"] or {}).get("manifest_sha256"),
+            "target_campaign_id": None, "study_id": None,
+            "activation_required": False, "execution_authorized": False,
+            "next_action": focus["next_action"], "stage": focus["stage"],
+        }
+    elif focus["status"] == "source_invalid":
+        out["next_work"] = {"code": "research_focus_invalid",
+                            "activation_required": False, "execution_authorized": False}
     cycles, cycle_proof = _read_source(repo_root, "run_state/coordinator_cycles.jsonl",
                                         MAX_CYCLE_BYTES)
     if cycle_proof["available"] and cycles:
@@ -590,7 +610,8 @@ def project_research_ops_status(
             }
         elif (common_valid and row.get("status") in {
                 "no_valid_plan", "queue_starved", "daily_topic_limit", "topic_source_unavailable",
-                "topic_registration_refused", "activity_budget_limited"}
+                "topic_registration_refused", "activity_budget_limited",
+                "focus_pending", "focus_invalid"}
               and plan == [] and outcomes == []
               and row.get("promoted_finding_ids") == []
               and row.get("bubble_run_ids") == []

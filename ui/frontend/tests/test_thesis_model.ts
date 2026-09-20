@@ -275,6 +275,19 @@ describe("buildThesisFamilies", () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it("uses the existing hypothesis formatter when seed.topic is a source prompt", () => {
+    const sourcePrompt = "Review the following source paper and generate one falsifiable game-theory hypothesis. "
+      + "The paper studies strategic information disclosure, payoff arithmetic, public goods, and agent action competence under repeated interaction.";
+    const result = buildThesisFamilies(
+      [cluster("cl-verbose-topic", ["iter-verbose"])],
+      [iteration("iter-verbose", sourcePrompt, "Does explicit payoff disclosure improve public-goods action competence?")],
+    );
+    expect(result.families[0].title).toBe(
+      "Does explicit payoff disclosure improve public-goods action competence?",
+    );
+    expect(result.families[0].topicLabels).toEqual([sourcePrompt]);
+  });
 });
 
 describe("matchesFamilyRecord", () => {

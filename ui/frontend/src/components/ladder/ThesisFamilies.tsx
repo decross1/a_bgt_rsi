@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import RungGlyph, { rungIndex } from "../../design/RungGlyph";
 import { ageLabel } from "../../ladderBar";
 import type { LadderCluster } from "../../types/schemas";
+import { claimSourceQualification, rungQualification } from "./ladderModel";
 import { matchesFamilyRecord } from "./thesisModel";
 import type {
   FamilyRecord,
@@ -310,6 +311,10 @@ function RecordCard({
   const reopen = record.cluster.reopening_condition;
   const sourceCount = record.iterations.reduce((sum, iteration) => sum + iteration.paperText.length, 0);
   const evidenceCount = record.iterations.reduce((sum, iteration) => sum + iteration.evidenceText.length, 0);
+  const qualification = [
+    rungQualification(record.cluster),
+    claimSourceQualification(record.cluster),
+  ].filter(Boolean).join(" ");
 
   return (
     <article
@@ -380,6 +385,15 @@ function RecordCard({
       >
         {record.id}
       </p>
+
+      {qualification !== "" && (
+        <p
+          data-testid="thesis-source-qualification"
+          style={{ ...META, marginTop: "var(--space-2)", color: "var(--status-warn)" }}
+        >
+          {qualification}
+        </p>
+      )}
 
       {members.length > 0 && (
         <div style={{ marginTop: "var(--space-3)" }}>

@@ -240,6 +240,50 @@
         }
       }
     },
+    "experiment_admission_ref": {
+      "description": "Optional V2 reference to a content-addressed receipt produced by a registered study-specific verifier. The reference has no authority by itself; readers must replay the receipt and raw evidence before supplying an admission context to evidence derivation.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "receipt_path",
+        "receipt_sha256",
+        "verifier_id",
+        "campaign_id",
+        "campaign_manifest_sha256",
+        "topic_id",
+        "topic_sha256",
+        "study_id",
+        "outcome_sha256",
+        "unit_name",
+        "independent_units",
+        "evidence_kind"
+      ],
+      "properties": {
+        "schema_version": {"const": "experiment-admission-ref/v1"},
+        "receipt_path": {
+          "type": "string",
+          "pattern": "^run_state/experiment_admissions/[0-9a-f]{64}\\.json$"
+        },
+        "receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "verifier_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._/-]{2,127}$"
+        },
+        "campaign_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,79}$"},
+        "campaign_manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "topic_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,79}$"},
+        "topic_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "study_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,95}$"},
+        "outcome_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "unit_name": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,63}$"},
+        "independent_units": {"type": "integer", "minimum": 0},
+        "evidence_kind": {
+          "type": "string",
+          "enum": ["registered_synthetic_study", "diagnostic"]
+        }
+      }
+    },
     "redteam": {
       "description": "Loop v1 Step 2.5. Populated by the orchestrator-driven red-team retry sub-loop (workers/redteam_critic). Optional; absent for pre-v1 rows.",
       "type": "object",

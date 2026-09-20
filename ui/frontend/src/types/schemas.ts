@@ -611,7 +611,19 @@ export interface LadderCluster {
   cluster_id: string;
   stem?: string | null;
   status?: "open" | "surfaced" | "killed" | string | null;
+  historical_status?: "open" | "surfaced" | "killed" | string | null;
+  // Current rung is rederived from exact source rows. The append-only
+  // ledger's prior value remains available only as historical context.
   evidence_level?: string | null;
+  historical_evidence_level?: string | null;
+  evidence_qualification?: {
+    status?: "rederived" | "partial" | "source_unavailable" | "source_ambiguous" | string | null;
+    exact_source_count?: number | null;
+    unresolved_member_count?: number | null;
+    provisional?: string[] | null;
+    [key: string]: unknown;
+  } | null;
+  claim_source_status?: "v2_contract_valid" | "v2_contract_invalid" | "legacy_unverified" | "mixed" | "unavailable" | string | null;
   origin?: string | null;
   // Member ids — normally iteration_ids (niche-seeded clusters carry
   // "paper:<arxiv_id>"); member_count is their length.

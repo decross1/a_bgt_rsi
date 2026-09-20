@@ -76,6 +76,32 @@ def _root(tmp_path: Path, campaign_id: str = DEFAULT_CAMPAIGN_ID) -> Path:
     return root
 
 
+@pytest.mark.parametrize("policy", ["focus_before_new_topics", "observe_only"])
+def test_historical_focus_does_not_claim_source_campaign_is_active(tmp_path, monkeypatch, policy):
+    from orchestrator import research_focus
+
+    root = _root(tmp_path)
+    before = project_research_ops_status(repo_root=root, observed_at=NOW)
+    selected = {
+        "status": "selected", "intake_policy": policy, "focus_id": "selected-seed",
+        "source_iteration_id": "iter-old", "source_campaign_id": "historical-campaign",
+        "source_campaign_manifest_sha256": "f" * 64,
+        "next_action": "Refine the claim", "stage": "needs_clean_refinement",
+    }
+    monkeypatch.setattr(research_focus, "project_focus", lambda _root: selected)
+    result = project_research_ops_status(repo_root=root, observed_at=NOW)
+    if policy == "observe_only":
+        assert result["next_work"] == before["next_work"]
+    else:
+        work = result["next_work"]
+        assert work["code"] == "research_focus_next_gate"
+        assert work["campaign_id"] == DEFAULT_CAMPAIGN_ID
+        assert work["source_campaign_id"] == "historical-campaign"
+        assert work["target_campaign_id"] is None
+        assert work["study_id"] is None
+        assert work["execution_authorized"] is False
+
+
 def test_exact_link_consumes_topic_but_does_not_claim_global_no_work(tmp_path):
     root = _root(tmp_path)
     campaign = load_campaign(repo_root=root)
@@ -159,7 +185,8 @@ def test_cycle_progress_withholds_on_mismatched_receipt_binding(tmp_path):
     assert cycle["substantive_progress"] is None
 
 
-def test_newest_no_valid_plan_is_bound_terminal_with_zero_dispatch(tmp_path):
+@pytest.mark.parametrize("terminal", ["no_valid_plan", "focus_pending", "focus_invalid"])
+def test_newest_no_valid_plan_is_bound_terminal_with_zero_dispatch(tmp_path, terminal):
     root = _root(tmp_path)
     earlier = {
         "timestamp": "2026-09-15T15:00:00Z", "run_id": "coordinator_earlier",
@@ -170,7 +197,7 @@ def test_newest_no_valid_plan_is_bound_terminal_with_zero_dispatch(tmp_path):
     }
     latest = {
         "timestamp": "2026-09-15T16:00:00Z", "run_id": "coordinator_latest",
-        "status": "no_valid_plan", "plan": [], "outcomes": [],
+        "status": terminal, "plan": [], "outcomes": [],
         "promoted_finding_ids": [], "bubble_run_ids": [],
     }
     _rows(root, "run_state/coordinator_cycles.jsonl", [earlier, latest])
@@ -179,7 +206,7 @@ def test_newest_no_valid_plan_is_bound_terminal_with_zero_dispatch(tmp_path):
 
     assert cycle == {
         "run_id": "coordinator_latest", "at": "2026-09-15T16:00:00Z",
-        "terminal_status": "no_valid_plan", "action_code": "no_valid_plan",
+        "terminal_status": terminal, "action_code": terminal,
         "planned_count": 0, "dispatched_count": 0, "outcome_count": 0,
         "action_kind": None, "promoted_count": 0, "substantive_progress": False,
         "raw_row_sha256": hashlib.sha256(

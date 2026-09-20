@@ -1,8 +1,9 @@
 // ConcurrencyWarning — the cockpit's in-place warn/queue guard. The loop and
-// the cockpit reuse the SAME models (Gemma gen+defend; Qwen skeptic+attack),
-// so when an iteration is mid-flight on the shared models the cockpit shows an
-// explicit warning (the model-health panels already surface contention; this is
-// the in-cockpit reminder). This is a WARN/QUEUE tone, NOT a hard block —
+// the cockpit share the active local serving capacity, so when an iteration is
+// mid-flight the cockpit shows an explicit warning (the model-health panels
+// already surface contention; this is the in-cockpit reminder). The deployed
+// topology can change, so this fallback never names remembered model roles.
+// This is a WARN/QUEUE tone, NOT a hard block —
 // continuous-loop scheduling is a Phase-2 concern, not this build (2026-06-14
 // session note PART 2 "Concurrency warning").
 //
@@ -89,7 +90,7 @@ export default function ConcurrencyWarning({ status }: Props) {
       <span className="font-medium uppercase tracking-wide">⚠ models busy</span>
       {" — "}
       {safe.narration ??
-        "an iteration is mid-flight on the shared models (Gemma/Qwen); your turn may queue."}
+        "a lab run is using the active model service; your turn may queue."}
       {(safe.kind != null || safe.label != null) && (
         <span className="text-zinc-500">
           {" · "}
