@@ -305,6 +305,19 @@ describe("DailyOpsPanel", () => {
     expect(screen.queryByTestId("daily-decision-cards")).toBeNull();
   });
 
+  it("rejects future agenda dispositions that v2 cannot authorize", () => {
+    const candidate = v2Summary() as Record<string, unknown>;
+    candidate.agenda_decision = {
+      ...(candidate.agenda_decision as Record<string, unknown>),
+      disposition: "ready_for_review",
+    };
+    D.summary = candidate;
+    show();
+
+    expect(screen.getByTestId("daily-ops-fallback")).toHaveTextContent("Daily synthesis unavailable");
+    expect(screen.queryByText(/ready for review/i)).toBeNull();
+  });
+
   it("summarizes the day and shows the main thesis exactly once", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-20T12:00:00Z"));

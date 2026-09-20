@@ -91,11 +91,11 @@ function requestId(): string {
 }
 
 function badgeStyle(value: string): React.CSSProperties {
-  if (["done", "accepted_direction"].includes(value))
+  if (value === "done")
     return { color: "var(--status-ok)", background: "var(--status-ok-bg)" };
   if (["blocked", "amend_required", "review_required"].includes(value))
     return { color: "var(--status-warn)", background: "var(--status-warn-bg)" };
-  if (["authorized", "in_progress", "ready_for_review"].includes(value))
+  if (["authorized", "in_progress"].includes(value))
     return { color: "var(--status-info)", background: "var(--status-info-bg)" };
   return { color: "var(--status-idle)", background: "var(--status-idle-bg)" };
 }
