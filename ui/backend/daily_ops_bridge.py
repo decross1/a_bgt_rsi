@@ -45,6 +45,14 @@ def _read(path: Path, maximum: int = 65_536) -> dict:
     return value
 
 
+def _owner_message_scope_ready(status: dict | None) -> bool:
+    if status is None or not isinstance(status.get("capabilities"), dict):
+        return False
+    capabilities = status["capabilities"]
+    return (capabilities.get("review_scope") is True
+            and capabilities.get("durable_review_scope") is True)
+
+
 def _private_directory(path: Path) -> None:
     st = path.lstat()
     if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or st.st_mode & 0o077:
@@ -170,7 +178,7 @@ class DailyOpsBridge:
                     raise HTTPException(503, "Oracle mailbox is offline or its session changed")
                 if status.get("status") == "processing_blocked":
                     raise HTTPException(503, "Oracle needs context recovery before accepting another request")
-                if not isinstance(status.get("capabilities"), dict) or status["capabilities"].get("review_scope") is not True:
+                if not _owner_message_scope_ready(status):
                     raise HTTPException(503, "Oracle mailbox update must be loaded before owner messages can be sent")
                 count = status.get("pending_count")
                 if type(count) is not int or not 0 <= count < 32:
@@ -332,7 +340,7 @@ class DailyOpsBridge:
             agent_status = "offline" if status is None else (
                 "degraded" if status.get("status") == "processing_blocked" else
                 "working" if status.get("pending_count") or status.get("status") == "running" else "idle")
-            scope_ready = status is not None and isinstance(status.get("capabilities"), dict) and status["capabilities"].get("review_scope") is True
+            scope_ready = _owner_message_scope_ready(status)
             if status is not None and not scope_ready:
                 agent_status = "degraded"
             for key, label in (("oracle", "Oracle"), ("pi_client", "Pi client")):
