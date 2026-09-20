@@ -18,6 +18,7 @@ WORKER_SESSION = "4143e484-35c9-497c-8edf-c01be99fb373"
 NOW = datetime(2026, 9, 20, 9, 0, tzinfo=timezone.utc)
 REVISION = "b" * 64
 WORKER_DEADLINE = datetime(2026, 9, 20, 16, 2, 48, tzinfo=timezone.utc)
+WORKER_ADMISSION_DEADLINE = WORKER_DEADLINE - timedelta(seconds=630)
 
 
 def _iso(value=NOW):
@@ -152,6 +153,7 @@ def _bounded_relay(relay):
         "schema_version": "oracle-bounded-ui-worker-status/v1",
         "status": "ready", "admission_open": True, "updated_at": _iso(),
         "availability_ends_at": _iso(WORKER_DEADLINE),
+        "admission_ends_at": _iso(WORKER_ADMISSION_DEADLINE),
         "session_id": WORKER_SESSION, "mailbox_root": str(mailbox),
         "summary_read_path": str(relay["state"] / "daily_ops_summary.json"),
         "instance_kind": "bounded_ui_responder",
@@ -342,20 +344,100 @@ def test_bounded_publication_never_exposes_temp_files_in_scanned_queues(relay, m
     assert not list((bounded["mailbox"] / ".relay-staging").iterdir())
 
 
-def test_duplicate_retry_after_route_switch_stays_with_original_recipient(relay):
+def test_delivered_duplicate_after_route_switch_acknowledges_without_requeue(relay):
     bounded = _bounded_relay(relay)
     payload = _payload()
     bounded["bridge"].route(payload)
     worker_envelope = bounded["mailbox"] / "inbox" / ("owner-ui-" + payload["request_id"] + ".json")
     original = worker_envelope.read_bytes()
+    admission = bounded["mailbox"] / "admission" / worker_envelope.name
     worker_envelope.unlink()
+    _receipt(
+        bounded, payload["request_id"], status="completed",
+        text="The bounded response was delivered.", mailbox=bounded["mailbox"],
+        session_id=WORKER_SESSION,
+    )
 
     canonical = DailyOpsBridge(relay["state"], relay["config"])
     duplicate = canonical.route(payload)
 
     assert duplicate["duplicate"] is True
-    assert worker_envelope.read_bytes() == original
+    assert admission.read_bytes() == original
+    assert not worker_envelope.exists()
     assert not (relay["mailbox"] / "inbox" / worker_envelope.name).exists()
+
+
+def test_archive_only_duplicate_never_requeues_to_inactive_bounded_route(relay):
+    bounded = _bounded_relay(relay)
+    payload = _payload()
+    bounded["bridge"].route(payload)
+    name = "owner-ui-" + payload["request_id"] + ".json"
+    archive = bounded["mailbox"] / "admission" / name
+    original = archive.read_bytes()
+    (bounded["mailbox"] / "inbox" / name).unlink()
+
+    canonical = DailyOpsBridge(relay["state"], relay["config"])
+    with pytest.raises(HTTPException) as caught:
+        canonical.route(payload)
+
+    assert caught.value.status_code == 409
+    assert "inactive responder" in caught.value.detail
+    assert archive.read_bytes() == original
+    assert not (bounded["mailbox"] / "inbox" / name).exists()
+
+
+def test_duplicate_without_evidence_never_requeues_to_inactive_bounded_route(relay):
+    bounded = _bounded_relay(relay)
+    payload = _payload()
+    bounded["bridge"].route(payload)
+    name = "owner-ui-" + payload["request_id"] + ".json"
+    (bounded["mailbox"] / "inbox" / name).unlink()
+    (bounded["mailbox"] / "admission" / name).unlink()
+
+    canonical = DailyOpsBridge(relay["state"], relay["config"])
+    with pytest.raises(HTTPException) as caught:
+        canonical.route(payload)
+
+    assert caught.value.status_code == 409
+    assert "inactive responder" in caught.value.detail
+    assert not (bounded["mailbox"] / "inbox" / name).exists()
+    assert not (relay["mailbox"] / "inbox" / name).exists()
+
+
+def test_archive_only_duplicate_republishes_inbox_for_current_ready_responder(relay):
+    bounded = _bounded_relay(relay)
+    payload = _payload()
+    bounded["bridge"].route(payload)
+    name = "owner-ui-" + payload["request_id"] + ".json"
+    archive = bounded["mailbox"] / "admission" / name
+    original = archive.read_bytes()
+    original_stat = archive.stat()
+    (bounded["mailbox"] / "inbox" / name).unlink()
+
+    duplicate = bounded["bridge"].route(payload)
+
+    assert duplicate["duplicate"] is True
+    assert (bounded["mailbox"] / "inbox" / name).read_bytes() == original
+    assert archive.read_bytes() == original
+    assert (archive.stat().st_ino, archive.stat().st_mtime_ns) == (
+        original_stat.st_ino, original_stat.st_mtime_ns,
+    )
+
+
+def test_duplicate_without_evidence_requeues_only_to_current_ready_bounded_route(relay):
+    bounded = _bounded_relay(relay)
+    payload = _payload()
+    bounded["bridge"].route(payload)
+    name = "owner-ui-" + payload["request_id"] + ".json"
+    original = (bounded["mailbox"] / "admission" / name).read_bytes()
+    (bounded["mailbox"] / "inbox" / name).unlink()
+    (bounded["mailbox"] / "admission" / name).unlink()
+
+    duplicate = bounded["bridge"].route(payload)
+
+    assert duplicate["duplicate"] is True
+    assert (bounded["mailbox"] / "admission" / name).read_bytes() == original
+    assert (bounded["mailbox"] / "inbox" / name).read_bytes() == original
 
 
 def test_bounded_responder_rejects_stale_or_expired_controller_status(relay, monkeypatch):
@@ -373,6 +455,57 @@ def test_bounded_responder_rejects_stale_or_expired_controller_status(relay, mon
     with pytest.raises(HTTPException) as expired:
         bounded["bridge"].route(_payload())
     assert expired.value.status_code == 503
+
+
+def test_bounded_responder_closes_admission_without_full_turn_budget(relay, monkeypatch):
+    bounded = _bounded_relay(relay)
+    worker_status = json.loads(bounded["worker_status"].read_text())
+    worker_status["updated_at"] = _iso(WORKER_ADMISSION_DEADLINE)
+    _json(bounded["worker_status"], worker_status)
+    heartbeat = json.loads((bounded["mailbox"] / "latest-status.json").read_text())
+    heartbeat["updated_at"] = _iso(WORKER_ADMISSION_DEADLINE)
+    _json(bounded["mailbox"] / "latest-status.json", heartbeat)
+    monkeypatch.setattr(bridge_module, "_now", lambda: WORKER_ADMISSION_DEADLINE)
+
+    with pytest.raises(HTTPException) as caught:
+        bounded["bridge"].route(_payload())
+    assert caught.value.status_code == 503
+    assert "full turn and cleanup" in caught.value.detail
+    assert not list(bounded["bridge"].requests.glob("*.json"))
+
+    bounded["bridge"]._last_refresh = 0.0
+    bounded["bridge"].refresh()
+    summary = json.loads((bounded["state"] / "daily_ops_summary.json").read_text())
+    assert summary["agents"]["oracle"]["status"] == "waiting"
+    assert "no longer has time for a full owner turn" in summary["agents"]["oracle"]["detail"]
+
+
+def test_bounded_duplicate_replay_requires_full_turn_budget(relay, monkeypatch):
+    bounded = _bounded_relay(relay)
+    payload = _payload()
+    bounded["bridge"].route(payload)
+    name = "owner-ui-" + payload["request_id"] + ".json"
+    (bounded["mailbox"] / "inbox" / name).unlink()
+    (bounded["mailbox"] / "admission" / name).unlink()
+    record_path = bounded["bridge"].requests / (payload["request_id"] + ".json")
+    record = json.loads(record_path.read_text())
+    record["expires_at"] = _iso(WORKER_DEADLINE)
+    _json(record_path, record)
+
+    worker_status = json.loads(bounded["worker_status"].read_text())
+    worker_status["updated_at"] = _iso(WORKER_ADMISSION_DEADLINE)
+    _json(bounded["worker_status"], worker_status)
+    heartbeat = json.loads((bounded["mailbox"] / "latest-status.json").read_text())
+    heartbeat["updated_at"] = _iso(WORKER_ADMISSION_DEADLINE)
+    _json(bounded["mailbox"] / "latest-status.json", heartbeat)
+    monkeypatch.setattr(bridge_module, "_now", lambda: WORKER_ADMISSION_DEADLINE)
+
+    with pytest.raises(HTTPException) as caught:
+        bounded["bridge"].route(payload)
+    assert caught.value.status_code == 503
+    assert "full turn and cleanup" in caught.value.detail
+    assert not (bounded["mailbox"] / "admission" / name).exists()
+    assert not (bounded["mailbox"] / "inbox" / name).exists()
 
 
 def test_bounded_responder_closes_double_post_race_until_terminal_receipt(relay):
@@ -401,6 +534,25 @@ def test_bounded_responder_closes_double_post_race_until_terminal_receipt(relay)
              text="The first bounded turn is complete.",
              mailbox=bounded["mailbox"], session_id=WORKER_SESSION)
     assert bounded["bridge"].route(second)["status"] == "queued"
+
+
+def test_oversized_final_envelope_never_persists_or_poison_later_request(relay):
+    bounded = _bounded_relay(relay)
+    oversized = _payload(text="🧠" * 2_000)
+
+    with pytest.raises(HTTPException) as caught:
+        bounded["bridge"].route(oversized)
+    assert caught.value.status_code == 422
+    assert "envelope text byte limit" in caught.value.detail
+    name = "owner-ui-" + oversized["request_id"] + ".json"
+    assert not (bounded["bridge"].requests / (oversized["request_id"] + ".json")).exists()
+    assert not (bounded["mailbox"] / "admission" / name).exists()
+    assert not (bounded["mailbox"] / "inbox" / name).exists()
+
+    valid = _payload(text="\\" * 4_096)
+    receipt = bounded["bridge"].route(valid)
+    assert receipt["status"] == "queued"
+    assert (bounded["bridge"].requests / (valid["request_id"] + ".json")).exists()
 
 
 @pytest.mark.parametrize("capabilities", [
