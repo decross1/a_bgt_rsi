@@ -1,0 +1,149 @@
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const D = vi.hoisted(() => ({
+  summary: {} as unknown,
+  messages: {} as unknown,
+  messageError: null as unknown,
+  post: vi.fn(),
+}));
+
+vi.mock("../src/api/dailyOps", async importOriginal => ({
+  ...await importOriginal<typeof import("../src/api/dailyOps")>(),
+  getDailyOpsSummary: vi.fn(),
+  getDailyOpsMessages: vi.fn(),
+  postDailyOpsMessage: D.post,
+}));
+
+vi.mock("../src/api/pollhub", () => ({
+  usePolled: (key: string) => ({
+    data: key === "daily_ops_summary" ? D.summary : D.messages,
+    error: key === "daily_ops_summary" ? null : D.messageError,
+    failing: false,
+    asOf: Date.now(),
+  }),
+  refreshPoll: vi.fn(),
+}));
+
+import DailyOpsPanel from "../src/components/DailyOpsPanel";
+
+const now = "2026-09-20T08:00:00Z";
+
+function summary(overrides: Record<string, unknown> = {}) {
+  return {
+    schema_version: "daily-ops-summary/v1",
+    available: true,
+    generated_at: now,
+    source_sha256: "a".repeat(64),
+    current_plan_revision: "plan-revision-20260920-0800",
+    goals: [{ id: "goal-1", title: "Close the instrument gap", detail: "Freeze the corrected contract.", source: "focus", observed_at: now, status: "in_progress", owner: "oracle" }],
+    accomplishments: [{ id: "done-1", title: "Rebuilt Oracle recall", detail: "Targeted retrieval works again.", source: "receipt", observed_at: now, status: "complete" }],
+    improvements: [{ id: "improvement-1", title: "Bounded daily brief", detail: "Reduced startup context.", source: "receipt", observed_at: now, status: "verified" }],
+    research_focus: {
+      focus_id: "focus-1", title: "Does payoff assistance improve strategic planning?",
+      status: "blocked", stage: "instrument calibration", next_action: "Review the corrected tool contract.",
+      next_gate: { from: "calibration", to: "registered study", artifact: "Frozen preregistration and verifier", status: "blocked", owner: "Oracle + Codex" },
+      blockers: ["Tool contract needs a fresh calibration"], source_receipt_sha256: "b".repeat(64), observed_at: now,
+    },
+    agents: {
+      oracle: { label: "Oracle", status: "working", detail: "Reviewing the next gate.", observed_at: now, source: "mailbox" },
+      pi_client: { label: "Pi", status: "online", detail: "Oracle client reloaded.", observed_at: now, source: "session" },
+      nara: { label: "Nara", status: "idle", detail: "Awaiting registered work.", observed_at: now, source: "service" },
+    },
+    warnings: [],
+    capabilities: { auth_required: true, write_available: true, targets: ["oracle"], intents: ["question", "change_request"], nara_interaction: "ask_oracle_about_nara" },
+    ...overrides,
+  };
+}
+
+function messages(overrides: Record<string, unknown> = {}) {
+  return {
+    schema_version: "daily-ops-messages/v1",
+    available: true,
+    writable: true,
+    rows: [{ request_id: "request-1", created_at: now, actor: "owner", intent: "question", status: "queued", text: "What is blocking the study?", target: "oracle", plan_revision: null }],
+    ...overrides,
+  };
+}
+
+function show() {
+  return render(<MemoryRouter><DailyOpsPanel legacyResearchOps={null} /></MemoryRouter>);
+}
+
+beforeEach(() => {
+  sessionStorage.clear();
+  D.summary = summary();
+  D.messages = messages();
+  D.messageError = null;
+  D.post.mockReset().mockResolvedValue({ request_id: "request-2", status: "queued", accepted_at: now, duplicate: false, expected_plan_revision: "plan-revision-20260920-0800" });
+  vi.stubGlobal("crypto", { randomUUID: () => "11111111-1111-4111-8111-111111111111" });
+});
+
+describe("DailyOpsPanel", () => {
+  it("summarizes the day and shows the main thesis exactly once", () => {
+    show();
+    expect(screen.getByText("Goals for today")).toBeInTheDocument();
+    expect(screen.getByText("Recently accomplished")).toBeInTheDocument();
+    expect(screen.getByText("System improvements")).toBeInTheDocument();
+    expect(screen.getAllByText("Does payoff assistance improve strategic planning?")).toHaveLength(1);
+    expect(screen.getByText("Oracle client")).toBeInTheDocument();
+    expect(screen.getByText("Observed runner")).toBeInTheDocument();
+    expect(screen.getByText(/queued request is not approval/i)).toBeInTheDocument();
+  });
+
+  it("queues a revision-bound plan change without claiming delivery", async () => {
+    show();
+    fireEvent.change(screen.getByLabelText(/Owner access key/), { target: { value: "owner-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Unlock for this tab" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Request a plan change" }));
+    fireEvent.change(screen.getByLabelText("Message to Oracle"), { target: { value: "Move the verifier review ahead of new topic intake." } });
+    fireEvent.click(screen.getByRole("button", { name: "Queue for Oracle" }));
+    await waitFor(() => expect(D.post).toHaveBeenCalledWith({
+      accessKey: "owner-secret",
+      requestId: "11111111-1111-4111-8111-111111111111",
+      intent: "change_request",
+      text: "Move the verifier review ahead of new topic intake.",
+      expectedPlanRevision: "plan-revision-20260920-0800",
+    }));
+    expect(await screen.findByText(/Request queued/)).toHaveTextContent("No acknowledgment or execution is implied");
+    expect(screen.queryByText(/delivered/i)).toBeNull();
+  });
+
+  it("keeps plan changes disabled when no revision can be bound", () => {
+    D.summary = summary({ current_plan_revision: null });
+    show();
+    fireEvent.change(screen.getByLabelText(/Owner access key/), { target: { value: "owner-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Unlock for this tab" }));
+    fireEvent.click(screen.getByRole("button", { name: "Request a plan change" }));
+    fireEvent.change(screen.getByLabelText("Message to Oracle"), { target: { value: "Change the agenda." } });
+    expect(screen.getByRole("button", { name: "Queue for Oracle" })).toBeDisabled();
+    expect(screen.getByText(/No current plan revision is available/)).toBeInTheDocument();
+  });
+
+  it("shows an honest read-only state when the router cannot write", () => {
+    D.summary = summary({ capabilities: { auth_required: true, write_available: false, targets: ["oracle"], intents: ["question", "change_request"], nara_interaction: "ask_oracle_about_nara" } });
+    D.messages = messages({ writable: false });
+    show();
+    expect(screen.getByTestId("daily-ops-readonly")).toHaveTextContent("authenticated Oracle router is not available");
+    expect(screen.queryByTestId("daily-ops-composer")).toBeNull();
+  });
+
+  it("clears a rejected owner key and keeps history locked", async () => {
+    const { DailyOpsError } = await import("../src/api/dailyOps");
+    sessionStorage.setItem("oracle-lab-owner-access-key", "bad-key");
+    D.messageError = new DailyOpsError(403, "owner authentication required");
+    show();
+    expect(await screen.findByText(/Owner access key rejected/)).toBeInTheDocument();
+    expect(sessionStorage.getItem("oracle-lab-owner-access-key")).toBeNull();
+    expect(screen.getByTestId("daily-ops-locked")).toBeInTheDocument();
+    expect(screen.queryByText("What is blocking the study?")).toBeNull();
+  });
+
+  it("preserves the legacy research view when the daily snapshot is malformed", () => {
+    D.summary = { schema_version: "wrong" };
+    show();
+    expect(screen.getByTestId("daily-ops-fallback")).toHaveTextContent("Daily synthesis unavailable");
+    expect(screen.getByTestId("research-ops-card")).toBeInTheDocument();
+  });
+});

@@ -249,7 +249,12 @@ const payoffState = (state: string) => ({
   admitted_attempt_verified: "Admitted attempt verified at last queue check",
 } as Record<string, string>)[state] ?? "State unknown";
 
-export function ResearchOpsCard({ data, failing = false }: { data: unknown; failing?: boolean }) {
+export function ResearchOpsCard({ data, failing = false, showFocus = true }: {
+  data: unknown;
+  failing?: boolean;
+  /** A parent summary may already own the one visible thesis headline. */
+  showFocus?: boolean;
+}) {
   const observedMs = obj(data) && utc(data.observed_at) ? Date.parse(data.observed_at) : Number.NaN;
   const fresh = Number.isFinite(observedMs) && Date.now() - observedMs >= 0 && Date.now() - observedMs <= 120_000;
   const view = obj(data) && data.schema === "research-ops-status/v1" && fresh && !failing ? data : null;
@@ -520,7 +525,7 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
     </div>
     {!view ? <p className="mt-4 text-sm text-[var(--fg-muted)]">Current research operations and ingestion are unknown. System health and historical traces remain separate.</p>
       : <>
-      {Object.prototype.hasOwnProperty.call(view, "research_focus") && (
+      {showFocus && Object.prototype.hasOwnProperty.call(view, "research_focus") && (
         <ResearchFocusCard focus={view.research_focus} className="mt-4" />
       )}
       <dl className="mt-4 grid gap-3 text-sm md:grid-cols-2">

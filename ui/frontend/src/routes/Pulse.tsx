@@ -37,6 +37,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import Card from "../design/Card";
 import { registerPaletteActions } from "../design/CommandPalette";
+import DailyOpsPanel from "../components/DailyOpsPanel";
 import HealthStrip from "../components/HealthStrip";
 import HealthVerdict, {
   excludeQwenReadErrors,
@@ -54,7 +55,6 @@ import ModelServerCard, {
 import NaraPromptForm from "../components/NaraPromptForm";
 import NowBoard from "../components/NowBoard";
 import OweCard from "../components/OweCard";
-import { ResearchOpsCard } from "../components/ResearchOpsCard";
 import ResearchScopeBar from "../components/ResearchScopeBar";
 import { getActivityMonitor } from "../api/activity";
 import {
@@ -1223,8 +1223,8 @@ export default function Pulse() {
         </details>
       </div>
 
-      <div className="mt-4"><ResearchOpsCard data={researchOpsPoll.data}
-        failing={researchOpsPoll.error != null} /></div>
+      <div className="mt-4"><DailyOpsPanel legacyResearchOps={researchOpsPoll.data}
+        legacyFailing={researchOpsPoll.error != null} /></div>
 
       {/* ── 1b · the LAB's queue — secondary to the hero, by design ─────── */}
       {/* The human's queue is the hero; what Nara and the PI advance on their
