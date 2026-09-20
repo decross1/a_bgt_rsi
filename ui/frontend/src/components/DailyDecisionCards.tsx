@@ -214,12 +214,19 @@ export function DailyDecisionCards({ cards, agenda, requestAvailable, canRequest
   const [retry, setRetry] = useState<{ fingerprint: string; requestId: string } | null>(null);
   const editorRef = useRef<HTMLElement>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const editorGeneration = useRef(0);
+  const inFlightGeneration = useRef<number | null>(null);
 
   useEffect(() => {
     if (editor) editorRef.current?.focus();
   }, [editor]);
 
+  useEffect(() => () => {
+    editorGeneration.current += 1;
+  }, []);
+
   function openEditor(target: EditorTarget, trigger: HTMLButtonElement) {
+    editorGeneration.current += 1;
     triggerRef.current = trigger;
     setEditor(target);
     setNote("");
@@ -229,6 +236,7 @@ export function DailyDecisionCards({ cards, agenda, requestAvailable, canRequest
   }
 
   function closeEditor() {
+    editorGeneration.current += 1;
     setEditor(null);
     setNote("");
     setSubmit({ kind: "idle" });
@@ -238,7 +246,9 @@ export function DailyDecisionCards({ cards, agenda, requestAvailable, canRequest
 
   async function send(event: React.FormEvent) {
     event.preventDefault();
-    if (!editor || !canRequest || submit.kind === "queued" ||
+    const generation = editorGeneration.current;
+    if (!editor || !canRequest || ["submitting", "queued"].includes(submit.kind) ||
+        inFlightGeneration.current === generation ||
         (editor.action === "modify" && !note.trim())) return;
     const normalizedNote = note.trim();
     const fingerprint = JSON.stringify([
@@ -246,6 +256,7 @@ export function DailyDecisionCards({ cards, agenda, requestAvailable, canRequest
       editor.action === "reprioritize" ? priority : null,
     ]);
     const ident = retry?.fingerprint === fingerprint ? retry.requestId : requestId();
+    inFlightGeneration.current = generation;
     setSubmit({ kind: "submitting" });
     try {
       const receipt = await onRequest({
@@ -256,9 +267,11 @@ export function DailyDecisionCards({ cards, agenda, requestAvailable, canRequest
         ...(normalizedNote ? { note: normalizedNote } : {}),
         ...(editor.action === "reprioritize" ? { priority } : {}),
       });
+      if (editorGeneration.current !== generation) return;
       setRetry(null);
       setSubmit({ kind: "queued", receipt });
     } catch (error) {
+      if (editorGeneration.current !== generation) return;
       const detail = error instanceof DailyOpsError ? error.detail : String(error);
       const uncertain = !(error instanceof DailyOpsError) || error.status >= 500;
       setRetry(uncertain ? { fingerprint, requestId: ident } : null);
@@ -267,6 +280,8 @@ export function DailyDecisionCards({ cards, agenda, requestAvailable, canRequest
         : error instanceof DailyOpsError && error.status === 409
           ? `This decision is stale. Refresh and review the current card. ${detail}`
           : `Decision request rejected: ${detail}` });
+    } finally {
+      if (inFlightGeneration.current === generation) inFlightGeneration.current = null;
     }
   }
 
@@ -306,7 +321,7 @@ export function DailyDecisionCards({ cards, agenda, requestAvailable, canRequest
         <label htmlFor="daily-decision-note" className="block text-sm font-medium">
           {editor.action === "modify" ? "Required change" : "Note (optional)"}
         </label>
-        <textarea id="daily-decision-note" rows={3} maxLength={4096} value={note}
+        <textarea id="daily-decision-note" rows={3} maxLength={3000} value={note}
           onChange={event => { setNote(event.target.value); setSubmit({ kind: "idle" }); }}
           placeholder={editor.action === "modify" ? "What should change?" : "Add context for Oracle…"}
           className="mt-1 w-full rounded border border-[var(--border-2)] bg-[var(--surface-1)] px-3 py-2 text-sm" />
