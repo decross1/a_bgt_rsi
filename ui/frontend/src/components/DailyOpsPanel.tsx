@@ -51,6 +51,7 @@ type AgentState = {
   status: string;
   detail: string;
   observedAt: string;
+  source: string;
 };
 
 type Summary = {
@@ -109,8 +110,10 @@ function focus(value: unknown): Focus | null {
 
 function agent(value: unknown): AgentState | null {
   if (!record(value) || !bounded(value.label, 512) || !bounded(value.status, 32) ||
-      !AGENT_STATUS.has(value.status) || !bounded(value.detail, 4096) || !timestamp(value.observed_at)) return null;
-  return { label: value.label, status: value.status, detail: value.detail, observedAt: value.observed_at };
+      !AGENT_STATUS.has(value.status) || !bounded(value.detail, 4096) || !timestamp(value.observed_at) ||
+      !bounded(value.source, 512)) return null;
+  return { label: value.label, status: value.status, detail: value.detail,
+    observedAt: value.observed_at, source: value.source };
 }
 
 export function admitDailyOpsSummary(value: unknown): Summary | null {
@@ -156,7 +159,8 @@ function admitMessages(value: unknown): { available: boolean; writable: boolean;
         !["owner", "oracle", "system"].includes(String(item.actor)) ||
         !["question", "change_request", "reply", "receipt"].includes(String(item.intent)) ||
         !MESSAGE_STATUS.has(String(item.status)) || !bounded(item.text, 4096) || item.target !== "oracle" ||
-        !(item.plan_revision === null || bounded(item.plan_revision, 200))) return [];
+        !(item.plan_revision === null || bounded(item.plan_revision, 200)) ||
+        !(item.responder_label === undefined || bounded(item.responder_label, 512))) return [];
     return [item as unknown as DailyOpsMessageRow];
   });
   return { available: value.available, writable: value.writable, rows };
@@ -264,17 +268,25 @@ function AgentStrip({ agents }: { agents: NonNullable<Summary["agents"]> }) {
   </div>;
 }
 
-function MessageRows({ rows }: { rows: DailyOpsMessageRow[] }) {
-  return <>{rows.map(row => <li key={`${row.request_id}:${row.created_at}:${row.actor}`} className="rounded border border-[var(--border-1)] bg-[var(--surface-1)] p-3">
+function MessageRows({ rows, defaultResponderLabel }: {
+  rows: DailyOpsMessageRow[];
+  defaultResponderLabel: string;
+}) {
+  return <>{rows.map(row => {
+    const responderLabel = row.responder_label ?? defaultResponderLabel;
+    const actorLabel = row.actor === "owner" ? "Owner" : row.actor === "oracle" ? responderLabel : "System";
+    return <li key={`${row.request_id}:${row.created_at}:${row.actor}`} className="rounded border border-[var(--border-1)] bg-[var(--surface-1)] p-3">
     <div className="flex flex-wrap items-center gap-2 text-xs">
-      <span className="font-semibold">{row.actor === "owner" ? "Owner" : row.actor === "oracle" ? "Oracle" : "System"}</span>
+      <span className="font-semibold">{actorLabel}</span>
+      {row.actor === "owner" && <span className="text-[var(--fg-muted)]">to {responderLabel}</span>}
+      {row.actor === "system" && <span className="text-[var(--fg-muted)]">for {responderLabel}</span>}
       <span className="text-[var(--fg-muted)]">{phrase(row.intent)}</span>
       <Status value={row.status} />
       <time className="ml-auto text-[var(--fg-muted)]">{timeLabel(row.created_at)}</time>
     </div>
     <p className="mt-2 whitespace-pre-wrap text-sm">{row.text}</p>
     {row.plan_revision && <p className="mt-1 font-mono text-xs text-[var(--fg-muted)]">plan {shortRevision(row.plan_revision)}</p>}
-  </li>)}</>;
+  </li>})}</>;
 }
 
 type SubmitState =
@@ -309,6 +321,10 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
 
   const notesAreCurrent = summary ? isCurrentUtcDay(summary.notesUpdatedAt) : true;
   const notesDay = summary ? dayLabel(summary.notesUpdatedAt) : "";
+  const responderLabel = summary?.agents?.oracle.label ?? "Oracle";
+  const clientLabel = summary?.agents?.piClient.label ?? "Pi client";
+  const boundedResponder = summary?.agents?.oracle.source ===
+    "Oracle bounded UI responder mailbox heartbeat";
 
   useEffect(() => {
     if (accessKey && messagesPoll.error instanceof DailyOpsError &&
@@ -329,7 +345,8 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
   const routerConfigured = summary?.writeAvailable === true;
   const writeAvailable = routerConfigured && accessKey.length > 0 && messages?.writable === true;
   const oracleReady = summary?.agents != null &&
-    !["offline", "degraded", "unknown"].includes(summary.agents.oracle.status);
+    !["offline", "degraded", "unknown"].includes(summary.agents.oracle.status) &&
+    (!boundedResponder || summary.agents.oracle.status === "idle");
   const changeBound = intent !== "change_request" || Boolean(summary?.currentPlanRevision);
   const canSubmit = writeAvailable && accessKey.length > 0 && text.trim().length > 0 &&
     text.trim().length <= 4096 && changeBound && oracleReady && submit.kind !== "submitting";
@@ -474,8 +491,10 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
     <section aria-labelledby="daily-stewards-heading" className="mt-4">
       <div className="mb-2 flex flex-wrap items-end justify-between gap-2">
         <div><h3 id="daily-stewards-heading" className="text-base font-semibold">Lab stewardship</h3>
-          <p className="mt-1 text-sm text-[var(--fg-muted)]">Oracle is the owner-facing steward. Pi is its client; Nara is observed through Oracle.</p></div>
-        <button type="button" onClick={askAboutNara} className="rounded border border-[var(--border-2)] px-3 py-2 text-sm text-[var(--accent)]">Ask Oracle about Nara</button>
+          <p className="mt-1 text-sm text-[var(--fg-muted)]">{boundedResponder
+            ? `${responderLabel} is a temporary summary-only steward. ${clientLabel} carries its turns; Nara is observed through this surface.`
+            : "Oracle is the owner-facing steward. Pi is its client; Nara is observed through Oracle."}</p></div>
+        <button type="button" onClick={askAboutNara} className="rounded border border-[var(--border-2)] px-3 py-2 text-sm text-[var(--accent)]">Ask {responderLabel} about Nara</button>
       </div>
       {summary.agents ? <AgentStrip agents={summary.agents} /> :
         <p className="rounded border border-[var(--border-1)] p-3 text-sm text-[var(--fg-muted)]">Agent observations are unavailable.</p>}
@@ -483,10 +502,16 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
 
     <section id="daily-oracle" aria-labelledby="daily-owner-heading" className="mt-4 scroll-mt-20 rounded border border-[var(--border-1)] bg-[var(--surface-2)] p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div><h3 id="daily-owner-heading" className="text-base font-semibold">Ask Oracle or request an agenda change</h3>
-          <p className="mt-1 text-sm text-[var(--fg-muted)]">Requests enter the Oracle mailbox. A queued request is not approval, execution, or a scientific verdict.</p></div>
+        <div><h3 id="daily-owner-heading" className="text-base font-semibold">Ask {responderLabel} or request an agenda change</h3>
+          <p className="mt-1 text-sm text-[var(--fg-muted)]">Requests enter the {responderLabel} mailbox. A queued request is not approval, execution, or a scientific verdict.</p></div>
         <Link to="/channel" className="text-sm text-[var(--accent)]">Lab event channel (separate) →</Link>
       </div>
+
+      {boundedResponder && summary.agents && <div role="status" data-testid="daily-ops-bounded-responder"
+        className="mt-4 rounded border border-[var(--status-warn)] bg-[var(--status-warn-bg)] p-3 text-sm">
+        <p className="font-semibold">Temporary summary-only responder</p>
+        <p className="mt-1">{summary.agents.oracle.detail}</p>
+      </div>}
 
       {routerConfigured && <div className="mt-4">
         <label htmlFor="daily-owner-key" className="block text-xs font-semibold uppercase tracking-wide text-[var(--fg-muted)]">Owner access key · kept in this tab only</label>
@@ -512,10 +537,10 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
       </p>}
       {routerConfigured && accessKey && messages === null && messagesPoll.error == null && <p className="mt-3 text-sm text-[var(--fg-muted)]">Checking owner access and loading the bounded message history…</p>}
 
-      {accessKey && recentRows.length > 0 && <ol className="mt-4 space-y-2" aria-label="Recent Oracle requests and replies"><MessageRows rows={recentRows} /></ol>}
+      {accessKey && recentRows.length > 0 && <ol className="mt-4 space-y-2" aria-label="Recent Oracle requests and replies"><MessageRows rows={recentRows} defaultResponderLabel={responderLabel} /></ol>}
       {accessKey && earlierRows.length > 0 && <details className="mt-3 rounded border border-[var(--border-1)] bg-[var(--surface-1)] p-3">
         <summary className="cursor-pointer text-sm text-[var(--accent)]">Show {earlierRows.length} earlier mailbox event{earlierRows.length === 1 ? "" : "s"} ({sortedRows.length} fetched)</summary>
-        <ol className="mt-3 space-y-2" aria-label="Earlier Oracle requests and replies"><MessageRows rows={earlierRows} /></ol>
+        <ol className="mt-3 space-y-2" aria-label="Earlier Oracle requests and replies"><MessageRows rows={earlierRows} defaultResponderLabel={responderLabel} /></ol>
       </details>}
       {accessKey && messages?.available === true && recentRows.length === 0 && <p className="mt-3 text-sm text-[var(--fg-muted)]">No owner-to-Oracle requests are recorded yet.</p>}
       {accessKey && messagesPoll.error != null && !(messagesPoll.error instanceof DailyOpsError && [401, 403].includes(messagesPoll.error.status)) &&
@@ -535,21 +560,21 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
           </div>
         </fieldset>
 
-        <label htmlFor="daily-owner-message" className="mt-4 block text-xs font-semibold uppercase tracking-wide text-[var(--fg-muted)]">Message to Oracle</label>
+        <label htmlFor="daily-owner-message" className="mt-4 block text-xs font-semibold uppercase tracking-wide text-[var(--fg-muted)]">Message to {responderLabel}</label>
         <textarea id="daily-owner-message" value={text} onChange={event => { setText(event.target.value); setSubmit({ kind: "idle" }); }} rows={4} maxLength={4096}
-          placeholder={intent === "question" ? "Ask about the thesis, Nara, a blocker, or the next validation step…" : "Describe the agenda change you want Oracle to review…"}
+          placeholder={intent === "question" ? "Ask about the thesis, Nara, a blocker, or the next validation step…" : `Describe the agenda change you want ${responderLabel} to review…`}
           className="mt-1 w-full rounded border border-[var(--border-2)] bg-[var(--surface-1)] px-3 py-2 text-sm" />
         <div className="mt-2 flex flex-wrap items-center gap-3">
           <button type="submit" disabled={!canSubmit}
             className="rounded bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--accent-fg)] disabled:cursor-not-allowed disabled:opacity-50">
-            {submit.kind === "submitting" ? "Queueing…" : "Queue for Oracle"}
+            {submit.kind === "submitting" ? "Queueing…" : `Queue for ${responderLabel}`}
           </button>
           {intent === "change_request" && <span className={`text-xs ${summary.currentPlanRevision ? "text-[var(--fg-muted)]" : "text-[var(--status-warn)]"}`}>
             {summary.currentPlanRevision ? `Bound to plan ${shortRevision(summary.currentPlanRevision)}` : "No current plan revision is available; change requests stay disabled."}
           </span>}
         </div>
         {!oracleReady && <p role="status" className="mt-2 text-sm text-[var(--status-warn)]">
-          Oracle is unavailable; your draft is kept here. Sending resumes after a healthy mailbox observation.
+          {responderLabel} is unavailable; your draft is kept here. Sending resumes after a healthy mailbox observation.
         </p>}
         <div aria-live="polite" className="mt-2 min-h-5 text-sm">
           {submit.kind === "queued" && <p className="text-[var(--status-info)]">{submit.duplicate ? "Existing request found" : "Request queued"} · {submit.requestId}{submit.revision ? ` · plan ${shortRevision(submit.revision)}` : ""}. No acknowledgment or execution is implied.</p>}

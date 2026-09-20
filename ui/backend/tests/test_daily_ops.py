@@ -78,7 +78,7 @@ def _summary():
 
 def _message(*, request_id=None, actor="owner", intent="question",
              status="queued", text="What is blocking the next gate?",
-             plan_revision=None, in_reply_to=None):
+             plan_revision=None, in_reply_to=None, responder_label=None):
     row = {
         "request_id": request_id or str(uuid.uuid4()),
         "created_at": NOW, "actor": actor, "intent": intent,
@@ -87,6 +87,8 @@ def _message(*, request_id=None, actor="owner", intent="question",
     }
     if in_reply_to is not None:
         row["in_reply_to"] = in_reply_to
+    if responder_label is not None:
+        row["responder_label"] = responder_label
     return row
 
 
@@ -245,6 +247,18 @@ def test_message_projection_preserves_lifecycle_and_cursor(tmp_path):
     assert body["available"] is True and body["writable"] is True
     assert body["rows"] == [first, second, third]
     assert endpoint(_request(), after=first["request_id"], limit=10)["rows"] == [second, third]
+
+
+def test_message_projection_preserves_bound_responder_identity(tmp_path):
+    first = _message(responder_label="Oracle bounded UI responder")
+    reply = _message(actor="oracle", intent="reply", status="acknowledged",
+                     text="Summary-only response.", in_reply_to=first["request_id"],
+                     responder_label="Oracle bounded UI responder")
+    _write_messages(tmp_path, [first, reply])
+    endpoint = _endpoint(_endpoints(
+        tmp_path, authorizer=lambda _request: True, router=lambda _payload: {}
+    ), "/api/daily-ops/messages", "GET")
+    assert endpoint(_request(), after=None, limit=50)["rows"] == [first, reply]
 
 
 def test_configured_message_thread_requires_owner_authentication(tmp_path):
