@@ -20,6 +20,7 @@ chroma, no model calls (suite norm MOCK_LLM=1). What is pinned here:
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import sys
 from pathlib import Path
@@ -138,6 +139,17 @@ def test_sentinel_resolution_fails_loudly_listing_candidates():
     assert "falsifiable_01_finite_pd_cooperate" in msg   # the missing pin
     assert "falsifiable_01_finite_pd_coop" in msg        # listed candidate
     assert "guess" in msg
+
+
+def test_pinned_prompt_does_not_follow_the_live_persona(monkeypatch):
+    """Production prompt edits must not redefine the historical A/B arm."""
+    from orchestrator import novelty_skeptic
+
+    expected = driver.prompt_messages(FIXTURE_CASE, FIXTURE_NEIGHBORS)
+    monkeypatch.setattr(novelty_skeptic, "QWEN_ATTACK_PERSONA", "changed live prompt")
+    reloaded = importlib.reload(driver)
+
+    assert reloaded.prompt_messages(FIXTURE_CASE, FIXTURE_NEIGHBORS) == expected
 
 
 # --- STOP conditions ------------------------------------------------------

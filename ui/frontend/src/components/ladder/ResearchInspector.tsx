@@ -145,6 +145,14 @@ function ClaimCard({
       <p style={{ margin: "var(--space-3) 0 0", color: "var(--fg)", fontSize: "var(--text-prose)", lineHeight: 1.55 }}>
         {context.hypothesis}
       </p>
+      {(context.sourceQualification !== null || context.rungQualification !== null) && (
+        <p
+          data-testid="claim-source-qualification"
+          style={{ ...META, marginTop: "var(--space-2)", color: "var(--status-warn)" }}
+        >
+          {[context.rungQualification, context.sourceQualification].filter(Boolean).join(" ")}
+        </p>
+      )}
       <div className="font-mono" style={{ ...META, marginTop: "var(--space-2)", overflowWrap: "anywhere" }}>
         <div>{context.iterationId}</div>
         <div>Source row ended: {context.sourceEndedAt}</div>

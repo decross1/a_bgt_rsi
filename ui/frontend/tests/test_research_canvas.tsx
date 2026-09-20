@@ -91,7 +91,13 @@ describe("ResearchCanvas", () => {
       cluster_id: "cl-iter-2026-09-15-007",
       stem: "cl-iter-2026-09-15-007",
       status: "open",
-      evidence_level: "L1",
+      evidence_level: "L0",
+      historical_evidence_level: "L1",
+      evidence_qualification: {
+        status: "rederived", exact_source_count: 3,
+        unresolved_member_count: 0, provisional: [],
+      },
+      claim_source_status: "v2_contract_invalid",
       members: currentRows.map((row) => row.iteration_id),
     }], currentRows);
 
@@ -111,6 +117,12 @@ describe("ResearchCanvas", () => {
     expect(
       screen.getAllByText(/This research view does not establish a queued human action/i),
     ).not.toHaveLength(0);
+    expect(screen.getByTestId("research-canvas-source-qualification")).toHaveTextContent(
+      "Historical ledger L1; current verified projection L0",
+    );
+    expect(screen.getByTestId("research-canvas-source-qualification")).toHaveTextContent(
+      "fails the current V2 hypothesis contract",
+    );
   });
 
   it("hydrates only the exact selected iteration and prioritizes recorded criticism", async () => {
@@ -395,7 +407,7 @@ describe("ResearchCanvas", () => {
       renderCanvas(liquidModel());
       const search = screen.getByTestId("research-canvas-family-search");
       fireEvent.change(search, { target: { value: "no such thesis" } });
-      expect(screen.getByRole("status")).toHaveTextContent("No matching thesis. Your selected thesis is retained.");
+      expect(screen.getByRole("status")).toHaveTextContent("No matching thesis. Your current browse selection is retained.");
       const claim = screen.getAllByRole("button", { name: /Select source-bound claim/ })[1];
       fireEvent.click(claim);
       const back = screen.getByTestId("research-canvas-back");

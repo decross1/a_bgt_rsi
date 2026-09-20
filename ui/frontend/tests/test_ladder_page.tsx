@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   getLadder: vi.fn(),
   getIdeas: vi.fn(),
   getIterations: vi.fn().mockResolvedValue({ iterations: [] }),
+  getResearchOpsStatus: vi.fn().mockResolvedValue(null),
   getIterationJourney: vi.fn().mockResolvedValue({ found: false, iteration_id: "missing", iteration: null }),
   getHealth: vi.fn().mockResolvedValue({
     ok: true,
@@ -38,6 +39,7 @@ vi.mock("../src/api/http", () => ({
   getIdeas: mocks.getIdeas,
   getIterations: mocks.getIterations,
   getIterationJourney: mocks.getIterationJourney,
+  getResearchOpsStatus: mocks.getResearchOpsStatus,
   getHealth: mocks.getHealth,
 }));
 
@@ -319,6 +321,33 @@ describe("/ladder board", () => {
     expect(screen.getByTestId("ladder-card-cl-a")).toHaveTextContent("2 members");
     // The card does NOT carry the kill code / origin / cluster id.
     expect(screen.getByTestId("ladder-card-cl-a")).not.toHaveTextContent("cl-a");
+  });
+
+  it("labels a readable claim recovered from an invalid V2 source contract", () => {
+    const raw = {
+      ...FIXTURE,
+      clusters: FIXTURE.clusters?.map((cluster) => cluster.cluster_id === "cl-c"
+        ? {
+            ...cluster,
+            evidence_level: "L0",
+            historical_evidence_level: "L1",
+            evidence_qualification: {
+              status: "rederived", exact_source_count: 1,
+              unresolved_member_count: 0, provisional: [],
+            },
+            claim_source_status: "v2_contract_invalid",
+          }
+        : cluster),
+      histogram: { L0: 1, L1: 0, L2: 0, L3: 0, L4: 1, L5: 0 },
+    } satisfies LadderResponse;
+    renderLadder({ initial: raw });
+
+    const card = screen.getByTestId("ladder-card-cl-c");
+    const warning = within(card).getByText("source unvalidated");
+    expect(warning).toHaveAttribute(
+      "title",
+      expect.stringContaining("Historical ledger L1; current verified projection L0"),
+    );
   });
 
   it("reports a rung-less cluster instead of faking it into L0", () => {

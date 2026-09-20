@@ -408,6 +408,95 @@ function isInventoryModel(row: ServedModel): boolean {
   );
 }
 
+export type PermanentDeploymentLevel = "healthy" | "degraded" | "down" | "unknown";
+export interface PermanentDeploymentHealth {
+  active: boolean;
+  level: PermanentDeploymentLevel;
+  headline: string;
+  detail: string;
+}
+
+/** Evaluate the selected production resident from its own endpoint inventory.
+ * Legacy Gemma telemetry is intentionally irrelevant in single-Flash mode. */
+export function permanentDeploymentHealth(
+  runtime: ModelRuntime | null,
+  servedModels: unknown,
+  inventoryRefreshFailing: boolean,
+  nowMs = Date.now(),
+): PermanentDeploymentHealth {
+  if (runtime?.mode_source !== "permanent_deployment" || runtime.production_authorized !== true) {
+    return { active: false, level: "unknown", headline: "No permanent deployment", detail: "" };
+  }
+  const rows = orderedModelCatalog(servedModels)
+    .filter(([, row]) => isInventoryModel(row) && row.deployment_role === "production_resident");
+  if (rows.length !== 1) {
+    return {
+      active: true,
+      level: "unknown",
+      headline: "Production resident observation unavailable",
+      detail: rows.length === 0
+        ? "No verified production-resident endpoint is present in the model inventory."
+        : "More than one endpoint claims the production-resident role.",
+    };
+  }
+  const row = rows[0][1];
+  const observedMs = Date.parse(String(row.probed_at));
+  const ageMs = nowMs - observedMs;
+  if (inventoryRefreshFailing || !Number.isFinite(ageMs) || ageMs < 0 || ageMs > 90_000) {
+    return {
+      active: true,
+      level: "unknown",
+      headline: "Production resident observation is stale",
+      detail: "The last endpoint inventory cannot establish current model health.",
+    };
+  }
+  if (row.service_status === "offline") {
+    return {
+      active: true,
+      level: "down",
+      headline: "Flash production resident is offline",
+      detail: "The selected production endpoint was unreachable in the latest inventory probe.",
+    };
+  }
+  if (row.identity_status === "mismatch") {
+    return {
+      active: true,
+      level: "down",
+      headline: "Flash production identity mismatch",
+      detail: "The reachable endpoint is not serving the configured production model.",
+    };
+  }
+  if (runtime.mode !== "resident" || runtime.phase !== "ready" || runtime.source_error !== null) {
+    return {
+      active: true,
+      level: "unknown",
+      headline: "Flash deployment readiness unverified",
+      detail: `Controller phase: ${runtime.phase ?? "unknown"}. Endpoint observations remain separate.`,
+    };
+  }
+  if (row.service_status === "online" && row.identity_status === "match") {
+    return row.metrics_endpoint_status === "available"
+      ? {
+          active: true,
+          level: "healthy",
+          headline: "Flash production resident online",
+          detail: "Configured identity and metrics endpoint are verified by the latest inventory probe.",
+        }
+      : {
+          active: true,
+          level: "degraded",
+          headline: "Flash online; metrics unavailable",
+          detail: "The production identity matches, but live performance metrics are not currently available.",
+        };
+  }
+  return {
+    active: true,
+    level: "unknown",
+    headline: "Flash production health unverified",
+    detail: "The latest endpoint probe did not establish both online service and matching identity.",
+  };
+}
+
 // A telemetry row is evidence for model health only when it carries the
 // producer's minimum model fields. The websocket boundary is unvalidated, so
 // arrays and object-shaped garbage must not become an observed failed scrape.
@@ -873,6 +962,11 @@ export default function Pulse() {
     modelRuntime?.mode === "resident" &&
     boundRuntimeMode &&
     modelRuntime.resident_services_expected === "online";
+  const permanentHealth = permanentDeploymentHealth(
+    modelRuntime,
+    servedModels,
+    servedModelsPoll.failing,
+  );
   const inventoryCatalog = modelCatalog.filter(([, row]) => isInventoryModel(row));
   const inventoryStatusCatalog = personalEndpointContract != null && !personalFlashInventoryMatches
     ? inventoryCatalog.filter(([key]) => key !== "flash")
@@ -1062,6 +1156,27 @@ export default function Pulse() {
                   Observability: {runtimeObservabilityIssues.join("; ")}.
                 </span>
               )}
+            </div>
+          ) : permanentHealth.active ? (
+            <div
+              data-testid="health-verdict"
+              data-level={permanentHealth.level}
+              className="flex flex-wrap items-center gap-2 text-[var(--fg-muted)]"
+            >
+              <span
+                className="font-semibold"
+                style={{ color: permanentHealth.level === "healthy"
+                  ? "var(--status-ok)"
+                  : permanentHealth.level === "down"
+                    ? "var(--status-bad)"
+                    : permanentHealth.level === "degraded"
+                      ? "var(--status-warn)"
+                      : "var(--fg-muted)" }}
+              >
+                {permanentHealth.level.toUpperCase()}
+              </span>
+              <span>{permanentHealth.headline}</span>
+              <span>{permanentHealth.detail}</span>
             </div>
           ) : gemmaUp === null || !connected || telemetryTimeUnknown || telemetryStale ? (
             <div data-testid="health-verdict" data-level="unknown"

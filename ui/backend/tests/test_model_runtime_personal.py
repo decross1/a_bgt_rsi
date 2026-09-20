@@ -369,7 +369,13 @@ def test_two_live_fixed_sessions_are_ambiguous(tmp_path):
 
 
 def test_active_personal_projection_precedes_historical_runtime_sources(monkeypatch):
+    from backend import model_runtime_resident as resident
+
     expected = personal._unknown(NOW, "fixed test projection")
+    # This unit exercises the personal-vs-historical ordering. A live
+    # owner-authorized permanent deployment is a separate, higher-priority
+    # source and must not make the result depend on host state.
+    monkeypatch.setattr(resident, "project_permanent", lambda: None)
     monkeypatch.setattr(personal, "maybe_project_personal", lambda **_kwargs: expected)
     assert project_model_runtime() is expected
 

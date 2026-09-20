@@ -12,7 +12,6 @@ import pytest
 
 from workers.evidence_ladder import derive_level, next_test_owed
 
-
 # ── row builders (field shapes grounded in memory/loop_memory.jsonl) ─────
 
 
@@ -68,8 +67,29 @@ _FEEDBACK_OK = {"iteration_id": "iter-2026-08-04-001", "verdict": "valid",
                 "gated_by": "decross1"}
 
 
-def derive(row, feedback=None, adversarial=None, health=None):
-    return derive_level(row, feedback, adversarial, health or [])
+def derive(row, feedback=None, adversarial=None, health=None, admission=None):
+    return derive_level(
+        row, feedback, adversarial, health or [], admission_context=admission
+    )
+
+
+def _as_v2(row: dict) -> dict:
+    row["campaign"] = {
+        "schema_version": "research-campaign-link/v1",
+        "campaign_id": "v2-test-campaign",
+        "campaign_manifest_sha256": "a" * 64,
+        "research_question_id": "rq-test",
+        "research_question_sha256": "b" * 64,
+        "topic_id": "topic-test",
+        "topic_sha256": "c" * 64,
+    }
+    text = "Agents condition equilibrium play on a disclosed payoff signal."
+    row["hypothesis"] = {
+        "text": text,
+        "candidates_considered": 1,
+        "all_candidates": [text],
+    }
+    return row
 
 
 # ── L0 / L1 boundary ─────────────────────────────────────────────────────
@@ -91,6 +111,55 @@ def test_l1_earned_with_redteam_absent():
 def test_l1_earned_with_redteam_proceed():
     out = derive(_l1_row(redteam={"verdict": "proceed"}))
     assert out["level"] == "L1"
+
+
+def test_v2_canonical_hypothesis_can_earn_l1():
+    assert derive(_as_v2(_l1_row()))["level"] == "L1"
+
+
+def test_literal_protocol_word_inside_a_claim_is_not_channel_leakage():
+    row = _as_v2(_l1_row())
+    text = "Agents receiving the literal token <think> defect more often."
+    row["hypothesis"] = {"text": text, "candidates_considered": 1, "all_candidates": [text]}
+    assert derive(row)["level"] == "L1"
+
+
+@pytest.mark.parametrize(
+    "hypothesis",
+    [
+        None,
+        {"text": '{"candidates":["raw"', "candidates_considered": 1},
+        {
+            "text": "<think>private route</think> Public claim.",
+            "candidates_considered": 1,
+            "all_candidates": ["<think>private route</think> Public claim."],
+        },
+        {
+            "text": "Selected claim.",
+            "candidates_considered": 2,
+            "all_candidates": ["Different claim."],
+        },
+        {
+            "text": "x" * 1201,
+            "candidates_considered": 1,
+            "all_candidates": ["x" * 1201],
+        },
+        {
+            "text": "Selected claim.",
+            "candidates_considered": 2,
+            "all_candidates": ["Selected claim.", "<analysis>private route</analysis>"],
+        },
+    ],
+)
+def test_v2_missing_raw_or_incoherent_hypothesis_cannot_earn_l1(hypothesis):
+    row = _as_v2(_l1_row())
+    if hypothesis is None:
+        row.pop("hypothesis")
+    else:
+        row["hypothesis"] = hypothesis
+    out = derive(row)
+    assert out["level"] == "L0"
+    assert any("V2 hypothesis" in note for note in out["missing_for_next"])
 
 
 def test_missing_relevance_blocks_l1():
@@ -204,6 +273,33 @@ def test_l2_summary_missing_fails():
     row = _l2_row()
     del row["experiment_outcome"]["summary"]
     assert derive(row)["level"] == "L1"
+
+
+def test_v2_plausible_outcome_and_self_asserted_flag_do_not_earn_l2():
+    row = _as_v2(_l2_row())
+    row["experiment_outcome"] = {
+        "experiment_id": "forged",
+        "metric": "forged",
+        "value": 1,
+        "trials": 30,
+        "summary": "ok",
+        "verified": True,
+    }
+    row["experiment_admission_ref"] = {"verified": True}
+    out = derive(row, admission={"verified": True})
+    assert out["level"] == "L1"
+    assert out["missing_for_next"] == [
+        "verified experiment admission absent for V2 outcome"
+    ]
+
+
+def test_v2_surprising_route_cannot_bootstrap_from_unadmitted_outcome():
+    row = _as_v2(_l2_row())
+    row["novelty"]["class"] = "unclear"
+    row["experiment_outcome"]["summary"] = "Verdict=NO. Surprising result."
+    out = derive(row)
+    assert out["level"] == "L0"
+    assert any("not surprising-vs-theory" in note for note in out["missing_for_next"])
 
 
 # ── L3 boundary ──────────────────────────────────────────────────────────

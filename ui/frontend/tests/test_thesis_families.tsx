@@ -11,6 +11,7 @@ import ThesisFamilies from "../src/components/ladder/ThesisFamilies";
 
 vi.mock("../src/api/http", () => ({
   getLadder: vi.fn(), getIterations: vi.fn(), getIdeas: vi.fn(),
+  getResearchOpsStatus: vi.fn().mockResolvedValue(null),
   getIterationJourney: vi.fn().mockResolvedValue({ found: false, iteration_id: "missing", iteration: null }),
 }));
 

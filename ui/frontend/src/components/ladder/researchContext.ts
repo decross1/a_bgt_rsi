@@ -9,6 +9,7 @@ import {
   iterationDisplayTitle,
   iterationQuestion,
 } from "../../researchLabels";
+import { claimSourceQualification, rungQualification } from "./ladderModel";
 
 interface ExactClaimNote {
   clusterId: string;
@@ -50,6 +51,8 @@ export interface ResearchClaimContext {
   claimStanding: string;
   applicationFit: string;
   evidenceValidity: string;
+  sourceQualification: string | null;
+  rungQualification: string | null;
   executionMode: string;
   evidenceDelta: string;
   learning: string;
@@ -281,6 +284,9 @@ function contextFor(
     : iterationQuestion(iteration.source) ?? iteration.hypothesis ?? "No exact hypothesis text is available in the received iteration source.";
   const topic = iteration?.topic ?? (record.topics.join("; ") || "Recorded topic unavailable");
   const stageRequirement = nextOwed[stage];
+  const sourceQualification = claimSourceQualification(record.cluster);
+  const currentRungQualification = rungQualification(record.cluster);
+  const rungQualificationStatus = asText(record.cluster.evidence_qualification?.status);
 
   const provenanceFields = [
     ["experiment_outcome", "Outcome"],
@@ -339,7 +345,12 @@ function contextFor(
     applicationFit: application ?? (exact === undefined
       ? "Unmapped — explicit application fit is not supplied in the received projection."
       : "Unmapped — the 2026-09-07 source assessment identified no suitable application or market, and this received projection supplies no explicit mapping."),
-    evidenceValidity: "Unknown — recorded reviews and raw outcomes are shown separately; this thin projection cannot authenticate exact binding, evidence validity, or later evidence state.",
+    evidenceValidity: rungQualificationStatus === null
+      ? "Unknown — the received projection did not supply current source-binding qualification."
+      : currentRungQualification
+        ?? "Current ladder rung was rederived from exact available source records by the canonical evidence grader; recorded reviews and raw outcomes remain separately qualified.",
+    sourceQualification,
+    rungQualification: currentRungQualification,
     executionMode: execution === null
       ? "Unknown — an execution-mode field is not supplied in the received projection."
       : `Recorded source: ${execution}`,

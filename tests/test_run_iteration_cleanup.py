@@ -8,6 +8,7 @@ wrapper calls — the 2026-06-09 attribution bug. run_iteration is now a
 registration wrapper with a try/finally around _run_iteration_impl.
 """
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -83,6 +84,46 @@ def test_midchain_exception_clears_run_id_and_state(monkeypatch, isolated_state)
     # The turn DID run inside a registered context...
     assert seen == ["iter-2099-01-01-001"]
     # ...and every registration artifact is gone on the exception path.
+    assert get_run_id() is None
+    assert rt.read_state(nara.ACTIVE_PATH) is None
+    assert not (isolated_state / "active_run.json").exists()
+
+
+@pytest.mark.parametrize("failed_result", [
+    {"status": "error", "result": None, "errors": ["malformed twice"]},
+    {"status": "passed", "result": {"text": ""}},
+    {"status": "passed", "result": None},
+])
+def test_failed_hypothesis_aborts_before_downstream_tool_or_evidence_write(
+    monkeypatch, isolated_state, failed_result,
+):
+    dispatched = []
+    rt = _Recorder()
+
+    def dispatch(name, args, *, parent_request_id):
+        dispatched.append(name)
+        assert name == "hypothesize"
+        return failed_result
+
+    rt.dispatch_tool = dispatch
+    calls = [SimpleNamespace(id=f"tool-{index}", type="function", function=SimpleNamespace(
+        name=name, arguments=json.dumps({"topic": "a game-theory question"})))
+        for index, name in enumerate(("hypothesize", "retrieve_literature"))]
+    backend = _BoomBackend([])
+    backend.create_chat = lambda **_kw: SimpleNamespace(choices=[SimpleNamespace(
+        message=SimpleNamespace(content="", tool_calls=calls))])
+    monkeypatch.setattr(nara, "get_backend", lambda *_a, **_kw: backend)
+    monkeypatch.setattr(nara, "_record_turn", lambda *_a, **_kw: {"request_id": "request-1"})
+    monkeypatch.setattr(nara, "finalize_iteration_record", lambda *_a, **_kw: pytest.fail(
+        "failed hypothesis must not become an evidence record"))
+
+    with pytest.raises(RuntimeError, match="no valid claim"):
+        nara.run_iteration("a game-theory question", runtime=rt, log_path=None)
+
+    assert dispatched == ["hypothesize"]
+    failure = next(event for event in rt.events
+                   if event["event_type"] == "loop_v0_iteration_failed")
+    assert failure["reason"] == "no_valid_hypothesis_after_bounded_repair"
     assert get_run_id() is None
     assert rt.read_state(nara.ACTIVE_PATH) is None
     assert not (isolated_state / "active_run.json").exists()
