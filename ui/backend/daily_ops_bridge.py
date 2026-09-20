@@ -323,7 +323,9 @@ class DailyOpsBridge:
                 return
             summary = _read(self.state / "daily_ops_brief.json", MAX_SUMMARY_BYTES)
             _validate_summary(summary)
-            summary["generated_at"] = _iso(_now())
+            # ``generated_at`` is the curated daily-notes timestamp.  Preserve
+            # it so a fresh runtime projection cannot make old goals look newly
+            # authored.  Dynamic sources below carry their own observation time.
             try:
                 summary["research_focus"] = self._focus()
             except (OSError, ValueError, KeyError, TypeError):

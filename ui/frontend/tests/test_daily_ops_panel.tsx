@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const D = vi.hoisted(() => ({
   summary: {} as unknown,
@@ -80,8 +80,14 @@ beforeEach(() => {
   vi.stubGlobal("crypto", { randomUUID: () => "11111111-1111-4111-8111-111111111111" });
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe("DailyOpsPanel", () => {
   it("summarizes the day and shows the main thesis exactly once", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-20T12:00:00Z"));
     show();
     expect(screen.getByText("Goals for today")).toBeInTheDocument();
     expect(screen.getByText("Recently accomplished")).toBeInTheDocument();
@@ -90,6 +96,46 @@ describe("DailyOpsPanel", () => {
     expect(screen.getByText("Oracle client")).toBeInTheDocument();
     expect(screen.getByText("Observed runner")).toBeInTheDocument();
     expect(screen.getByText(/queued request is not approval/i)).toBeInTheDocument();
+    expect(screen.getByText(/Daily notes last updated Sep 20/)).toBeInTheDocument();
+    expect(screen.queryByTestId("daily-notes-stale")).toBeNull();
+  });
+
+  it("dates authored notes while retaining a fresh agenda task after rollover", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-21T00:01:00Z"));
+    D.summary = summary({
+      generated_at: "2026-09-20T23:59:00Z",
+      goals: [
+        ...summary().goals,
+        {
+          id: "pending-agenda-current",
+          title: "Review the current sealed proposal",
+          detail: "This task was projected after the authored notes and still awaits owner review.",
+          source: "sealed pending agenda",
+          observed_at: "2026-09-21T00:00:30Z",
+          status: "awaiting_owner",
+          owner: "oracle",
+        },
+      ],
+    });
+
+    show();
+
+    expect(screen.getByTestId("daily-notes-stale")).toHaveTextContent(
+      "Authored daily notes are from Sep 20, 2026 UTC. Their statuses reflect that update.",
+    );
+    expect(screen.getByTestId("daily-notes-stale")).toHaveTextContent(
+      "The current sealed agenda, thesis, and agent observations update separately.",
+    );
+    expect(screen.getByRole("heading", { name: "Recorded goals and current agenda" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Accomplishments recorded Sep 20, 2026" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Improvements recorded Sep 20, 2026" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Goals for today" })).toBeNull();
+    expect(screen.getByText("Close the instrument gap")).toBeInTheDocument();
+    expect(screen.getByText("Review the current sealed proposal")).toBeInTheDocument();
+    expect(screen.getByText((_, element) =>
+      element?.textContent === "oracle · Sep 21, 12:00 AM UTC")).toBeInTheDocument();
+    expect(screen.getAllByText("Does payoff assistance improve strategic planning?")).toHaveLength(1);
   });
 
   it("keeps daily goals beyond the first four available inline", () => {

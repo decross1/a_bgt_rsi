@@ -55,7 +55,7 @@ type AgentState = {
 
 type Summary = {
   available: boolean;
-  generatedAt: string;
+  notesUpdatedAt: string;
   goals: WorkItem[];
   accomplishments: WorkItem[];
   improvements: WorkItem[];
@@ -131,7 +131,7 @@ export function admitDailyOpsSummary(value: unknown): Summary | null {
     : null;
   return {
     available: value.available,
-    generatedAt: value.generated_at,
+    notesUpdatedAt: value.generated_at,
     goals: workItems(value.goals, "goal"),
     accomplishments: workItems(value.accomplishments, "accomplishment"),
     improvements: workItems(value.improvements, "improvement"),
@@ -166,6 +166,20 @@ function timeLabel(value: string): string {
   return new Date(value).toLocaleString("en-US", {
     timeZone: "UTC", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
   }) + " UTC";
+}
+
+function dayLabel(value: string): string {
+  return new Date(value).toLocaleDateString("en-US", {
+    timeZone: "UTC", month: "short", day: "numeric", year: "numeric",
+  });
+}
+
+export function isCurrentUtcDay(value: string, now = Date.now()): boolean {
+  const observed = new Date(value);
+  const current = new Date(now);
+  return observed.getUTCFullYear() === current.getUTCFullYear() &&
+    observed.getUTCMonth() === current.getUTCMonth() &&
+    observed.getUTCDate() === current.getUTCDate();
 }
 
 function phrase(value: string): string {
@@ -293,6 +307,9 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
   const [submit, setSubmit] = useState<SubmitState>({ kind: "idle" });
   const [retryableRequest, setRetryableRequest] = useState<RetryableRequest | null>(null);
 
+  const notesAreCurrent = summary ? isCurrentUtcDay(summary.notesUpdatedAt) : true;
+  const notesDay = summary ? dayLabel(summary.notesUpdatedAt) : "";
+
   useEffect(() => {
     if (accessKey && messagesPoll.error instanceof DailyOpsError &&
         [401, 403].includes(messagesPoll.error.status)) {
@@ -396,9 +413,15 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
       </div>
       <div className="flex flex-wrap items-center gap-3">
         <a href="#daily-oracle" className="text-sm text-[var(--accent)]">Ask or change the plan ↓</a>
-        <span className="rounded border border-[var(--border-2)] px-2 py-1 text-xs text-[var(--fg-muted)]">Snapshot {timeLabel(summary.generatedAt)}</span>
+        <span className="rounded border border-[var(--border-2)] px-2 py-1 text-xs text-[var(--fg-muted)]">Daily notes last updated {timeLabel(summary.notesUpdatedAt)}</span>
       </div>
     </div>
+
+    {!notesAreCurrent && <div role="status" data-testid="daily-notes-stale"
+      className="mt-4 rounded border border-[var(--status-warn)] bg-[var(--status-warn-bg)] p-3 text-sm">
+      <span className="font-semibold">Authored daily notes are from {notesDay} UTC.</span>{" "}
+      Their statuses reflect that update. The current sealed agenda, thesis, and agent observations update separately.
+    </div>}
 
     {summary.warnings.length > 0 && <div role="status" className="mt-4 rounded border border-[var(--status-warn)] bg-[var(--status-warn-bg)] p-3 text-sm">
       {summary.warnings.map(warning => <p key={warning}>{warning}</p>)}
@@ -406,7 +429,7 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
 
     <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)]">
       <section aria-labelledby="daily-goals-heading" className="rounded border border-[var(--border-1)] p-4">
-        <h3 id="daily-goals-heading" className="text-base font-semibold">Goals for today</h3>
+        <h3 id="daily-goals-heading" className="text-base font-semibold">{notesAreCurrent ? "Goals for today" : "Recorded goals and current agenda"}</h3>
         <ItemList items={summary.goals} empty="No daily goals are recorded in this snapshot." />
       </section>
       <section aria-labelledby="daily-focus-heading" className="rounded border border-[var(--group-research)] p-4">
@@ -439,11 +462,11 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
 
     <div className="mt-4 grid gap-4 md:grid-cols-2">
       <section aria-labelledby="daily-accomplishments-heading" className="rounded border border-[var(--border-1)] p-4">
-        <h3 id="daily-accomplishments-heading" className="text-base font-semibold">Recently accomplished</h3>
+        <h3 id="daily-accomplishments-heading" className="text-base font-semibold">{notesAreCurrent ? "Recently accomplished" : `Accomplishments recorded ${notesDay}`}</h3>
         <ItemList items={summary.accomplishments} empty="No recent accomplishment is recorded in this snapshot." />
       </section>
       <section aria-labelledby="daily-improvements-heading" className="rounded border border-[var(--border-1)] p-4">
-        <h3 id="daily-improvements-heading" className="text-base font-semibold">System improvements</h3>
+        <h3 id="daily-improvements-heading" className="text-base font-semibold">{notesAreCurrent ? "System improvements" : `Improvements recorded ${notesDay}`}</h3>
         <ItemList items={summary.improvements} empty="No recent system improvement is recorded in this snapshot." />
       </section>
     </div>
