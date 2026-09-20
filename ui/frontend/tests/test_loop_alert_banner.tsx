@@ -307,6 +307,47 @@ describe("LoopAlertBanner", () => {
     expect(gate.textContent).toContain("human kill switch");
   });
 
+  it("renders an intentional research-focus hold as amber status linked to the focus", () => {
+    render(
+      <LoopAlertBanner
+        initial={{
+          level: "amber",
+          reasons: ["loop_gated:research_focus"],
+          updated_at: FRESH,
+          gate: {
+            reason: "research_focus",
+            status: "focus_pending",
+            detail: "selected focus is holding new-topic intake",
+            first_gated_at: FRESH,
+          },
+        }}
+        nowMs={NOW}
+      />,
+    );
+    const banner = screen.getByTestId("loop-alert-banner");
+    expect(banner).toHaveAttribute("data-level", "amber");
+    expect(banner).toHaveAttribute("role", "status");
+    expect(
+      screen.getByText("Research focus awaiting next validation artifact"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("loop-alert-gate")).toHaveTextContent(
+      "new-topic intake held for selected focus",
+    );
+    expect(
+      screen.getByText(
+        "New-topic intake is held while the selected research focus awaits its next validation artifact.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View research focus" })).toHaveAttribute(
+      "href",
+      "/ladder?research_scope=active",
+    );
+    expect(screen.queryByText("LOOP STALLED")).toBeNull();
+    expect(
+      screen.queryByText("Recorded coordinator cycle: no research progress"),
+    ).toBeNull();
+  });
+
   it("producer-owned reasons degrade: non-array -> no list, non-string entries dropped", () => {
     render(
       <LoopAlertBanner
