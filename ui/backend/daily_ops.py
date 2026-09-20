@@ -258,7 +258,7 @@ def _message_row(value: object) -> bool:
             uuid.UUID(str(reply_to))
         except (ValueError, TypeError, AttributeError):
             return False
-    return (
+    structural = (
         str(parsed_id) == value.get("request_id")
         and _timestamp(value.get("created_at"))
         and value.get("actor") in _ACTORS
@@ -272,6 +272,25 @@ def _message_row(value: object) -> bool:
         )
         and _json_safe(value)
     )
+    if not structural:
+        return False
+    actor = value["actor"]
+    intent = value["intent"]
+    status = value["status"]
+    has_parent = reply_to is not None
+    if actor == "owner":
+        return (
+            intent in _REQUEST_INTENTS
+            and status == "queued"
+            and not has_parent
+            and (
+                intent != "change_request"
+                or value["plan_revision"] is not None
+            )
+        )
+    if actor == "system":
+        return intent == "receipt" and status in {"delivered", "failed"} and has_parent
+    return actor == "oracle" and intent == "reply" and status == "acknowledged" and has_parent
 
 
 def _load_summary(path: Path) -> dict:

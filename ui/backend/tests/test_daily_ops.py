@@ -261,6 +261,22 @@ def test_unknown_cursor_and_actor_shaped_row_fail_closed(tmp_path):
     assert caught.value.status_code == 503
 
 
+@pytest.mark.parametrize("row", [
+    _message(actor="oracle", intent="reply", status="acknowledged"),
+    _message(actor="system", intent="receipt", status="queued"),
+    _message(actor="owner", intent="reply", status="acknowledged"),
+    _message(intent="change_request", plan_revision=None),
+])
+def test_message_actor_intent_lifecycle_combinations_are_not_invented(tmp_path, row):
+    _write_messages(tmp_path, [row])
+    endpoint = _endpoint(_endpoints(
+        tmp_path, authorizer=lambda _request: True, router=lambda _payload: {}
+    ), "/api/daily-ops/messages", "GET")
+    with pytest.raises(HTTPException) as caught:
+        endpoint(_request(), after=None, limit=50)
+    assert caught.value.status_code == 503
+
+
 def test_owner_question_is_authenticated_and_routed_exactly(tmp_path):
     calls = []
     request_id = str(uuid.uuid4())
