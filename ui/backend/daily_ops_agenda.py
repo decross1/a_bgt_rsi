@@ -19,16 +19,14 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-
 _MAX_LATEST_BYTES = 16 * 1024
 _MAX_DATABASE_BYTES = 8 * 1024 * 1024
 _MAX_PAYLOAD_BYTES = 32 * 1024
-_MAX_PROJECTED_GOALS = 3
+_MAX_PROJECTED_TASK_TITLES = 3
 _SEAL_VERSION = 1
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
-_KNOWN_OWNERS = {"codex", "oracle", "nara", "owner", "lab"}
 
 _UNVERIFIED_WARNING = (
     "Pending Oracle agenda could not be verified; no plan revision or action "
@@ -167,6 +165,7 @@ def _validated_payload(payload: object) -> dict[str, Any]:
         or value.get("mode") != "read"
     ):
         raise _InvalidAgenda("payload authority or version is invalid")
+    _text(value.get("objective"), "payload.objective", 2000)
 
     tasks = value.get("tasks")
     if not isinstance(tasks, list) or not 1 <= len(tasks) <= 16:
@@ -231,28 +230,39 @@ def _database_row(database: Path, agenda_id: str, revision: str) -> tuple:
     return rows[0]
 
 
-def _goal(task: dict[str, Any], *, agenda_id: str, revision: str,
-          created: datetime, stale: bool) -> dict[str, str]:
-    owner_text = task["owner"].strip().lower()
-    owner = owner_text if owner_text in _KNOWN_OWNERS else "lab"
-    state = (
-        "Stale pending proposal created before the current research focus; it is not "
-        "approved daily work."
-        if stale else
-        "Pending owner review; no approval or execution is implied."
-    )
-    detail = (
-        f"{state} Why now: {task['why_now']} "
-        f"Artifact: {task['artifact']} Validation: {task['validation']}"
-    )
+def _decision(payload: dict[str, Any], *, agenda_id: str, revision: str,
+              created: datetime, stale: bool) -> dict[str, object]:
+    """Project one proposal-level review decision, never task-level blockers."""
+    if stale:
+        disposition = "amend_required"
+        reason = (
+            "This sealed proposal predates the selected research focus. Request an "
+            "amendment against this exact revision before reviewing a replacement."
+        )
+    else:
+        disposition = "review_required"
+        reason = (
+            "The sealed proposal has not received an exact-revision semantic review. "
+            "Review or request an amendment; no execution is available from this card."
+        )
+    tasks = payload["tasks"]
     return {
-        "id": f"pending-agenda-{revision[:12]}-{task['id'][:64]}",
-        "title": task["title"],
-        "detail": detail,
+        "id": f"agenda-{revision[:16]}",
+        "agenda_id": agenda_id,
+        "revision": revision,
+        "title": "Review the proposed research agenda",
+        "what": payload["objective"],
+        "reason": reason,
+        "disposition": disposition,
+        "approval_required": False,
+        "approve_enabled": False,
+        "execution_available": False,
+        "actions": ["modify", "skip"],
+        "task_titles": [
+            task["title"] for task in tasks[:_MAX_PROJECTED_TASK_TITLES]
+        ],
         "source": f"Oracle proposal {agenda_id}; sealed revision {revision}",
         "observed_at": _iso(created),
-        "status": "awaiting_owner",
-        "owner": owner,
     }
 
 
@@ -265,7 +275,12 @@ def read_pending_agenda(latest_path: str | Path,
     ``latest.json`` simply means there is no proposal to show.
     """
 
-    result: dict[str, object] = {"revision": None, "goals": [], "warnings": []}
+    result: dict[str, object] = {
+        "agenda_id": None,
+        "revision": None,
+        "decision": None,
+        "warnings": [],
+    }
     latest = Path(latest_path).expanduser().absolute()
     try:
         raw = _read_regular(latest, _MAX_LATEST_BYTES)
@@ -326,7 +341,7 @@ def read_pending_agenda(latest_path: str | Path,
 
         if _now() >= expires:
             result["warnings"] = [
-                f"Pending Oracle agenda expired at {_iso(expires)}; no plan revision or tasks are active."
+                f"Pending Oracle agenda expired at {_iso(expires)}; no plan revision or decision is active."
             ]
             return result
 
@@ -336,23 +351,18 @@ def read_pending_agenda(latest_path: str | Path,
         stale = focus_time is not None and created < focus_time
         tasks = payload["tasks"]
         warnings: list[str] = []
-        if stale:
-            warnings.append(
-                "Pending Oracle agenda predates the current research focus and is stale; "
-                "it is awaiting owner review, not approved daily work."
-            )
-        if len(tasks) > _MAX_PROJECTED_GOALS:
+        if len(tasks) > _MAX_PROJECTED_TASK_TITLES:
             warnings.append(
                 f"Pending Oracle agenda contains {len(tasks)} tasks; only the first "
-                f"{_MAX_PROJECTED_GOALS} are shown."
+                f"{_MAX_PROJECTED_TASK_TITLES} task titles are shown."
             )
         result.update(
+            agenda_id=agenda_id,
             revision=revision,
-            goals=[
-                _goal(task, agenda_id=agenda_id, revision=revision,
-                      created=created, stale=stale)
-                for task in tasks[:_MAX_PROJECTED_GOALS]
-            ],
+            decision=_decision(
+                payload, agenda_id=agenda_id, revision=revision,
+                created=created, stale=stale,
+            ),
             warnings=warnings,
         )
         return result

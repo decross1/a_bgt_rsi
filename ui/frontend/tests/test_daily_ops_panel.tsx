@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -7,6 +7,7 @@ const D = vi.hoisted(() => ({
   messages: {} as unknown,
   messageError: null as unknown,
   post: vi.fn(),
+  postDecision: vi.fn(),
 }));
 
 vi.mock("../src/api/dailyOps", async importOriginal => ({
@@ -14,6 +15,7 @@ vi.mock("../src/api/dailyOps", async importOriginal => ({
   getDailyOpsSummary: vi.fn(),
   getDailyOpsMessages: vi.fn(),
   postDailyOpsMessage: D.post,
+  postDailyOpsDecision: D.postDecision,
 }));
 
 vi.mock("../src/api/pollhub", () => ({
@@ -67,6 +69,59 @@ function messages(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function v2Summary(overrides: Record<string, unknown> = {}) {
+  const revision = "1044a9c5ff6b617a7f7fce104019202fd77d38bdb2294ff8749100ed331e9621";
+  return summary({
+    schema_version: "daily-ops-summary/v2",
+    current_plan_revision: revision,
+    warnings: [],
+    capabilities: {
+      auth_required: true, write_available: true, targets: ["oracle"],
+      intents: ["question", "change_request"], nara_interaction: "ask_oracle_about_nara",
+      decision_write_available: true, decision_actions: ["modify", "skip", "reprioritize"],
+    },
+    work_cards: [
+      {
+        id: "build-v2-runner", title: "Finish the experiment runner", what: "Build the runner and evidence records for the current thesis.",
+        benefit: "Lets us run a controlled test and inspect exactly what happened.",
+        cost: { summary: "4–8 engineering hours; no local study runs.", kind: "estimate", basis: "Codex planning estimate from the accepted v2 development sequence; not measured effort." },
+        conviction: { score: 9, kind: "estimate", basis: "Reviewer judgment that this work is worth doing; not a probability of a positive research result." },
+        worth_time: { recommendation: "do_now", basis: "The offline core is complete; this is the next missing integration." },
+        status: "authorized", owner: "codex", depends_on: [], source: "curated daily brief", observed_at: now,
+        approval_required: false, actions: ["modify", "skip", "reprioritize"],
+      },
+      {
+        id: "verify-v2-replay", title: "Check that results can be reproduced", what: "Independently replay the retained evidence and check new fixtures.",
+        benefit: "Catches missing or duplicate steps before we trust study results.",
+        cost: { summary: "2–4 review hours; no local study runs.", kind: "estimate", basis: "Codex planning estimate from the accepted v2 development sequence; not measured effort." },
+        conviction: { score: 9, kind: "estimate", basis: "Reviewer judgment that this work is worth doing; not a probability of a positive research result." },
+        worth_time: { recommendation: "after_dependency", basis: "Start after the runner and new replay fixtures are available." },
+        status: "authorized", owner: "codex", depends_on: ["build-v2-runner"], source: "curated daily brief", observed_at: now,
+        approval_required: false, actions: ["modify", "skip", "reprioritize"],
+      },
+      {
+        id: "draft-v2-shakedown", title: "Plan a small trial", what: "Draft a small, excluded shakedown test for review.",
+        benefit: "Finds setup problems cheaply before the registered study.",
+        cost: { summary: "1–2 agent/review hours; about 1–5 local model minutes.", kind: "estimate", basis: "Codex planning estimate from the accepted v2 development sequence; not measured effort." },
+        conviction: { score: 8, kind: "estimate", basis: "Reviewer judgment that this work is worth doing; not a probability of a positive research result." },
+        worth_time: { recommendation: "after_dependency", basis: "Draft after independent runner/replay acceptance; this card does not run a study." },
+        status: "authorized", owner: "oracle", depends_on: ["verify-v2-replay"], source: "curated daily brief", observed_at: now,
+        approval_required: false, actions: ["modify", "skip", "reprioritize"],
+      },
+    ],
+    agenda_decision: {
+      id: "agenda-decision-1044", agenda_id: "morning-20260920", revision,
+      title: "Morning agenda needs amendment", what: "Keep the runner direction, but replace the stale task framing.",
+      reason: "It imported unrelated L1 debt and used historical episodes as a denominator.",
+      disposition: "amend_required", approval_required: false, approve_enabled: false,
+      execution_available: false, actions: ["modify", "skip"],
+      task_titles: ["Repeat old calibration", "Resolve unrelated L1 debt"],
+      source: "independent semantic review", observed_at: now,
+    },
+    ...overrides,
+  });
+}
+
 function show() {
   return render(<MemoryRouter><DailyOpsPanel legacyResearchOps={null} /></MemoryRouter>);
 }
@@ -77,6 +132,12 @@ beforeEach(() => {
   D.messages = messages();
   D.messageError = null;
   D.post.mockReset().mockResolvedValue({ request_id: "request-2", status: "queued", accepted_at: now, duplicate: false, expected_plan_revision: "plan-revision-20260920-0800" });
+  D.postDecision.mockReset().mockResolvedValue({
+    request_id: "11111111-1111-4111-8111-111111111111", status: "queued",
+    accepted_at: now, duplicate: false, target_kind: "work_card", target_id: "build-v2-runner",
+    action: "modify", expected_plan_revision: "1044a9c5ff6b617a7f7fce104019202fd77d38bdb2294ff8749100ed331e9621",
+    execution_available: false,
+  });
   vi.stubGlobal("crypto", { randomUUID: () => "11111111-1111-4111-8111-111111111111" });
 });
 
@@ -85,6 +146,236 @@ afterEach(() => {
 });
 
 describe("DailyOpsPanel", () => {
+  it("replaces verbose goals with three concise source-bound work cards", () => {
+    D.summary = v2Summary();
+    show();
+
+    expect(screen.getByRole("heading", { name: "Today's work" })).toBeInTheDocument();
+    expect(screen.getByText("These steps are already authorized. No owner approval is needed.")).toBeInTheDocument();
+    expect(screen.getAllByTestId(/^daily-work-card-/)).toHaveLength(3);
+    expect(screen.queryByText("Close the instrument gap")).toBeNull();
+    expect(screen.getByText("Build the runner and evidence records for the current thesis.")).toBeInTheDocument();
+    expect(screen.getByText("Lets us run a controlled test and inspect exactly what happened.")).toBeInTheDocument();
+    expect(screen.getByText("4–8 engineering hours; no local study runs.")).toBeInTheDocument();
+    expect(screen.getAllByText("9/10")).toHaveLength(2);
+    expect(screen.getByText("8/10")).toBeInTheDocument();
+    expect(screen.getAllByText("estimate").length).toBeGreaterThanOrEqual(6);
+    expect(screen.getByText("Build the runner and evidence records for the current thesis.")).toBeVisible();
+    expect(screen.getAllByText("Build the runner and evidence records for the current thesis.")).toHaveLength(1);
+    const metadata = screen.getAllByText("Basis, dependencies, and source")[0].closest("details");
+    expect(metadata).not.toHaveAttribute("open");
+  });
+
+  it("shows the invalid agenda separately without an approval control", () => {
+    D.summary = v2Summary();
+    show();
+
+    const agenda = screen.getByTestId("daily-agenda-decision");
+    expect(agenda).toHaveTextContent("amend required");
+    expect(agenda).toHaveTextContent("This agenda cannot be approved");
+    expect(within(agenda).queryByRole("button", { name: /approve/i })).toBeNull();
+    expect(within(agenda).getByRole("button", { name: "Request corrected draft" })).toBeEnabled();
+    expect(within(agenda).getByRole("button", { name: "Ask to skip" })).toBeEnabled();
+    const provenance = within(agenda).getByText("Revision, superseded proposal titles, and source").closest("details");
+    expect(provenance).not.toHaveAttribute("open");
+  });
+
+  it("turns the AMEND action into a corrected-draft request, not approval", async () => {
+    D.summary = v2Summary();
+    sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
+    show();
+    const agenda = screen.getByTestId("daily-agenda-decision");
+
+    fireEvent.click(within(agenda).getByRole("button", { name: "Request corrected draft" }));
+    const editor = screen.getByTestId("daily-decision-editor");
+    fireEvent.change(within(editor).getByLabelText("Required change"), {
+      target: { value: "Keep only the three current dependency-ordered steps." },
+    });
+    fireEvent.click(within(editor).getByRole("button", { name: "Queue modification request" }));
+
+    await waitFor(() => expect(D.postDecision).toHaveBeenCalledWith({
+      accessKey: "owner-secret",
+      requestId: "11111111-1111-4111-8111-111111111111",
+      targetKind: "agenda",
+      targetId: "agenda-decision-1044",
+      action: "modify",
+      expectedPlanRevision: "1044a9c5ff6b617a7f7fce104019202fd77d38bdb2294ff8749100ed331e9621",
+      note: "Keep only the three current dependency-ordered steps.",
+    }));
+    expect(within(editor).getByText(/No execution is implied/)).toBeInTheDocument();
+    expect(within(agenda).queryByRole("button", { name: /approve/i })).toBeNull();
+  });
+
+  it("focuses a card request and queues only an exact-revision advisory", async () => {
+    D.summary = v2Summary();
+    sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
+    show();
+    const card = screen.getByTestId("daily-work-card-build-v2-runner");
+
+    fireEvent.click(within(card).getByRole("button", { name: "Ask to modify" }));
+    const editor = screen.getByTestId("daily-decision-editor");
+    await waitFor(() => expect(editor).toHaveFocus());
+    const submit = within(editor).getByRole("button", { name: "Queue modification request" });
+    expect(submit).toBeDisabled();
+    const note = within(editor).getByLabelText("Required change");
+    expect(note).toHaveAttribute("maxlength", "3000");
+    fireEvent.change(note, {
+      target: { value: "Keep the runner bounded to the accepted replay contract." },
+    });
+    expect(submit).toBeEnabled();
+    fireEvent.click(submit);
+
+    await waitFor(() => expect(D.postDecision).toHaveBeenCalledWith({
+      accessKey: "owner-secret",
+      requestId: "11111111-1111-4111-8111-111111111111",
+      targetKind: "work_card",
+      targetId: "build-v2-runner",
+      action: "modify",
+      expectedPlanRevision: "1044a9c5ff6b617a7f7fce104019202fd77d38bdb2294ff8749100ed331e9621",
+      note: "Keep the runner bounded to the accepted replay contract.",
+    }));
+    expect(await within(editor).findByText(/Request queued/)).toHaveTextContent("No execution is implied");
+    expect(submit).toBeDisabled();
+    fireEvent.click(submit);
+    expect(D.postDecision).toHaveBeenCalledTimes(1);
+    expect(D.post).not.toHaveBeenCalled();
+  });
+
+  it("does not apply a late request result to a different card editor", async () => {
+    D.summary = v2Summary();
+    sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
+    let resolveRequest: ((value: Record<string, unknown>) => void) | undefined;
+    D.postDecision.mockReturnValueOnce(new Promise(resolve => { resolveRequest = resolve; }));
+    show();
+
+    const first = screen.getByTestId("daily-work-card-build-v2-runner");
+    fireEvent.click(within(first).getByRole("button", { name: "Ask to modify" }));
+    let editor = screen.getByTestId("daily-decision-editor");
+    fireEvent.change(within(editor).getByLabelText("Required change"), {
+      target: { value: "Change the first card." },
+    });
+    fireEvent.click(within(editor).getByRole("button", { name: "Queue modification request" }));
+    expect(within(editor).getByRole("button", { name: "Sending…" })).toBeDisabled();
+    fireEvent.submit(editor.querySelector("form") as HTMLFormElement);
+    expect(D.postDecision).toHaveBeenCalledTimes(1);
+
+    const second = screen.getByTestId("daily-work-card-verify-v2-replay");
+    fireEvent.click(within(second).getByRole("button", { name: "Ask to skip" }));
+    editor = screen.getByTestId("daily-decision-editor");
+    expect(within(editor).getByRole("heading", {
+      name: "Ask to skip · Check that results can be reproduced",
+    })).toBeInTheDocument();
+    expect(within(editor).getByRole("button", { name: "Queue skip request" })).toBeEnabled();
+
+    await act(async () => {
+      resolveRequest?.({
+        request_id: "11111111-1111-4111-8111-111111111111", status: "queued",
+        accepted_at: now, duplicate: false, target_kind: "work_card",
+        target_id: "build-v2-runner", action: "modify",
+        expected_plan_revision: "1044a9c5ff6b617a7f7fce104019202fd77d38bdb2294ff8749100ed331e9621",
+        execution_available: false,
+      });
+      await Promise.resolve();
+    });
+
+    expect(within(editor).queryByText(/Request queued/)).toBeNull();
+    expect(within(editor).getByRole("button", { name: "Queue skip request" })).toBeEnabled();
+    expect(D.postDecision).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a request local and focuses owner access until the tab is unlocked", async () => {
+    D.summary = v2Summary();
+    show();
+    const card = screen.getByTestId("daily-work-card-build-v2-runner");
+
+    fireEvent.click(within(card).getByRole("button", { name: "Ask to skip" }));
+    const editor = screen.getByTestId("daily-decision-editor");
+    expect(within(editor).getByRole("button", { name: "Queue skip request" })).toBeDisabled();
+    fireEvent.click(within(editor).getByRole("button", { name: "Open owner access controls ↓" }));
+    await waitFor(() => expect(screen.getByLabelText(/Owner access key/)).toHaveFocus());
+    expect(D.postDecision).not.toHaveBeenCalled();
+  });
+
+  it("keeps decision controls read-only when only the chat router can write", () => {
+    const candidate = v2Summary() as Record<string, unknown>;
+    candidate.capabilities = {
+      ...(candidate.capabilities as Record<string, unknown>),
+      decision_write_available: false,
+    };
+    D.summary = candidate;
+    sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
+    show();
+
+    expect(screen.getByTestId("daily-decisions-readonly")).toHaveTextContent(
+      "Decision requests are read-only",
+    );
+    const card = screen.getByTestId("daily-work-card-build-v2-runner");
+    expect(within(card).getByRole("button", { name: "Ask to modify" })).toBeDisabled();
+    expect(screen.queryByTestId("daily-decision-editor")).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Message to Oracle"), {
+      target: { value: "The separate chat route still works." },
+    });
+    expect(screen.getByRole("button", { name: "Queue for Oracle" })).toBeEnabled();
+    expect(D.postDecision).not.toHaveBeenCalled();
+  });
+
+  it("keeps decision controls read-only while Oracle is degraded", () => {
+    const candidate = v2Summary() as Record<string, unknown>;
+    const agents = candidate.agents as Record<string, Record<string, unknown>>;
+    candidate.agents = {
+      ...agents,
+      oracle: { ...agents.oracle, status: "degraded", detail: "Review scope is unavailable." },
+    };
+    D.summary = candidate;
+    sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
+    show();
+
+    const card = screen.getByTestId("daily-work-card-build-v2-runner");
+    expect(within(card).getByRole("button", { name: "Ask to skip" })).toBeDisabled();
+    expect(screen.getByTestId("daily-decisions-readonly")).toBeInTheDocument();
+    expect(D.postDecision).not.toHaveBeenCalled();
+  });
+
+  it("rejects a v2 agenda that is not bound to the exact displayed revision", () => {
+    const candidate = v2Summary() as Record<string, unknown>;
+    candidate.agenda_decision = {
+      ...(candidate.agenda_decision as Record<string, unknown>),
+      revision: "different-revision",
+    };
+    D.summary = candidate;
+    show();
+
+    expect(screen.getByTestId("daily-ops-fallback")).toHaveTextContent("Daily synthesis unavailable");
+    expect(screen.queryByTestId("daily-decision-cards")).toBeNull();
+  });
+
+  it("rejects future agenda dispositions that v2 cannot authorize", () => {
+    const candidate = v2Summary() as Record<string, unknown>;
+    candidate.agenda_decision = {
+      ...(candidate.agenda_decision as Record<string, unknown>),
+      disposition: "ready_for_review",
+    };
+    D.summary = candidate;
+    show();
+
+    expect(screen.getByTestId("daily-ops-fallback")).toHaveTextContent("Daily synthesis unavailable");
+    expect(screen.queryByText(/ready for review/i)).toBeNull();
+  });
+
+  it("does not call unreviewed sealed tasks superseded", () => {
+    const candidate = v2Summary() as Record<string, unknown>;
+    candidate.agenda_decision = {
+      ...(candidate.agenda_decision as Record<string, unknown>),
+      disposition: "review_required",
+    };
+    D.summary = candidate;
+    show();
+
+    expect(screen.getByText("Revision, sealed proposal titles, and source")).toBeInTheDocument();
+    expect(screen.queryByText("Revision, superseded proposal titles, and source")).toBeNull();
+  });
+
   it("summarizes the day and shows the main thesis exactly once", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-20T12:00:00Z"));

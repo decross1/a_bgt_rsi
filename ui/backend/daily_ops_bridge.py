@@ -24,11 +24,16 @@ from pathlib import Path
 from fastapi import HTTPException, Request
 
 from .daily_ops import (
-    MAX_SUMMARY_BYTES, _read_regular, _request_payload, _unique_object,
+    MAX_SUMMARY_BYTES,
+    SUMMARY_SCHEMA,
+    _decision_payload,
+    _read_regular,
+    _request_payload,
+    _unique_object,
     _validate_summary,
 )
 from .daily_ops_agenda import read_pending_agenda
-
+from .daily_ops_work_plan import read_work_plan
 
 CANONICAL_INSTANCE = "canonical_oracle"
 BOUNDED_INSTANCE = "bounded_ui_responder"
@@ -232,6 +237,7 @@ class DailyOpsBridge:
         self.requests.mkdir(mode=0o700, exist_ok=True)
         _private_directory(self.requests)
         self.planner = Path(config["planner_latest"]) if config.get("planner_latest") else None
+        self.work_plan = self.state / "daily_ops_work_plan.json"
         self._mutex = threading.RLock()
         self._last_refresh = 0.0
         self._nara_checked = 0.0
@@ -404,6 +410,91 @@ class DailyOpsBridge:
             return None
         return read_pending_agenda(self.planner, None)["revision"]
 
+    def _decision_projection(self) -> tuple[dict, dict]:
+        """Load the exact agenda plus focus-bound reviewer projection."""
+        focus = self._focus()
+        agenda = (
+            read_pending_agenda(self.planner, focus.get("observed_at"))
+            if self.planner is not None else
+            {"agenda_id": None, "revision": None, "decision": None, "warnings": []}
+        )
+        reviewed = read_work_plan(
+            self.work_plan,
+            agenda=agenda,
+            focus_receipt_sha256=focus.get("source_receipt_sha256"),
+        )
+        return agenda, reviewed
+
+    @staticmethod
+    def _decision_message(payload: dict) -> str:
+        target = (
+            f"agenda {payload['target_id']}"
+            if payload["target_kind"] == "agenda" else
+            f"routine work card {payload['target_id']}"
+        )
+        action = payload["action"]
+        if action == "modify":
+            request = f"Request a corrected draft for {target}: {payload['note']}"
+        elif action == "skip":
+            suffix = f" Owner note: {payload['note']}" if payload.get("note") else ""
+            request = f"Propose skipping {target}.{suffix}"
+        else:
+            suffix = f" Owner note: {payload['note']}" if payload.get("note") else ""
+            request = (
+                f"Propose moving {target} to priority {payload['priority']}.{suffix}"
+            )
+        return (
+            f"{request}\n"
+            f"This owner request is bound to sealed revision "
+            f"{payload['expected_plan_revision']}. It requests an amendment only: do "
+            "not treat it as approval, a sealed replacement, execution authority, or "
+            "an immediate change of task status. Return a concise proposed change."
+        )
+
+    def route_decision(self, payload: dict) -> dict:
+        """Route a card action through the existing advisory Oracle mailbox."""
+        payload = _decision_payload(payload)
+        message = {
+            "request_id": payload["request_id"],
+            "target": "oracle",
+            "intent": "change_request",
+            "text": self._decision_message(payload),
+            "expected_plan_revision": payload["expected_plan_revision"],
+        }
+        # Let the underlying durable request enforce exact idempotency before
+        # consulting mutable display projections on retries.
+        if not (self.requests / (payload["request_id"] + ".json")).exists():
+            try:
+                agenda, reviewed = self._decision_projection()
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                raise HTTPException(503, "owner decision projection is unavailable") from exc
+            if payload["expected_plan_revision"] != agenda.get("revision"):
+                raise HTTPException(409, "agenda revision changed or expired; refresh before requesting changes")
+            if payload["target_kind"] == "agenda":
+                target = reviewed.get("agenda_decision")
+            else:
+                target = next(
+                    (card for card in reviewed.get("work_cards", [])
+                     if card.get("id") == payload["target_id"]),
+                    None,
+                )
+            if (not isinstance(target, dict)
+                    or target.get("id") != payload["target_id"]
+                    or payload["action"] not in target.get("actions", [])):
+                raise HTTPException(409, "owner decision target or action is no longer current")
+        receipt = self.route(message)
+        return {
+            "request_id": payload["request_id"],
+            "status": receipt["status"],
+            "accepted_at": receipt["accepted_at"],
+            "duplicate": receipt["duplicate"],
+            "target_kind": payload["target_kind"],
+            "target_id": payload["target_id"],
+            "action": payload["action"],
+            "expected_plan_revision": payload["expected_plan_revision"],
+            "execution_available": False,
+        }
+
     def _require_route_ready(
         self, *, observed_at: datetime, exclude_request_id: str | None = None,
     ) -> dict:
@@ -448,7 +539,9 @@ class DailyOpsBridge:
             "Only the explicitly scoped read/write tools are available for this request. "
             "If more evidence is needed, say what is missing; do not invent it or attempt other tools. "
             "For change requests, draft the proposed revision and explain its effects. "
-            "Keep execution pending the owner's exact-revision approval through the existing approval workflow.\n"
+            "This mailbox cannot approve or execute an agenda. Any future agenda "
+            "signoff or agenda execution requires a separately implemented and "
+            "authenticated workflow.\n"
             "<owner_message>\n" + payload["text"].replace("</owner_message>", "&lt;/owner_message&gt;")
             + "\n</owner_message>"
         )
@@ -742,10 +835,23 @@ class DailyOpsBridge:
                 summary["warnings"] = (summary["warnings"] + ["Current research focus could not be verified."])[-16:]
             agenda = read_pending_agenda(
                 self.planner, (summary["research_focus"] or {}).get("observed_at"),
-            ) if self.planner is not None else {"revision": None, "goals": [], "warnings": []}
+            ) if self.planner is not None else {
+                "agenda_id": None, "revision": None, "decision": None, "warnings": [],
+            }
+            reviewed = read_work_plan(
+                self.work_plan,
+                agenda=agenda,
+                focus_receipt_sha256=(summary["research_focus"] or {}).get(
+                    "source_receipt_sha256",
+                ),
+            )
+            summary["schema_version"] = SUMMARY_SCHEMA
             summary["current_plan_revision"] = agenda["revision"]
-            summary["goals"] = (summary["goals"] + agenda["goals"])[:16]
-            summary["warnings"] = (summary["warnings"] + agenda["warnings"])[-16:]
+            summary["work_cards"] = reviewed["work_cards"]
+            summary["agenda_decision"] = reviewed["agenda_decision"]
+            summary["warnings"] = (
+                summary["warnings"] + agenda["warnings"] + reviewed["warnings"]
+            )[-16:]
             status = self._mailbox_status()
             worker_status = self._bounded_worker_status()
             observation = _iso(_now()) if status is None else status["updated_at"]

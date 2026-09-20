@@ -30,15 +30,15 @@ import re
 import stat
 import subprocess
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 from starlette.responses import Response
 
-
-SUMMARY_SCHEMA = "daily-ops-summary/v1"
+LEGACY_SUMMARY_SCHEMA = "daily-ops-summary/v1"
+SUMMARY_SCHEMA = "daily-ops-summary/v2"
 MESSAGES_SCHEMA = "daily-ops-messages/v1"
 SUMMARY_NAME = "daily_ops_summary.json"
 MESSAGES_NAME = "daily_ops_messages.jsonl"
@@ -48,17 +48,19 @@ MAX_LOG_BYTES = 524_288
 MAX_ROW_BYTES = 8_192
 MAX_ROWS = 100
 MAX_TEXT = 4_096
+MAX_DECISION_NOTE = 3_000
 MAX_SHORT_TEXT = 512
 MAX_ITEMS = 16
 MAX_DEPTH = 12
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
-_SUMMARY_FIELDS = {
+_SUMMARY_FIELDS_V1 = {
     "schema_version", "generated_at", "goals", "accomplishments",
     "improvements", "research_focus", "agents", "warnings",
     "current_plan_revision",
 }
+_SUMMARY_FIELDS_V2 = _SUMMARY_FIELDS_V1 | {"work_cards", "agenda_decision"}
 _GOAL_STATUSES = {"planned", "in_progress", "blocked", "done", "awaiting_owner"}
 _GOAL_OWNERS = {"codex", "oracle", "nara", "owner", "lab"}
 _IMPROVEMENT_STATUSES = {"proposed", "implemented", "verified", "blocked"}
@@ -69,7 +71,13 @@ _ACTORS = {"owner", "oracle", "system"}
 _INTENTS = {"question", "change_request", "reply", "receipt"}
 _REQUEST_INTENTS = {"question", "change_request"}
 _MESSAGE_STATUSES = {"queued", "delivered", "acknowledged", "failed"}
-_PRIVATE_PATH = "/api/daily-ops/messages"
+_PRIVATE_PATHS = {"/api/daily-ops/messages", "/api/daily-ops/decisions"}
+_WORK_CARD_STATUSES = {"authorized", "in_progress", "blocked", "done", "draft"}
+_EVIDENCE_KINDS = {"estimate", "measured", "unrated"}
+_WORTH_TIME = {"do_now", "after_dependency", "hold", "unrated"}
+_AGENDA_DISPOSITIONS = {"amend_required", "review_required"}
+_DECISION_ACTIONS = {"modify", "skip", "reprioritize"}
+_DECISION_TARGETS = {"agenda", "work_card"}
 
 
 def _unique_object(pairs):
@@ -227,10 +235,124 @@ def _agents(value: object) -> bool:
     return True
 
 
+def _evidence(value: object) -> bool:
+    return (
+        isinstance(value, dict)
+        and set(value) == {"summary", "kind", "basis"}
+        and _text(value.get("summary"), MAX_SHORT_TEXT)
+        and value.get("kind") in _EVIDENCE_KINDS
+        and _text(value.get("basis"), MAX_SHORT_TEXT)
+    )
+
+
+def _conviction(value: object) -> bool:
+    if not isinstance(value, dict) or set(value) != {"score", "kind", "basis"}:
+        return False
+    score = value.get("score")
+    kind = value.get("kind")
+    return (
+        kind in _EVIDENCE_KINDS
+        and _text(value.get("basis"), MAX_SHORT_TEXT)
+        and (
+            (kind == "unrated" and score is None)
+            or (kind != "unrated" and type(score) is int and 0 <= score <= 10)
+        )
+    )
+
+
+def _work_cards(value: object) -> bool:
+    if not isinstance(value, list) or len(value) > 3:
+        return False
+    prior: set[str] = set()
+    for card in value:
+        expected = {
+            "id", "title", "what", "benefit", "cost", "conviction",
+            "worth_time", "status", "owner", "depends_on", "source",
+            "observed_at", "approval_required", "actions",
+        }
+        if not isinstance(card, dict) or set(card) != expected:
+            return False
+        ident = card.get("id")
+        dependencies = card.get("depends_on")
+        actions = card.get("actions")
+        worth = card.get("worth_time")
+        if not (
+            _identifier(ident)
+            and ident not in prior
+            and _text(card.get("title"), MAX_SHORT_TEXT)
+            and _text(card.get("what"))
+            and _text(card.get("benefit"))
+            and _evidence(card.get("cost"))
+            and _conviction(card.get("conviction"))
+            and isinstance(worth, dict)
+            and set(worth) == {"recommendation", "basis"}
+            and worth.get("recommendation") in _WORTH_TIME
+            and _text(worth.get("basis"), MAX_SHORT_TEXT)
+            and card.get("status") in _WORK_CARD_STATUSES
+            and card.get("owner") in _GOAL_OWNERS - {"owner"}
+            and isinstance(dependencies, list)
+            and len(dependencies) <= 3
+            and len(set(dependencies)) == len(dependencies)
+            and all(_identifier(item) and item in prior for item in dependencies)
+            and _text(card.get("source"), MAX_SHORT_TEXT)
+            and _timestamp(card.get("observed_at"))
+            and card.get("approval_required") is False
+            and isinstance(actions, list)
+            and 1 <= len(actions) <= 3
+            and len(set(actions)) == len(actions)
+            and set(actions).issubset(_DECISION_ACTIONS)
+            and "reprioritize" in actions
+        ):
+            return False
+        prior.add(ident)
+    return True
+
+
+def _agenda_decision(value: object, current_revision: object) -> bool:
+    if value is None:
+        return current_revision is None
+    expected = {
+        "id", "agenda_id", "revision", "title", "what", "reason",
+        "disposition", "approval_required", "approve_enabled",
+        "execution_available", "actions", "task_titles", "source",
+        "observed_at",
+    }
+    if not isinstance(value, dict) or set(value) != expected:
+        return False
+    actions = value.get("actions")
+    titles = value.get("task_titles")
+    return (
+        _identifier(value.get("id"))
+        and _identifier(value.get("agenda_id"))
+        and _identifier(value.get("revision"))
+        and value.get("revision") == current_revision
+        and _text(value.get("title"), MAX_SHORT_TEXT)
+        and _text(value.get("what"))
+        and _text(value.get("reason"))
+        and value.get("disposition") in _AGENDA_DISPOSITIONS
+        and value.get("approval_required") is False
+        and value.get("approve_enabled") is False
+        and value.get("execution_available") is False
+        and isinstance(actions, list)
+        and 1 <= len(actions) <= 2
+        and len(set(actions)) == len(actions)
+        and set(actions).issubset({"modify", "skip"})
+        and isinstance(titles, list)
+        and len(titles) <= 3
+        and all(_text(title, MAX_SHORT_TEXT) for title in titles)
+        and _text(value.get("source"), MAX_SHORT_TEXT)
+        and _timestamp(value.get("observed_at"))
+    )
+
+
 def _validate_summary(value: object) -> dict:
-    if not isinstance(value, dict) or set(value) != _SUMMARY_FIELDS:
-        raise ValueError("summary fields do not match the v1 contract")
-    if value.get("schema_version") != SUMMARY_SCHEMA or not _timestamp(value.get("generated_at")):
+    if not isinstance(value, dict):
+        raise ValueError("summary is not an object")
+    schema = value.get("schema_version")
+    expected = _SUMMARY_FIELDS_V2 if schema == SUMMARY_SCHEMA else _SUMMARY_FIELDS_V1
+    if schema not in {SUMMARY_SCHEMA, LEGACY_SUMMARY_SCHEMA} or set(value) != expected:
+        raise ValueError("summary fields do not match a supported contract")
+    if not _timestamp(value.get("generated_at")):
         raise ValueError("summary schema or timestamp is invalid")
     revision = value.get("current_plan_revision")
     if revision is not None and not _identifier(revision):
@@ -251,6 +373,11 @@ def _validate_summary(value: object) -> dict:
         raise ValueError("summary warnings are invalid")
     if not _focus(value.get("research_focus")) or not _agents(value.get("agents")):
         raise ValueError("summary focus or agent observations are invalid")
+    if schema == SUMMARY_SCHEMA and (
+        not _work_cards(value.get("work_cards"))
+        or not _agenda_decision(value.get("agenda_decision"), revision)
+    ):
+        raise ValueError("summary work cards or agenda decision are invalid")
     if not _json_safe(value):
         raise ValueError("summary is not safely JSON encodable")
     return value
@@ -375,6 +502,57 @@ def _request_payload(payload: object) -> dict:
     return dict(payload)
 
 
+def _decision_payload(payload: object) -> dict:
+    required = {
+        "request_id", "target_kind", "target_id", "action",
+        "expected_plan_revision",
+    }
+    optional = {"note", "priority"}
+    if (not isinstance(payload, dict) or not required.issubset(payload)
+            or not set(payload).issubset(required | optional)):
+        raise HTTPException(
+            status_code=422,
+            detail="owner decision fields do not match the v1 contract",
+        )
+    try:
+        parsed = uuid.UUID(str(payload.get("request_id")))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(status_code=422, detail="request_id must be a canonical UUID") from exc
+    if str(parsed) != payload.get("request_id"):
+        raise HTTPException(status_code=422, detail="request_id must be a canonical UUID")
+    target = payload.get("target_kind")
+    action = payload.get("action")
+    note = payload.get("note")
+    priority = payload.get("priority")
+    if (
+        target not in _DECISION_TARGETS
+        or not _identifier(payload.get("target_id"))
+        or action not in _DECISION_ACTIONS
+        or not _identifier(payload.get("expected_plan_revision"))
+        or (
+            note is not None
+            and (
+                not _text(note, MAX_DECISION_NOTE)
+                or not _json_safe(note)
+                or len(note.encode("utf-8")) > MAX_DECISION_NOTE
+            )
+        )
+        or (priority is not None and priority not in {"now", "next", "later"})
+    ):
+        raise HTTPException(status_code=422, detail="owner decision is invalid")
+    if action == "modify" and note is None:
+        raise HTTPException(status_code=422, detail="modify requires a note")
+    if action == "reprioritize":
+        if target != "work_card" or priority is None:
+            raise HTTPException(
+                status_code=422,
+                detail="reprioritize requires a work card and priority",
+            )
+    elif priority is not None:
+        raise HTTPException(status_code=422, detail="priority is only valid for reprioritize")
+    return dict(payload)
+
+
 def _router_receipt(
     value: object,
     request_id: str,
@@ -397,12 +575,35 @@ def _router_receipt(
     return value
 
 
+def _decision_router_receipt(value: object, payload: dict) -> dict:
+    expected = {
+        "request_id", "status", "accepted_at", "duplicate", "target_kind",
+        "target_id", "action", "expected_plan_revision", "execution_available",
+    }
+    if not isinstance(value, dict) or set(value) != expected:
+        raise ValueError("decision router receipt fields do not match the v1 contract")
+    if (
+        value.get("request_id") != payload["request_id"]
+        or value.get("status") != "queued"
+        or not _timestamp(value.get("accepted_at"))
+        or not isinstance(value.get("duplicate"), bool)
+        or value.get("target_kind") != payload["target_kind"]
+        or value.get("target_id") != payload["target_id"]
+        or value.get("action") != payload["action"]
+        or value.get("expected_plan_revision") != payload["expected_plan_revision"]
+        or value.get("execution_available") is not False
+    ):
+        raise ValueError("decision router receipt is invalid")
+    return value
+
+
 def register(
     app,
     *,
     state_dir: Path,
     owner_authorizer: Callable[[Request], bool] | None = None,
     message_router: Callable[[dict], dict] | None = None,
+    decision_router: Callable[[dict], dict] | None = None,
     projection_refresher: Callable[[], None] | None = None,
 ) -> APIRouter:
     """Attach the daily-ops routes.
@@ -415,19 +616,22 @@ def register(
     summary_path = root / SUMMARY_NAME
     messages_path = root / MESSAGES_NAME
     writable = owner_authorizer is not None and message_router is not None
+    decisions_writable = owner_authorizer is not None and decision_router is not None
     capabilities = {
         "auth_required": True,
         "write_available": writable,
         "targets": ["oracle"],
         "intents": ["question", "change_request"],
         "nara_interaction": "ask_oracle_about_nara",
+        "decision_write_available": decisions_writable,
+        "decision_actions": ["modify", "skip", "reprioritize"],
     }
     router = APIRouter(prefix="/api/daily-ops", tags=["daily-ops"])
 
     @app.middleware("http")
     async def _daily_ops_private_response_headers(request: Request, call_next):
         response = await call_next(request)
-        if request.url.path.rstrip("/") == _PRIVATE_PATH:
+        if request.url.path.rstrip("/") in _PRIVATE_PATHS:
             _private_cache_headers(response)
         return response
 
@@ -472,6 +676,8 @@ def register(
                 "research_focus": None,
                 "agents": {},
                 "warnings": ["daily operations snapshot is not available"],
+                "work_cards": [],
+                "agenda_decision": None,
                 "capabilities": capabilities,
             }
         try:
@@ -547,6 +753,22 @@ def register(
             raise HTTPException(status_code=502, detail="Oracle message routing failed") from exc
         except ValueError as exc:
             raise HTTPException(status_code=502, detail="Oracle router returned an invalid receipt") from exc
+
+    @router.post("/decisions")
+    def post_decision(request: Request, payload: dict = Body(...)):
+        value = _decision_payload(payload)
+        if owner_authorizer is None or decision_router is None:
+            raise HTTPException(status_code=503, detail="trusted owner decision routing is not configured")
+        _require_owner(request)
+        _refresh_projection()
+        try:
+            return _decision_router_receipt(decision_router(value), value)
+        except HTTPException:
+            raise
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise HTTPException(status_code=502, detail="Oracle decision routing failed") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=502, detail="Oracle decision router returned an invalid receipt") from exc
 
     app.include_router(router)
     return router

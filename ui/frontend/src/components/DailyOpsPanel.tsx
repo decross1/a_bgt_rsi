@@ -4,11 +4,18 @@ import {
   DailyOpsError,
   getDailyOpsMessages,
   getDailyOpsSummary,
+  postDailyOpsDecision,
   postDailyOpsMessage,
   type DailyOpsIntent,
   type DailyOpsMessageRow,
 } from "../api/dailyOps";
 import { refreshPoll, usePolled } from "../api/pollhub";
+import DailyDecisionCards, {
+  type DailyAgendaDecision,
+  type DailyDecisionRequest,
+  type DailyWorkCard,
+  type EvidenceKind,
+} from "./DailyDecisionCards";
 import { ResearchOpsCard } from "./ResearchOpsCard";
 
 const SUMMARY_KEY = "daily_ops_summary";
@@ -18,6 +25,15 @@ const STATUS = new Set(["planned", "in_progress", "blocked", "done", "awaiting_o
 const IMPROVEMENT_STATUS = new Set(["proposed", "implemented", "verified", "blocked"]);
 const AGENT_STATUS = new Set(["online", "working", "idle", "waiting", "degraded", "offline", "unknown"]);
 const MESSAGE_STATUS = new Set(["queued", "delivered", "acknowledged", "failed"]);
+const WORK_CARD_STATUS = new Set(["authorized", "in_progress", "blocked", "done", "draft"]);
+const EVIDENCE_KIND = new Set(["estimate", "measured", "unrated"]);
+const WORTH_TIME = new Set(["do_now", "after_dependency", "hold", "unrated"]);
+const WORK_ACTION = new Set(["modify", "skip", "reprioritize"]);
+const AGENDA_ACTION = new Set(["modify", "skip"]);
+const AGENDA_DISPOSITION = new Set([
+  "amend_required", "review_required",
+]);
+const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 
 const record = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
@@ -66,7 +82,100 @@ type Summary = {
   authRequired: boolean;
   writeAvailable: boolean;
   currentPlanRevision: string | null;
+  workCards: DailyWorkCard[] | null;
+  agendaDecision: DailyAgendaDecision | null;
+  decisionWriteAvailable: boolean;
+  decisionActions: string[];
 };
+
+const safeId = (value: unknown): value is string =>
+  typeof value === "string" && SAFE_ID.test(value);
+
+function uniqueStrings(value: unknown, limit: number, valid: (item: unknown) => item is string): string[] | null {
+  if (!Array.isArray(value) || value.length > limit || !value.every(valid)) return null;
+  const items = value as string[];
+  return new Set(items).size === items.length ? items : null;
+}
+
+function evidence(value: unknown): { kind: EvidenceKind; basis: string } | null {
+  if (!record(value) || !bounded(value.kind, 32) || !EVIDENCE_KIND.has(value.kind) ||
+      !bounded(value.basis, 512)) return null;
+  return { kind: value.kind as EvidenceKind, basis: value.basis };
+}
+
+function workCards(value: unknown): DailyWorkCard[] | null {
+  if (!Array.isArray(value) || value.length > 3) return null;
+  const seen = new Set<string>();
+  const parsed: DailyWorkCard[] = [];
+  for (const item of value) {
+    if (!record(item) || !safeId(item.id) || seen.has(item.id) ||
+        !bounded(item.title, 512) || !bounded(item.what, 4096) || !bounded(item.benefit, 4096) ||
+        !record(item.cost) || !bounded(item.cost.summary, 512) ||
+        !record(item.conviction) || !record(item.worth_time) ||
+        !bounded(item.worth_time.recommendation, 32) || !WORTH_TIME.has(item.worth_time.recommendation) ||
+        !bounded(item.worth_time.basis, 512) || !bounded(item.status, 32) ||
+        !WORK_CARD_STATUS.has(item.status) || !["codex", "oracle", "nara", "lab"].includes(String(item.owner)) ||
+        !bounded(item.source, 512) || !timestamp(item.observed_at) || item.approval_required !== false) return null;
+    const cost = evidence(item.cost);
+    const conviction = evidence(item.conviction);
+    const score = item.conviction.score;
+    if (!cost || !conviction || !(
+      (conviction.kind === "unrated" && score === null) ||
+      (conviction.kind !== "unrated" && typeof score === "number" && Number.isInteger(score) && score >= 0 && score <= 10)
+    )) return null;
+    const dependsOn = uniqueStrings(item.depends_on, 3, safeId);
+    const actions = uniqueStrings(item.actions, 3,
+      (action): action is string => typeof action === "string" && WORK_ACTION.has(action));
+    if (!dependsOn || !actions || dependsOn.some(dependency => !seen.has(dependency))) return null;
+    parsed.push({
+      id: item.id, title: item.title, what: item.what, benefit: item.benefit,
+      cost: { summary: item.cost.summary, ...cost },
+      conviction: { score: score as number | null, ...conviction },
+      worthTime: {
+        recommendation: item.worth_time.recommendation as DailyWorkCard["worthTime"]["recommendation"],
+        basis: item.worth_time.basis,
+      },
+      status: item.status as DailyWorkCard["status"],
+      owner: item.owner as DailyWorkCard["owner"],
+      dependsOn,
+      source: item.source,
+      observedAt: item.observed_at,
+      actions: actions as DailyWorkCard["actions"],
+    });
+    seen.add(item.id);
+  }
+  return parsed;
+}
+
+function agendaDecision(value: unknown, currentRevision: string | null): DailyAgendaDecision | null | undefined {
+  if (value === null) return null;
+  if (!record(value) || !safeId(value.id) || !safeId(value.agenda_id) ||
+      !bounded(value.revision, 200) || value.revision !== currentRevision ||
+      !bounded(value.title, 512) || !bounded(value.what, 4096) || !bounded(value.reason, 4096) ||
+      !bounded(value.disposition, 32) || !AGENDA_DISPOSITION.has(value.disposition) ||
+      value.approval_required !== false || value.approve_enabled !== false ||
+      value.execution_available !== false || !bounded(value.source, 512) ||
+      !timestamp(value.observed_at)) return undefined;
+  const actions = uniqueStrings(value.actions, 2,
+    (action): action is string => typeof action === "string" && AGENDA_ACTION.has(action));
+  const taskTitles = uniqueStrings(value.task_titles, 3,
+    (title): title is string => bounded(title, 512));
+  if (!actions || !taskTitles) return undefined;
+  return {
+    id: value.id,
+    agendaId: value.agenda_id,
+    revision: value.revision,
+    title: value.title,
+    what: value.what,
+    reason: value.reason,
+    disposition: value.disposition as DailyAgendaDecision["disposition"],
+    approveEnabled: false,
+    actions: actions as DailyAgendaDecision["actions"],
+    taskTitles,
+    source: value.source,
+    observedAt: value.observed_at,
+  };
+}
 
 function workItems(value: unknown, kind: "goal" | "accomplishment" | "improvement"): WorkItem[] {
   if (!Array.isArray(value)) return [];
@@ -117,7 +226,7 @@ function agent(value: unknown): AgentState | null {
 }
 
 export function admitDailyOpsSummary(value: unknown): Summary | null {
-  if (!record(value) || value.schema_version !== "daily-ops-summary/v1" ||
+  if (!record(value) || !["daily-ops-summary/v1", "daily-ops-summary/v2"].includes(String(value.schema_version)) ||
       typeof value.available !== "boolean" || !timestamp(value.generated_at) ||
       !record(value.capabilities) || value.capabilities.auth_required !== true ||
       typeof value.capabilities.write_available !== "boolean" ||
@@ -132,6 +241,20 @@ export function admitDailyOpsSummary(value: unknown): Summary | null {
   const completeAgents = agents && agents.oracle && agents.piClient && agents.nara
     ? { oracle: agents.oracle, piClient: agents.piClient, nara: agents.nara }
     : null;
+  const currentPlanRevision = value.current_plan_revision === null || bounded(value.current_plan_revision, 200)
+    ? value.current_plan_revision as string | null
+    : null;
+  const isV2 = value.schema_version === "daily-ops-summary/v2";
+  const cards = isV2 ? workCards(value.work_cards) : null;
+  const decision = isV2 ? agendaDecision(value.agenda_decision, currentPlanRevision) : null;
+  const decisionActions = isV2
+    ? uniqueStrings(value.capabilities.decision_actions, 3,
+      (action): action is string => typeof action === "string" && WORK_ACTION.has(action))
+    : [];
+  if (isV2 && (cards === null || decision === undefined ||
+      typeof value.capabilities.decision_write_available !== "boolean" || decisionActions === null ||
+      cards.some(card => card.actions.some(action => !decisionActions.includes(action))) ||
+      (decision?.actions.some(action => !decisionActions.includes(action)) ?? false))) return null;
   return {
     available: value.available,
     notesUpdatedAt: value.generated_at,
@@ -145,9 +268,11 @@ export function admitDailyOpsSummary(value: unknown): Summary | null {
       : [],
     authRequired: true,
     writeAvailable: value.capabilities.write_available,
-    currentPlanRevision: value.current_plan_revision === null || bounded(value.current_plan_revision, 200)
-      ? value.current_plan_revision as string | null
-      : null,
+    currentPlanRevision,
+    workCards: cards,
+    agendaDecision: decision ?? null,
+    decisionWriteAvailable: isV2 && value.capabilities.decision_write_available === true,
+    decisionActions: decisionActions ?? [],
   };
 }
 
@@ -350,6 +475,18 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
   const changeBound = intent !== "change_request" || Boolean(summary?.currentPlanRevision);
   const canSubmit = writeAvailable && accessKey.length > 0 && text.trim().length > 0 &&
     text.trim().length <= 4096 && changeBound && oracleReady && submit.kind !== "submitting";
+  const decisionRouteAvailable = summary?.decisionWriteAvailable === true &&
+    Boolean(summary.currentPlanRevision) && oracleReady;
+  const decisionCanRequest = decisionRouteAvailable && accessKey.length > 0;
+  const decisionBlockedReason = !accessKey
+    ? "Unlock owner access below before sending a request."
+    : !summary?.currentPlanRevision
+      ? "No exact agenda revision is available for a source-bound request."
+      : !summary.decisionWriteAvailable
+        ? "The authenticated decision-request route is read-only."
+        : !oracleReady
+          ? `${responderLabel} is unavailable; requests remain unsent.`
+          : null;
 
   function saveAccessKey() {
     const next = keyDraft.trim();
@@ -366,6 +503,30 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
     setIntent("question");
     setText("What is Nara currently working on, what is blocking it, and what should change next?");
     setSubmit({ kind: "idle" });
+  }
+
+  function requireOwnerAccess() {
+    const input = document.querySelector<HTMLInputElement>("#daily-owner-key");
+    input?.scrollIntoView({ block: "center" });
+    input?.focus();
+  }
+
+  async function requestDecision(request: DailyDecisionRequest) {
+    if (!summary?.currentPlanRevision)
+      throw new DailyOpsError(409, "no current plan revision is available");
+    const receipt = await postDailyOpsDecision({
+      accessKey,
+      requestId: request.requestId,
+      targetKind: request.targetKind,
+      targetId: request.targetId,
+      action: request.action,
+      expectedPlanRevision: summary.currentPlanRevision,
+      ...(request.note ? { note: request.note } : {}),
+      ...(request.priority ? { priority: request.priority } : {}),
+    });
+    refreshPoll(SUMMARY_KEY);
+    refreshPoll(MESSAGES_KEY);
+    return receipt;
   }
 
   async function send(event: React.FormEvent) {
@@ -444,11 +605,15 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
       {summary.warnings.map(warning => <p key={warning}>{warning}</p>)}
     </div>}
 
-    <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)]">
-      <section aria-labelledby="daily-goals-heading" className="rounded border border-[var(--border-1)] p-4">
+    <div className={`mt-4 grid gap-4 ${summary.workCards === null ? "lg:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)]" : ""}`}>
+      {summary.workCards === null ? <section aria-labelledby="daily-goals-heading" className="rounded border border-[var(--border-1)] p-4">
         <h3 id="daily-goals-heading" className="text-base font-semibold">{notesAreCurrent ? "Goals for today" : "Recorded goals and current agenda"}</h3>
         <ItemList items={summary.goals} empty="No daily goals are recorded in this snapshot." />
-      </section>
+      </section> : <div className="rounded border border-[var(--border-1)] p-4">
+        <DailyDecisionCards cards={summary.workCards} agenda={summary.agendaDecision}
+          requestAvailable={decisionRouteAvailable} canRequest={decisionCanRequest} blockedReason={decisionBlockedReason}
+          onRequireAccess={requireOwnerAccess} onRequest={requestDecision} />
+      </div>}
       <section aria-labelledby="daily-focus-heading" className="rounded border border-[var(--group-research)] p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 id="daily-focus-heading" className="text-base font-semibold">Main research thesis</h3>
