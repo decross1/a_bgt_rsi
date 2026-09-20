@@ -151,6 +151,7 @@ describe("DailyOpsPanel", () => {
     show();
 
     expect(screen.getByRole("heading", { name: "Today's work" })).toBeInTheDocument();
+    expect(screen.getByText("These steps are already authorized. No owner approval is needed.")).toBeInTheDocument();
     expect(screen.getAllByTestId(/^daily-work-card-/)).toHaveLength(3);
     expect(screen.queryByText("Close the instrument gap")).toBeNull();
     expect(screen.getByText("Build the runner and evidence records for the current thesis.")).toBeInTheDocument();

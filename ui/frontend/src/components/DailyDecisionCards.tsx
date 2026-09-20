@@ -289,7 +289,9 @@ export function DailyDecisionCards({ cards, agenda, requestAvailable, canRequest
     <div className="flex flex-wrap items-end justify-between gap-2">
       <div><h3 id="daily-work-heading" className="text-base font-semibold">Today&apos;s work</h3>
         <p className="mt-1 text-sm text-[var(--fg-muted)]">{cards.length > 0
-          ? "Authorized steps continue unless you ask to change them."
+          ? cards.every(card => ["authorized", "in_progress"].includes(card.status))
+            ? "These steps are already authorized. No owner approval is needed."
+            : "Review each card's recorded status before changing the plan."
           : "No reviewed work steps are available."}</p></div>
       <span className="text-xs text-[var(--fg-muted)]">{cards.length}/3 cards shown</span>
     </div>
