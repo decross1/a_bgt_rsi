@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import orchestrator.research_pipeline_progress as progress_module
+from orchestrator import experiment_admission
 from orchestrator.research_campaign import bind_topic, load_campaign
 from orchestrator.research_pipeline_progress import project_research_pipeline
 
@@ -76,6 +77,146 @@ def _root(tmp_path: Path) -> Path:
 def _campaign_link(root: Path) -> dict[str, str]:
     campaign = load_campaign(repo_root=root)
     return bind_topic(campaign, campaign["research_question"]["text"])
+
+
+def _admitted_l3_iteration(
+    root: Path,
+    monkeypatch,
+    iteration_id: str,
+    *,
+    at: str,
+) -> tuple[dict, dict[str, str]]:
+    """Build and replay real source-bound L2 evidence for a V2 fixture.
+
+    These projection tests used to manufacture L3 from a row-carried
+    ``experiment_outcome``.  V2 correctly caps that at L1.  Keep the positive
+    L3/L4/L5 paths meaningful by freezing a tiny verifier, study manifest and
+    raw artifact under the temporary repository, then admitting them through
+    the production receipt/replay seam.
+    """
+    verifier_relative = "experiments/test_pipeline_admission.py"
+    verifier_path = root / verifier_relative
+    verifier_path.write_text("# frozen pipeline test verifier\n", encoding="utf-8")
+
+    study_path = root / "experiments/agentic_game_theory_v2_calibration_2026-09-14.json"
+    study = json.loads(study_path.read_text(encoding="utf-8"))
+    study["execution_modules"] = {
+        "independent_admission_path": verifier_relative,
+        "independent_admission_sha256": hashlib.sha256(
+            verifier_path.read_bytes()
+        ).hexdigest(),
+    }
+    _write_json(study_path, study)
+
+    manifest_path = (
+        root / "experiments/research_campaign_v2_agentic_game_theory_20260914.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["study_manifests"][0]["sha256"] = hashlib.sha256(
+        study_path.read_bytes()
+    ).hexdigest()
+    preregistration = root / manifest["study_manifests"][0]["preregistration_path"]
+    manifest["study_manifests"][0]["preregistration_sha256"] = hashlib.sha256(
+        preregistration.read_bytes()
+    ).hexdigest()
+    _write_json(manifest_path, manifest)
+
+    campaign = load_campaign(repo_root=root)
+    link = bind_topic(campaign, campaign["research_question"]["text"])
+    _write_json(
+        root / "run_state/weekly_upgrade/activation-2026-09-14/activation.json",
+        {
+            "schema_version": "weekly-upgrade-activation/v1",
+            "activated_at": CUTOFF,
+            "canonical_head": "a" * 40,
+            "startup_verified": True,
+            "service": {"ActiveState": "active", "SubState": "running"},
+        },
+    )
+    _write_json(
+        root / "run_state/active_research_campaign.json",
+        {
+            "schema_version": "research-campaign-activation/v1",
+            "campaign_id": campaign["campaign_id"],
+            "campaign_manifest_sha256": campaign["_manifest_sha256"],
+            "activated_at": "2026-09-14T22:20:00Z",
+            "activated_by": "projection-test",
+        },
+    )
+
+    artifact_root = root / "test_artifacts"
+    artifact_output = artifact_root / iteration_id
+    artifact_output.mkdir(parents=True)
+    _write_json(
+        artifact_output / "run.json",
+        {"status": "complete", "independent_episodes": 30, "effect": 0.25},
+    )
+
+    def validator(path: Path) -> dict:
+        raw = (path / "run.json").read_bytes()
+        value = json.loads(raw)
+        return {
+            "campaign_id": campaign["campaign_id"],
+            "study_id": study["study_id"],
+            "admission_eligible": value.get("status") == "complete",
+            "recorded_episodes": value["independent_episodes"],
+            "run_sha256": hashlib.sha256(raw).hexdigest(),
+            "effect": value["effect"],
+        }
+
+    def outcome_builder(gate: dict) -> dict:
+        return {
+            "experiment_id": study["study_id"],
+            "metric": "registered_effect",
+            "value": {
+                "effect": gate["effect"],
+                "run_sha256": gate["run_sha256"],
+            },
+            "trials": gate["recorded_episodes"],
+            "summary": "Registered synthetic outcome for pipeline projection.",
+        }
+
+    verifier_id = "pipeline-projection-study/v1"
+    spec = experiment_admission.VerifierSpec(
+        verifier_id=verifier_id,
+        campaign_id=campaign["campaign_id"],
+        study_id=study["study_id"],
+        metric="registered_effect",
+        verifier_source_path=verifier_relative,
+        raw_result_path="run.json",
+        unit_name="independent_episodes",
+        evidence_kind="registered_synthetic_study",
+        l2_capable=True,
+        artifact_roots={"pipeline-test": artifact_root},
+        validator_loader=lambda: validator,
+        outcome_builder=outcome_builder,
+    )
+    specs = {verifier_id: spec}
+    monkeypatch.setattr(experiment_admission, "DEFAULT_VERIFIERS", specs)
+    outcome = outcome_builder(validator(artifact_output))
+    bundle = experiment_admission.admit_for_dispatch(
+        repo_root=root,
+        campaign=campaign,
+        campaign_link=link,
+        outcome=outcome,
+        request=experiment_admission.AdmissionRequest(
+            verifier_id=verifier_id,
+            artifact_root_id="pipeline-test",
+            artifact_subpath=iteration_id,
+        ),
+        specs=specs,
+    )
+
+    row = _l3_iteration(iteration_id, at=at, campaign=link)
+    hypothesis = "Agents condition public-goods actions on disclosed payoff objectives."
+    row["hypothesis"] = {
+        "text": hypothesis,
+        "candidates_considered": 1,
+        "all_candidates": [hypothesis],
+    }
+    row["experiment_outcome"] = outcome
+    row["experiment_admission_ref"] = bundle.reference
+    return row, link
 
 
 def _digest(request: dict) -> str:
@@ -241,22 +382,26 @@ def test_campaign_membership_requires_exact_link_not_time_or_text(
     assert encoded.count(_SOURCE_CAMPAIGN["research_question"]["text"]) == 1
 
 
-def test_exact_identifier_chain_can_earn_l5_without_exposing_payloads(tmp_path: Path) -> None:
+def test_exact_identifier_chain_can_earn_l5_without_exposing_payloads(
+    tmp_path: Path, monkeypatch,
+) -> None:
     root = _root(tmp_path)
     iteration_id = "iter-2026-09-14-009"
+    iteration, link = _admitted_l3_iteration(
+        root, monkeypatch, iteration_id, at="2026-09-14T22:30:01Z"
+    )
     cycle = _cycle(
         run_id="cycle-1", step_id="cycle-1:step:0",
         iteration_id=iteration_id, at="2026-09-14T22:30:00Z",
+        campaign=link,
     )
     cycle["topic_source"] = "campaign_preregistered"
     _write_jsonl(root, "run_state/coordinator_cycles.jsonl", [
         cycle,
     ])
-    _write_jsonl(root, "memory/loop_memory.jsonl", [
-        _l3_iteration(iteration_id, at="2026-09-14T22:30:01Z")
-    ])
+    _write_jsonl(root, "memory/loop_memory.jsonl", [iteration])
     _write_jsonl(root, "memory/surfaced_findings.jsonl", [{
-        "campaign": DEFAULT_CAMPAIGN_LINK,
+        "campaign": link,
         "source_iteration_id": iteration_id,
         "finding_id": f"sf-{iteration_id}",
         "promoted_at": "2026-09-14T22:45:00Z",
@@ -666,20 +811,24 @@ def test_missing_health_source_withholds_provisional_flags(tmp_path: Path) -> No
     )
 
 
-def test_campaign_progress_survives_iso_week_rollover(tmp_path: Path) -> None:
+def test_campaign_progress_survives_iso_week_rollover(
+    tmp_path: Path, monkeypatch,
+) -> None:
     root = _root(tmp_path)
     iteration_id = "iter-rollover"
+    iteration, link = _admitted_l3_iteration(
+        root, monkeypatch, iteration_id, at="2026-09-20T23:51:00Z"
+    )
     _write_jsonl(root, "run_state/coordinator_cycles.jsonl", [
         _cycle(
             run_id="cycle-rollover", step_id="cycle-rollover:step:0",
             iteration_id=iteration_id, at="2026-09-20T23:50:00Z",
+            campaign=link,
         ),
     ])
-    _write_jsonl(root, "memory/loop_memory.jsonl", [
-        _l3_iteration(iteration_id, at="2026-09-20T23:51:00Z"),
-    ])
+    _write_jsonl(root, "memory/loop_memory.jsonl", [iteration])
     _write_jsonl(root, "memory/surfaced_findings.jsonl", [{
-        "campaign": DEFAULT_CAMPAIGN_LINK,
+        "campaign": link,
         "source_iteration_id": iteration_id,
         "finding_id": f"sf-{iteration_id}",
         "promoted_at": "2026-09-21T00:10:00Z",
@@ -729,9 +878,12 @@ def test_inactive_campaign_never_counts_explicit_rows_as_runtime_progress(
 
 
 def test_closed_campaign_caps_campaign_to_date_window(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch,
 ) -> None:
     root = _root(tmp_path)
+    iteration, link = _admitted_l3_iteration(
+        root, monkeypatch, "iter-before-close", at="2026-09-14T22:45:00Z"
+    )
     campaign = load_campaign(repo_root=root)
     closure_path = (
         root / progress_module.CAMPAIGN_CLOSURE_DIR
@@ -748,19 +900,17 @@ def test_closed_campaign_caps_campaign_to_date_window(
         _cycle(
             run_id="cycle-before-close", step_id="cycle-before-close:step:0",
             iteration_id="iter-before-close", at="2026-09-14T22:30:00Z",
+            campaign=link,
         ),
         _cycle(
             run_id="cycle-after-close", step_id="cycle-after-close:step:0",
             iteration_id="iter-after-close", at="2026-09-14T22:50:00Z",
+            campaign=link,
         ),
     ])
-    _write_jsonl(root, "memory/loop_memory.jsonl", [
-        _l3_iteration(
-            "iter-before-close", at="2026-09-14T22:45:00Z",
-        ),
-    ])
+    _write_jsonl(root, "memory/loop_memory.jsonl", [iteration])
     _write_jsonl(root, "memory/surfaced_findings.jsonl", [{
-        "campaign": DEFAULT_CAMPAIGN_LINK,
+        "campaign": link,
         "source_iteration_id": "iter-before-close",
         "finding_id": "sf-iter-before-close",
         "promoted_at": "2026-09-14T23:00:00Z",
@@ -817,20 +967,22 @@ def test_invalid_campaign_closure_fails_projection_closed(
 
 
 def test_missing_promotion_sources_do_not_look_like_awaiting_review(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch,
 ) -> None:
     root = _root(tmp_path)
+    iteration, link = _admitted_l3_iteration(
+        root, monkeypatch, "iter-skeptic", at="2026-09-14T22:30:10Z"
+    )
     (root / "memory/promotion_near_misses.jsonl").unlink()
     (root / "memory/surfaced_findings.jsonl").unlink()
     _write_jsonl(root, "run_state/coordinator_cycles.jsonl", [
         _cycle(
             run_id="cycle-skeptic", step_id="cycle-skeptic:step:0",
             iteration_id="iter-skeptic", at="2026-09-14T22:30:00Z",
+            campaign=link,
         ),
     ])
-    _write_jsonl(root, "memory/loop_memory.jsonl", [
-        _l3_iteration("iter-skeptic", at="2026-09-14T22:30:10Z"),
-    ])
+    _write_jsonl(root, "memory/loop_memory.jsonl", [iteration])
 
     result = project_research_pipeline(canonical_root=root, now=NOW)
 
@@ -848,22 +1000,24 @@ def test_missing_promotion_sources_do_not_look_like_awaiting_review(
 
 
 def test_missing_feedback_does_not_look_like_an_awaiting_human_verdict(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch,
 ) -> None:
     root = _root(tmp_path)
     (root / "memory/loop_feedback.jsonl").unlink()
     iteration_id = "iter-feedback"
+    iteration, link = _admitted_l3_iteration(
+        root, monkeypatch, iteration_id, at="2026-09-14T22:30:10Z"
+    )
     _write_jsonl(root, "run_state/coordinator_cycles.jsonl", [
         _cycle(
             run_id="cycle-feedback", step_id="cycle-feedback:step:0",
             iteration_id=iteration_id, at="2026-09-14T22:30:00Z",
+            campaign=link,
         ),
     ])
-    _write_jsonl(root, "memory/loop_memory.jsonl", [
-        _l3_iteration(iteration_id, at="2026-09-14T22:30:10Z"),
-    ])
+    _write_jsonl(root, "memory/loop_memory.jsonl", [iteration])
     _write_jsonl(root, "memory/surfaced_findings.jsonl", [{
-        "campaign": DEFAULT_CAMPAIGN_LINK,
+        "campaign": link,
         "source_iteration_id": iteration_id,
         "finding_id": f"sf-{iteration_id}",
         "promoted_at": "2026-09-14T22:45:00Z",

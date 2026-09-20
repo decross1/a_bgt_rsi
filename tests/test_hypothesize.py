@@ -1,10 +1,9 @@
-"""Tests for workers.hypothesize.
+"""Protocol tests for the hypothesis-generation boundary.
 
-Stubs wrapper.call_sync via monkeypatch — never hits the real Gemma.
-Exercises the JSON-extraction + validation pipeline against a variety
-of completions Gemma might realistically emit (clean JSON, JSON-in-prose,
-channel-markup-wrapped JSON, malformed JSON, plain prose).
+Every model call is stubbed. These tests verify that only a complete,
+validated candidate selection can enter the scientific pipeline.
 """
+
 import json
 import sys
 from pathlib import Path
@@ -17,198 +16,290 @@ sys.path.insert(0, str(REPO_ROOT))
 from workers import hypothesize as hyp_mod
 
 
-def _fake_call_sync(completion_text: str, request_id: str = "req-xyz"):
-    """Build a call_sync stub returning a logged record with the given
-    completion text."""
-    def stub(messages, *, temperature=0.0, top_p=1.0, seed=None, max_tokens=None,
-             caller_tag="unspecified", parent_request_id=None,
-             retrieval_context=None, log_path=None, model=None):
-        return {
-            "request_id": request_id,
-            "completion": completion_text,
-            "model": "gemma-4-26b-a4b",
-            "model_version": "test",
-            "parent_request_id": parent_request_id,
-            "caller_tag": caller_tag,
-            "usage": {"input_tokens": 100, "output_tokens": 50},
-            "latency_ms": 100.0,
-        }
+def _record(
+    completion: str,
+    request_id: str = "req-xyz",
+    *,
+    finish_reason: str | None = "stop",
+) -> dict:
+    return {
+        "request_id": request_id,
+        "completion": completion,
+        "finish_reason": finish_reason,
+        "reasoning_chars": 0,
+        "model": "nvidia/Qwen3.8-Flash-Next-NVFP4",
+        "model_version": "test",
+        "usage": {"input_tokens": 100, "output_tokens": 50},
+        "latency_ms": 100.0,
+    }
+
+
+def _sequence_call_sync(*records: dict):
+    calls: list[dict] = []
+    queue = list(records)
+
+    def stub(messages, **kwargs):
+        calls.append({"messages": messages, **kwargs})
+        if not queue:
+            raise AssertionError("hypothesize exceeded its bounded call count")
+        return queue.pop(0)
+
+    stub.calls = calls
     return stub
+
+
+def _valid(candidate: str = "A testable strategic-interaction hypothesis.") -> str:
+    return json.dumps({"candidates": [candidate], "chosen": candidate})
 
 
 def test_empty_topic_returns_error():
     out = hyp_mod.hypothesize("")
     assert out["status"] == "error"
-    assert any("required" in e for e in out["errors"])
+    assert any("required" in error for error in out["errors"])
 
 
 def test_as_stated_env_bypasses_llm_and_returns_topic_verbatim(monkeypatch):
-    """HYPOTHESIZE_AS_STATED=1 short-circuits the LLM call — used when the
-    user wants the topic tested verbatim (e.g., deliberately-wrong claims
-    where hypothesize's rewrite would sanitize the wrongness). Critical:
-    no wrapper call is made, so the test patches call_sync to raise if
-    invoked — that's the assertion."""
-    def must_not_be_called(*a, **kw):
-        raise AssertionError("call_sync MUST NOT be called when HYPOTHESIZE_AS_STATED is set")
+    def must_not_be_called(*_args, **_kwargs):
+        raise AssertionError("call_sync must not run in evaluate-as-stated mode")
+
     monkeypatch.setattr(hyp_mod, "call_sync", must_not_be_called)
     monkeypatch.setenv("HYPOTHESIZE_AS_STATED", "1")
-    topic = "Cooperation lock-in observed in repeated PD vs Tit-for-Tat at 100% rate."
+    topic = "Cooperation lock-in observed in repeated PD at a 100% rate."
     out = hyp_mod.hypothesize(topic, parent_request_id="par-1")
+
     assert out["status"] == "passed"
-    assert out["result"]["text"] == topic
-    assert out["result"]["candidates_considered"] == 1
-    assert out["result"]["all_candidates"] == [topic]
+    assert out["result"] == {
+        "text": topic,
+        "candidates_considered": 1,
+        "all_candidates": [topic],
+    }
     assert out["parent_request_id"] == "par-1"
-    assert any("HYPOTHESIZE_AS_STATED" in e for e in out["errors"])
+    assert any("HYPOTHESIZE_AS_STATED" in error for error in out["errors"])
 
 
-def test_as_stated_disabled_when_env_unset(monkeypatch):
-    """When the env var is unset / empty / false, hypothesize uses the
-    normal LLM path. Patched call_sync must be reached."""
-    completion = json.dumps({
-        "candidates": ["only one candidate as a sanity check"],
-        "chosen": "only one candidate as a sanity check",
-    })
-    monkeypatch.setattr(hyp_mod, "call_sync", _fake_call_sync(completion))
-    monkeypatch.delenv("HYPOTHESIZE_AS_STATED", raising=False)
+@pytest.mark.parametrize("value", [None, "", "0", "false", "no"])
+def test_as_stated_false_values_use_the_model(monkeypatch, value):
+    stub = _sequence_call_sync(_record(_valid()))
+    monkeypatch.setattr(hyp_mod, "call_sync", stub)
+    if value is None:
+        monkeypatch.delenv("HYPOTHESIZE_AS_STATED", raising=False)
+    else:
+        monkeypatch.setenv("HYPOTHESIZE_AS_STATED", value)
+
     out = hyp_mod.hypothesize("a topic")
+
     assert out["status"] == "passed"
-    assert out["result"]["text"] == "only one candidate as a sanity check"
-    # And explicit false values are treated as off.
-    for falsy in ("", "0", "false", "no"):
-        monkeypatch.setenv("HYPOTHESIZE_AS_STATED", falsy)
-        monkeypatch.setattr(hyp_mod, "call_sync", _fake_call_sync(completion))
-        out = hyp_mod.hypothesize("a topic")
-        assert out["result"]["text"] == "only one candidate as a sanity check", falsy
+    assert len(stub.calls) == 1
 
 
-def test_clean_json_with_3_candidates(monkeypatch):
-    completion = json.dumps({
-        "candidates": [
-            "A1: Cooperation rates rise with compute budget below threshold T.",
-            "A2: TfT dominance breaks when context window exceeds 8K tokens.",
-            "A3: Defection equilibria emerge above a critical reasoning-depth.",
-        ],
-        "chosen": "A1: Cooperation rates rise with compute budget below threshold T.",
-    })
-    monkeypatch.setattr(hyp_mod, "call_sync", _fake_call_sync(completion, "req-1"))
-    out = hyp_mod.hypothesize("LLM cooperation under compute constraints", parent_request_id="p1")
+def test_clean_json_requires_and_preserves_exact_selection(monkeypatch):
+    candidates = [
+        "A1: Cooperation rises below threshold T.",
+        "A2: Tit-for-tat dominance breaks above 8K context.",
+        "A3: Defection emerges above a reasoning-depth threshold.",
+    ]
+    completion = json.dumps({"candidates": candidates, "chosen": candidates[1]})
+    stub = _sequence_call_sync(_record(completion, "req-1"))
+    monkeypatch.setattr(hyp_mod, "call_sync", stub)
+
+    out = hyp_mod.hypothesize("LLM cooperation", parent_request_id="p1")
+
     assert out["status"] == "passed"
     assert out["wrapper_request_id"] == "req-1"
     assert out["parent_request_id"] == "p1"
-    assert out["result"]["candidates_considered"] == 3
-    assert len(out["result"]["all_candidates"]) == 3
-    assert "A1:" in out["result"]["text"]
+    assert out["result"] == {
+        "text": candidates[1],
+        "candidates_considered": 3,
+        "all_candidates": candidates,
+    }
     assert out["errors"] == []
+    assert stub.calls[0]["max_tokens"] == 1024
 
 
-def test_clean_json_with_1_candidate(monkeypatch):
-    completion = json.dumps({
-        "candidates": ["Only one hypothesis worth proposing."],
-        "chosen": "Only one hypothesis worth proposing.",
-    })
-    monkeypatch.setattr(hyp_mod, "call_sync", _fake_call_sync(completion))
-    out = hyp_mod.hypothesize("some topic")
+def test_outer_whitespace_is_normalized_before_selection(monkeypatch):
+    completion = json.dumps({"candidates": ["  A testable claim.\n"], "chosen": "A testable claim. "})
+    monkeypatch.setattr(hyp_mod, "call_sync", _sequence_call_sync(_record(completion)))
+
+    out = hyp_mod.hypothesize("topic")
+
     assert out["status"] == "passed"
-    assert out["result"]["candidates_considered"] == 1
+    assert out["result"]["text"] == "A testable claim."
+    assert out["result"]["all_candidates"] == ["A testable claim."]
 
 
-def test_json_wrapped_in_prose(monkeypatch):
-    # Gemma sometimes adds an opening line. Extractor should still find the JSON.
-    completion = (
-        "Here are the candidates:\n\n"
-        + json.dumps({"candidates": ["X"], "chosen": "X"})
-        + "\n\nLet me know if you want more."
+@pytest.mark.parametrize("candidates", [["A", " A "], ["word " * 81], ["x" * 1201]])
+def test_duplicate_or_unbounded_candidates_fail_after_bounded_repair(monkeypatch, candidates):
+    completion = json.dumps({"candidates": candidates, "chosen": candidates[0]})
+    stub = _sequence_call_sync(_record(completion), _record(completion))
+    monkeypatch.setattr(hyp_mod, "call_sync", stub)
+
+    out = hyp_mod.hypothesize("topic")
+
+    assert out["status"] == "error"
+    assert out["result"] is None
+    assert len(stub.calls) == 2
+    assert all("field_schema" in error for error in out["errors"])
+
+
+def test_complete_json_fence_is_the_only_envelope_tolerated(monkeypatch):
+    completion = f"```json\n{_valid('X')}\n```"
+    monkeypatch.setattr(
+        hyp_mod, "call_sync", _sequence_call_sync(_record(completion))
     )
-    monkeypatch.setattr(hyp_mod, "call_sync", _fake_call_sync(completion))
+
     out = hyp_mod.hypothesize("anything")
+
     assert out["status"] == "passed"
     assert out["result"]["text"] == "X"
 
 
-def test_json_with_channel_markup(monkeypatch):
-    # Real-world Gemma 4 emits this artifact sometimes (we've seen it).
-    completion = (
-        "<|channel>thought\n<channel|>\n"
-        + json.dumps({"candidates": ["valid hypothesis"], "chosen": "valid hypothesis"})
+def test_protocol_words_inside_a_valid_candidate_are_not_leakage(monkeypatch):
+    candidate = "Agents receiving the literal token <think> defect more often."
+    monkeypatch.setattr(
+        hyp_mod, "call_sync", _sequence_call_sync(_record(_valid(candidate)))
     )
-    monkeypatch.setattr(hyp_mod, "call_sync", _fake_call_sync(completion))
-    out = hyp_mod.hypothesize("anything")
+
+    out = hyp_mod.hypothesize("protocol-token signaling game")
+
     assert out["status"] == "passed"
-    assert out["result"]["text"] == "valid hypothesis"
+    assert out["result"]["text"] == candidate
 
 
-def test_chosen_not_in_candidates_still_promoted(monkeypatch):
-    completion = json.dumps({
-        "candidates": ["A", "B"],
-        "chosen": "C",  # Gemma rephrased instead of copying verbatim
-    })
-    monkeypatch.setattr(hyp_mod, "call_sync", _fake_call_sync(completion))
-    out = hyp_mod.hypothesize("topic")
-    assert out["status"] == "passed"
-    # chosen is promoted to the front of all_candidates; A/B truncated to fit cap of 3
-    assert out["result"]["text"] == "C"
-    assert out["result"]["all_candidates"][0] == "C"
-    assert "A" in out["result"]["all_candidates"] or "B" in out["result"]["all_candidates"]
-
-
-def test_malformed_json_falls_back_to_raw(monkeypatch):
-    completion = "Cooperation rises with binding compute constraints — but the JSON parser shouldn't find anything balanced here."
-    monkeypatch.setattr(hyp_mod, "call_sync", _fake_call_sync(completion))
-    out = hyp_mod.hypothesize("topic")
-    # Status passed but with annotation
-    assert out["status"] == "passed"
-    assert any("fell back" in e for e in out["errors"])
-    assert "Cooperation rises" in out["result"]["text"]
-    assert out["result"]["candidates_considered"] == 1
-
-
-def test_empty_completion_falls_back_with_placeholder(monkeypatch):
-    monkeypatch.setattr(hyp_mod, "call_sync", _fake_call_sync(""))
-    out = hyp_mod.hypothesize("topic")
-    assert out["status"] == "passed"
-    assert "(empty" in out["result"]["text"] or out["result"]["text"]
-
-
-def test_wrapper_exception_returns_error(monkeypatch):
-    def broken(*args, **kwargs):
-        raise ConnectionError("vllm unreachable")
-    monkeypatch.setattr(hyp_mod, "call_sync", broken)
+@pytest.mark.parametrize("candidate", ["<think>hidden route</think> Claim.", '{"chosen":"nested"}'])
+def test_raw_envelope_inside_a_candidate_cannot_enter_research(monkeypatch, candidate):
+    stub = _sequence_call_sync(_record(_valid(candidate)), _record(_valid(candidate)))
+    monkeypatch.setattr(hyp_mod, "call_sync", stub)
     out = hyp_mod.hypothesize("topic")
     assert out["status"] == "error"
-    assert any("vllm unreachable" in e for e in out["errors"])
     assert out["result"] is None
+    assert len(stub.calls) == 2
 
 
-def test_caps_candidates_at_3(monkeypatch):
-    # Gemma went off-script and gave 5; we cap to 3 per the schema.
-    completion = json.dumps({
-        "candidates": ["A", "B", "C", "D", "E"],
-        "chosen": "A",
-    })
-    monkeypatch.setattr(hyp_mod, "call_sync", _fake_call_sync(completion))
-    out = hyp_mod.hypothesize("topic")
-    assert out["status"] == "passed"
-    assert out["result"]["candidates_considered"] == 3
-    assert len(out["result"]["all_candidates"]) == 3
-
-
-def test_passes_parent_request_id_to_wrapper(monkeypatch):
-    captured = {}
-    def stub(messages, **kwargs):
-        captured["parent"] = kwargs.get("parent_request_id")
-        captured["tag"] = kwargs.get("caller_tag")
-        return {
-            "request_id": "rid",
-            "completion": json.dumps({"candidates": ["X"], "chosen": "X"}),
-            "model": "gemma",
-            "model_version": "test",
-            "parent_request_id": kwargs.get("parent_request_id"),
-            "caller_tag": kwargs.get("caller_tag"),
-            "usage": {"input_tokens": 1, "output_tokens": 1},
-            "latency_ms": 1,
-        }
+def test_one_bounded_repair_can_recover_protocol_failure(monkeypatch):
+    malformed = "Here are some candidates in prose, without the contract."
+    stub = _sequence_call_sync(
+        _record(malformed, "req-initial"),
+        _record(_valid("Repaired candidate."), "req-repair"),
+    )
     monkeypatch.setattr(hyp_mod, "call_sync", stub)
+
+    out = hyp_mod.hypothesize("topic", parent_request_id="outer")
+
+    assert out["status"] == "passed"
+    assert out["result"]["text"] == "Repaired candidate."
+    assert out["wrapper_request_id"] == "req-repair"
+    assert any("malformed_json" in error for error in out["errors"])
+    assert len(stub.calls) == 2
+    assert stub.calls[1]["caller_tag"] == "hypothesize_repair"
+    assert stub.calls[1]["parent_request_id"] == "req-initial"
+    assert stub.calls[1]["temperature"] == 0.2
+    assert stub.calls[1]["max_tokens"] == 1024
+    assert malformed not in json.dumps(stub.calls[1]["messages"])
+
+
+@pytest.mark.parametrize(
+    ("completion", "finish_reason", "failure_code"),
+    [
+        ("Here is JSON: " + _valid("X") + " thanks", "stop", "malformed_json"),
+        (
+            "<|channel>analysis<channel|>\n" + _valid("X"),
+            "stop",
+            "reasoning_channel_leakage",
+        ),
+        ("", "stop", "empty_completion"),
+        (_valid("X"), "length", "truncated_completion"),
+        (_valid("X"), None, "incomplete_completion"),
+        (
+            json.dumps({"candidates": ["A", "B"], "chosen": "C"}),
+            "stop",
+            "field_schema",
+        ),
+        (
+            json.dumps({"candidates": ["A", "B", "C", "D"], "chosen": "A"}),
+            "stop",
+            "field_schema",
+        ),
+    ],
+)
+def test_invalid_output_never_becomes_a_hypothesis(
+    monkeypatch, completion, finish_reason, failure_code
+):
+    stub = _sequence_call_sync(
+        _record(completion, "req-1", finish_reason=finish_reason),
+        _record(completion, "req-2", finish_reason=finish_reason),
+    )
+    monkeypatch.setattr(hyp_mod, "call_sync", stub)
+
+    out = hyp_mod.hypothesize("topic")
+
+    assert out["status"] == "error"
+    assert out["result"] is None
+    assert out["wrapper_request_id"] == "req-2"
+    assert len(stub.calls) == 2
+    assert all(failure_code in error for error in out["errors"])
+
+
+@pytest.mark.parametrize(
+    "completion,failure_code",
+    [
+        ('{"candidates":["A"],"chosen":"A","chosen":"B"}', "duplicate_json_key"),
+        ('{"candidates":["A","A"],"chosen":"A"}', "field_schema"),
+        ('{"candidates":["A"],"chosen":"A","score":NaN}', "non_finite_json"),
+    ],
+)
+def test_ambiguous_or_nonstandard_json_is_rejected(
+    monkeypatch, completion, failure_code
+):
+    stub = _sequence_call_sync(_record(completion), _record(completion))
+    monkeypatch.setattr(hyp_mod, "call_sync", stub)
+
+    out = hyp_mod.hypothesize("topic")
+
+    assert out["status"] == "error"
+    assert out["result"] is None
+    assert all(failure_code in error for error in out["errors"])
+
+
+def test_wrapper_exception_returns_error_without_hidden_retry(monkeypatch):
+    calls = []
+
+    def broken(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise ConnectionError("model unreachable")
+
+    monkeypatch.setattr(hyp_mod, "call_sync", broken)
+    out = hyp_mod.hypothesize("topic")
+
+    assert out["status"] == "error"
+    assert out["result"] is None
+    assert any("model unreachable" in error for error in out["errors"])
+    assert len(calls) == 1
+
+
+def test_repair_exception_preserves_initial_request_provenance(monkeypatch):
+    calls = []
+
+    def stub(messages, **kwargs):
+        calls.append({"messages": messages, **kwargs})
+        if len(calls) == 1:
+            return _record("not json", "req-initial")
+        raise TimeoutError("repair deadline")
+
+    monkeypatch.setattr(hyp_mod, "call_sync", stub)
+    out = hyp_mod.hypothesize("topic", parent_request_id="outer")
+
+    assert out["status"] == "error"
+    assert out["result"] is None
+    assert out["wrapper_request_id"] == "req-initial"
+    assert out["parent_request_id"] == "outer"
+    assert any("repair deadline" in error for error in out["errors"])
+
+
+def test_passes_parent_request_id_to_initial_wrapper_call(monkeypatch):
+    stub = _sequence_call_sync(_record(_valid(), "rid"))
+    monkeypatch.setattr(hyp_mod, "call_sync", stub)
+
     hyp_mod.hypothesize("t", parent_request_id="parent-xyz")
-    assert captured["parent"] == "parent-xyz"
-    assert captured["tag"] == "hypothesize"
+
+    assert stub.calls[0]["parent_request_id"] == "parent-xyz"
+    assert stub.calls[0]["caller_tag"] == "hypothesize"

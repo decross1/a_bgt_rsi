@@ -749,20 +749,24 @@ def assess_state(
     _rows_by_id = {r.get("iteration_id"): r for r in recent
                    if isinstance(r.get("iteration_id"), str)}
     novel_unpromoted: list[str] = []
-    try:
-        from workers.evidence_ladder import derive_level
-        for f in recent_findings:
-            iid = f["iteration_id"]
-            if (f["novelty"] != "novel" or f["critic"] != "survives"
-                    or iid in surfaced_src):
-                continue
-            row = _rows_by_id.get(iid)
-            if row is None:
-                continue
-            if derive_level(row, feedback.get(iid), None, [])["level"] == "L3":
-                novel_unpromoted.append(iid)
-    except Exception:
-        novel_unpromoted = []
+    from orchestrator.experiment_admission import derive_verified_level
+
+    admission_root = Path(campaign.get("_repo_root", REPO_ROOT)) if campaign else REPO_ROOT
+    for f in recent_findings:
+        iid = f["iteration_id"]
+        if (f["novelty"] != "novel" or f["critic"] != "survives"
+                or iid in surfaced_src):
+            continue
+        row = _rows_by_id.get(iid)
+        if row is None:
+            continue
+        # Invalid evidence is a fail-closed ladder result. Unexpected verifier
+        # failures must remain visible instead of becoming an empty work queue.
+        derived = derive_verified_level(
+            row, feedback.get(iid), None, [], repo_root=admission_root,
+        )
+        if derived["level"] == "L3":
+            novel_unpromoted.append(iid)
     if novel_unpromoted:
         gaps.append(
             f"{len(novel_unpromoted)} iteration(s) at L3 are vote-ready for "
@@ -797,6 +801,7 @@ def assess_state(
         "gaps": gaps,
         "surfaced_pending": surfaced_pending,
         "surfaced_below_bar": surfaced_below_bar,
+        "vote_ready_iteration_ids": novel_unpromoted,
         "experiments": experiments,
         "topic_suggestions": _topic_suggestions(
             loop_memory_path,
@@ -814,7 +819,9 @@ def assess_state(
             bind_topic(campaign, topic["text"])
             for topic in all_topics(campaign)
         ]
-        result["campaign_test_debt"] = campaign_test_debt(rows)
+        result["campaign_test_debt"] = campaign_test_debt(
+            rows, repo_root=Path(campaign.get("_repo_root", REPO_ROOT)),
+        )
     return result
 
 
@@ -1429,7 +1436,8 @@ def coordinator_cycle(
 
 
 def _record_queue_hold(run_id: str, state: dict, replenishment: dict) -> dict:
-    reason = ("daily_topics" if replenishment["status"] == "daily_topic_limit"
+    reason = ("research_focus" if replenishment["status"] in {"focus_pending", "focus_invalid"}
+              else "daily_topics" if replenishment["status"] == "daily_topic_limit"
               else "budget" if replenishment["status"] == "activity_budget_limited"
               else "topic_source")
     report = {
@@ -1457,8 +1465,22 @@ def _coordinator_cycle(
     campaign: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     replenishment = None
+    focus_hold = False
+    focus = {"status": "none"}
+    if campaign is not None and campaign["topic_policy"]["mode"] == "registered_exploratory":
+        from orchestrator.research_focus import project_focus
+
+        focus = project_focus(Path(campaign.get("_repo_root", REPO_ROOT)))
+        focus_hold = (focus["status"] == "source_invalid" or
+                      focus.get("intake_policy") == "focus_before_new_topics")
+        if focus_hold:
+            replenishment = {
+                "status": "focus_invalid" if focus["status"] == "source_invalid" else "focus_pending",
+                "reason": "repair_focus_source" if focus["status"] == "source_invalid" else "selected_thesis_next_gate",
+            }
     if (not dry_run and campaign is not None
-            and campaign["topic_policy"]["mode"] == "registered_exploratory"):
+            and campaign["topic_policy"]["mode"] == "registered_exploratory"
+            and not focus_hold):
         from orchestrator.daily_research import read_loop_rows, replenish
         from orchestrator.research_campaign import campaign_context, load_active_campaign
         from pipeline.daily_arxiv_job import IngestionError
@@ -1487,10 +1509,15 @@ def _coordinator_cycle(
             campaign["_manifest_sha256"] if campaign is not None else None
         ),
     )
+    if focus_hold:
+        # A focus selection does not authorize a study. Hold new discovery,
+        # retain vote-ready promotion work, and expose the named next gate.
+        state["research_focus"] = focus
+        state["topic_suggestions"] = []
     if replenishment is not None:
         state["topic_replenishment"] = replenishment
         if (not state.get("topic_suggestions")
-                and not any("vote-ready" in gap for gap in state.get("gaps", []))):
+                and not state.get("vote_ready_iteration_ids")):
             return _record_queue_hold(run_id, state, replenishment)
     _ts = (state.get("topic_suggestions") or [{}])[0]
     active_run.update_active_run(

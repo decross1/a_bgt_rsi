@@ -24,13 +24,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from orchestrator.experiment_admission import derive_verified_level
 from orchestrator.research_campaign import (
     DEFAULT_CAMPAIGN_ID,
     CampaignError,
     classify_record,
     load_campaign,
 )
-from workers.evidence_ladder import derive_level
 
 SCHEMA_VERSION = "research-pipeline-progress/v1"
 DEFAULT_CUTOFF = Path(
@@ -1007,9 +1007,9 @@ def project_research_pipeline(
         surfaced = _latest(surfaced_candidates, "promoted_at", "timestamp")
         near = _latest(near_by_id[iteration_id], "timestamp")
         adversarial = surfaced.get("adversarial") if isinstance(surfaced, dict) else None
-        derived = derive_level(
+        derived = derive_verified_level(
             row, feedback, adversarial if isinstance(adversarial, dict) else None,
-            health_rows,
+            health_rows, repo_root=root,
         )
         level = derived["level"] if derived.get("level") in _LEVELS else "L0"
         level_counts[level] += 1

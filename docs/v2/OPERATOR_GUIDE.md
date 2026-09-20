@@ -1,6 +1,6 @@
 # Operator guide
 
-This guide covers the local apparatus and the 2026-09-16 UI consolidation. Start with
+This guide covers the local apparatus and the 2026-09-20 progression repair. Start with
 read-only checks. Restart only the component whose behavior requires it, and
 verify both the process and its public health/read-model boundary afterward.
 
@@ -38,6 +38,34 @@ Iteration titles describe the source question; identifiers such as
 title is not a claim that the hypothesis was validated. The dossier separates
 model commentary, observed execution, and measured scientific support.
 
+### Focus versus browsing
+
+The **Research focus** card on Now and Research names the lab's durable priority,
+its next required artifact, current blocker, and work owner. **Browse thesis**
+changes only the record being inspected. Selecting a historical seed does not
+activate its old campaign, authorize a study, or inherit its evidence level.
+Damaged structured output is displayed as an unassessed source requiring claim
+refinement.
+
+The focus receipt lives under `run_state/research_focus/`, selected by the
+atomic `run_state/active_research_focus.json` pointer. With
+`focus_before_new_topics`, the exploratory coordinator holds new topic intake
+until the focus policy is explicitly changed. Ingestion and independently
+eligible promotion work remain available. A `focus_pending` cycle is an honest
+hold, not completed research. The focus's named next action must be carried out
+by its assigned owner; a focus selection does not itself schedule an experiment.
+
+Progress has two distinct checks: whether a study was prepared and executed
+correctly, and whether its result supports the scientific claim. Arithmetic or
+tool-interface diagnostics can unblock study preparation without earning L2.
+Do not count model calls or game rounds as independent experimental units.
+
+Failed hypothesis generation receives one bounded structured-output retry.
+If that also fails, the iteration stops before downstream research. Historical
+malformed rows receive source-bound receipts in
+`memory/consolidation_quarantine.jsonl`; consolidation still projects later
+valid rows. Quarantine receipts are operational evidence and never ladder credit.
+
 ## 2. Health check
 
 Run these before changing a service:
@@ -48,14 +76,16 @@ ui/scripts/ui-services.sh status
 systemctl --user show nara-daemon.service \
   -p ActiveState -p SubState -p MainPID -p ExecMainStartTimestamp
 curl -fsS http://127.0.0.1:8700/api/health
-curl -fsS http://127.0.0.1:8000/v1/models
-curl -fsS http://127.0.0.1:8001/v1/models
+curl -fsS http://127.0.0.1:30080/v1/models
+curl -fsS http://127.0.0.1:30080/health
 ```
 
-Expected model IDs are `gemma-4-26b-a4b` and
-`qwen3.8-27b-nvfp4-mtp`. A listening port alone does not prove that a model is
-ready. Confirm the model list and inspect its container log when model behavior
-is in question.
+The selected production model is `nvidia/Qwen3.8-Flash-Next-NVFP4`, as bound in
+`config/model_deployment.json`. The legacy Gemma/Qwen pair is intentionally
+stopped. A missing legacy endpoint is not a Flash outage. Confirm the exact
+model identity, live deployment readiness, and container state; a listening port
+alone does not prove readiness. Process identity checks must run in the host
+namespace: a restricted development sandbox can hide healthy host processes.
 
 Useful process checks:
 
@@ -63,8 +93,8 @@ Useful process checks:
 systemctl --user status nara-daemon.service --no-pager
 journalctl --user -u nara-daemon.service -n 100 --no-pager
 crontab -l
-ss -ltnp | rg ':(5173|8700|8000|8001)\b'
-docker ps --filter name=vllm-gemma4 --filter name=vllm-qwen
+ss -ltnp | rg ':(5173|8700|30080)\b'
+python3 -m orchestrator.flash_resident check-ready
 ```
 
 Service logs:

@@ -17,6 +17,8 @@ Pinned behaviors (LOOP_V1 verification list):
 """
 from __future__ import annotations
 
+import fcntl
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -140,6 +142,7 @@ def _run(tmp_path, execute, derive=_stub_derive, calls=None):
         feedback_path=tmp_path / "loop_feedback.jsonl",
         ledger_path=tmp_path / "idea_ledger.jsonl",
         archive_path=tmp_path / "idea_archive.jsonl",
+        quarantine_path=tmp_path / "consolidation_quarantine.jsonl",
         execute=execute, derive_level_fn=derive,
         extract_claim_fn=_make_extract(calls if calls is not None else []),
         append_event_fn=_stub_append_event)
@@ -150,8 +153,19 @@ def _events(tmp_path):
     return [json.loads(l) for l in p.read_text().splitlines() if l.strip()]
 
 
+def _quarantines(tmp_path):
+    p = tmp_path / "consolidation_quarantine.jsonl"
+    return [json.loads(line) for line in p.read_text().splitlines() if line.strip()]
+
+
+def _line_hash(raw_line: bytes) -> str:
+    return hashlib.sha256(raw_line).hexdigest()
+
+
 # ── Tests. ───────────────────────────────────────────────────────────────────
-def test_dry_run_is_default_and_writes_nothing(tmp_path):
+def test_dry_run_is_default_and_writes_nothing(tmp_path, monkeypatch):
+    monkeypatch.setattr(cm.runtime, "append_run_log", lambda *_a, **_kw: pytest.fail(
+        "dry run must not append a runtime ledger either"))
     lm, sf = _write_corpus(tmp_path)
     before = (lm.read_bytes(), sf.read_bytes())
     report = _run(tmp_path, execute=False)
@@ -159,7 +173,22 @@ def test_dry_run_is_default_and_writes_nothing(tmp_path):
     assert report["events_planned"] > 0 and report["events_appended"] == 0
     assert not (tmp_path / "idea_ledger.jsonl").exists()
     assert not (tmp_path / "idea_archive.jsonl").exists()
+    assert not cm._execute_lock_path(tmp_path / "idea_ledger.jsonl").exists()
     assert (lm.read_bytes(), sf.read_bytes()) == before
+
+
+def test_default_historical_extractor_is_model_free(monkeypatch):
+    from workers import claim_extract
+
+    monkeypatch.delenv("MOCK_LLM", raising=False)
+    calls = []
+    monkeypatch.setattr(claim_extract, "_refine_fields", lambda *args: calls.append(args))
+    result = cm._default_extract_claim()({
+        "iteration_id": "old-row", "seed": {"topic": "Bidding"},
+        "hypothesis": {"text": "Bidders shade bids."},
+    })
+    assert result["predicted_effect"] == "Bidders shade bids."
+    assert calls == []
 
 
 def test_execute_clusters_via_lexical_layer_and_source_attach(tmp_path):
@@ -270,6 +299,344 @@ def test_out_of_enum_rung_raises_never_coerced(tmp_path):
                 "reasons": []}
     with pytest.raises(ValueError, match="L9"):
         _run(tmp_path, execute=False, derive=bad_derive)
+
+
+def test_malformed_hypothesis_is_quarantined_and_later_row_projects(tmp_path):
+    """Regression for 20-003 followed by 20-005: one exhausted structured
+    response cannot stall every later valid iteration or become scientific
+    evidence itself."""
+    from workers.claim_extract import extract_claim
+
+    malformed = {
+        "iteration_id": "iter-2026-09-20-003",
+        "seed": {"topic": "Strategic response on sparse opinion networks"},
+        "_lvl": "L1",
+        "hypothesis": {
+            "text": '{"candidates":[{"problem":"network response",'
+                    '"mechanism":"strategic neighbors"}'
+        },
+        "novelty": {"class": "novel"},
+        "critique": {"verdict": "survives"},
+    }
+    valid = {
+        "iteration_id": "iter-2026-09-20-005",
+        "seed": {"topic": "Bounded rationality in congestion games"},
+        "_lvl": "L0",
+        "hypothesis": {
+            "text": "Noisy local feedback delays route switching in repeated "
+                    "congestion games [[k3]]"
+        },
+        "novelty": {"class": "restated"},
+    }
+    lm = tmp_path / "loop_memory.jsonl"
+    sf = tmp_path / "surfaced_findings.jsonl"
+    lm.write_text(
+        json.dumps(malformed) + "\n" + json.dumps(valid) + "\n",
+        encoding="utf-8",
+    )
+    sf.write_text("", encoding="utf-8")
+    source_before = lm.read_bytes()
+
+    report = cm.consolidate(
+        loop_memory_path=lm,
+        surfaced_path=sf,
+        feedback_path=tmp_path / "loop_feedback.jsonl",
+        ledger_path=tmp_path / "idea_ledger.jsonl",
+        archive_path=tmp_path / "idea_archive.jsonl",
+        quarantine_path=tmp_path / "consolidation_quarantine.jsonl",
+        execute=True,
+        derive_level_fn=_stub_derive,
+        extract_claim_fn=extract_claim,
+        append_event_fn=_stub_append_event,
+    )
+
+    assert report["quarantined_rows"] == 1
+    assert report["quarantine_appended"] == 1
+    assert report["clusters"] == 1
+    assert lm.read_bytes() == source_before
+    events = _events(tmp_path)
+    assert {event.get("member_id") for event in events} == {
+        "iter-2026-09-20-005"
+    }
+    assert all(
+        event.get("member_id") != "iter-2026-09-20-003" for event in events
+    )
+    failures = _quarantines(tmp_path)
+    assert len(failures) == 1
+    failure = failures[0]
+    assert failure["source"]["source_id"] == "iter-2026-09-20-003"
+    assert failure["source"]["record_ordinal"] == 1
+    assert failure["source"]["source_row_sha256"] == _line_hash(
+        json.dumps(malformed).encode("utf-8")
+    )
+    assert failure["reason"] == {
+        "code": "unrecoverable_hypothesis_blob",
+        "error_type": "ValueError",
+        "message": "structured hypothesis output could not be recovered",
+    }
+    assert failure["disposition"] == "quarantined_not_projected"
+    assert failure["scientific_effect"] == "none"
+    assert "candidates" not in json.dumps(failure)
+
+
+def test_quarantine_retry_does_not_spam_or_block_idempotency(tmp_path):
+    from workers.claim_extract import extract_claim
+
+    lm = tmp_path / "loop_memory.jsonl"
+    sf = tmp_path / "surfaced_findings.jsonl"
+    lm.write_text(json.dumps({
+        "iteration_id": "iter-malformed",
+        "seed": {"topic": "a valid topic cannot rescue malformed output"},
+        "hypothesis": {"text": '{"candidates":["unfinished"'},
+    }) + "\n", encoding="utf-8")
+    sf.write_text("", encoding="utf-8")
+    kwargs = {
+        "loop_memory_path": lm,
+        "surfaced_path": sf,
+        "feedback_path": tmp_path / "loop_feedback.jsonl",
+        "ledger_path": tmp_path / "idea_ledger.jsonl",
+        "archive_path": tmp_path / "idea_archive.jsonl",
+        "quarantine_path": tmp_path / "consolidation_quarantine.jsonl",
+        "execute": True,
+        "derive_level_fn": _stub_derive,
+        "extract_claim_fn": extract_claim,
+        "append_event_fn": _stub_append_event,
+    }
+    first = cm.consolidate(**kwargs)
+    receipt_before = (tmp_path / "consolidation_quarantine.jsonl").read_bytes()
+    second = cm.consolidate(**kwargs)
+    assert first["quarantine_appended"] == 1
+    assert second["quarantine_appended"] == 0
+    assert second["quarantine_planned"] == 0
+    assert second["quarantine_already_recorded"] == 1
+    assert second["events_appended"] == 0
+    assert (tmp_path / "consolidation_quarantine.jsonl").read_bytes() == receipt_before
+
+
+def test_quarantine_dry_run_writes_nothing(tmp_path):
+    from workers.claim_extract import extract_claim
+
+    lm = tmp_path / "loop_memory.jsonl"
+    sf = tmp_path / "surfaced_findings.jsonl"
+    lm.write_text(json.dumps({
+        "iteration_id": "iter-malformed",
+        "seed": {"topic": "topic"},
+        "hypothesis": {"text": '{"candidates":["unfinished"'},
+    }) + "\n", encoding="utf-8")
+    sf.write_text("", encoding="utf-8")
+    report = cm.consolidate(
+        loop_memory_path=lm,
+        surfaced_path=sf,
+        feedback_path=tmp_path / "loop_feedback.jsonl",
+        ledger_path=tmp_path / "idea_ledger.jsonl",
+        archive_path=tmp_path / "idea_archive.jsonl",
+        quarantine_path=tmp_path / "consolidation_quarantine.jsonl",
+        execute=False,
+        derive_level_fn=_stub_derive,
+        extract_claim_fn=extract_claim,
+        append_event_fn=_stub_append_event,
+    )
+    assert report["quarantine_planned"] == 1
+    assert report["quarantine_appended"] == 0
+    assert not (tmp_path / "consolidation_quarantine.jsonl").exists()
+    assert not (tmp_path / "idea_ledger.jsonl").exists()
+
+
+@pytest.mark.parametrize("error", [
+    RuntimeError("database unavailable"),
+    ValueError("unexpected extractor contract failure"),
+])
+def test_unexpected_extractor_failure_is_not_quarantined_or_hidden(tmp_path, error):
+    lm = tmp_path / "loop_memory.jsonl"
+    sf = tmp_path / "surfaced_findings.jsonl"
+    lm.write_text(json.dumps({
+        "iteration_id": "iter-infrastructure-failure",
+        "seed": {"topic": "topic"},
+        "hypothesis": {"text": '{"candidates":["unfinished"'},
+    }) + "\n", encoding="utf-8")
+    sf.write_text("", encoding="utf-8")
+
+    def broken_extractor(_row):
+        raise error
+
+    with pytest.raises(type(error), match=str(error)):
+        cm.consolidate(
+            loop_memory_path=lm,
+            surfaced_path=sf,
+            feedback_path=tmp_path / "loop_feedback.jsonl",
+            ledger_path=tmp_path / "idea_ledger.jsonl",
+            archive_path=tmp_path / "idea_archive.jsonl",
+            quarantine_path=tmp_path / "consolidation_quarantine.jsonl",
+            execute=True,
+            derive_level_fn=_stub_derive,
+            extract_claim_fn=broken_extractor,
+            append_event_fn=_stub_append_event,
+        )
+    assert not (tmp_path / "consolidation_quarantine.jsonl").exists()
+
+
+def test_corrupt_quarantine_history_raises_instead_of_looking_empty(tmp_path):
+    _write_corpus(tmp_path)
+    (tmp_path / "consolidation_quarantine.jsonl").write_text(
+        "not-json\n", encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="quarantine row 1 is invalid JSON"):
+        _run(tmp_path, execute=False)
+
+
+def test_strict_source_read_quarantines_parse_failures_with_physical_provenance(
+        tmp_path):
+    """Invalid/non-object rows stay accountable without shifting later rows.
+
+    A physical blank line advances every later ordinal but gets no receipt.
+    Hashes bind exact content bytes (excluding only LF), including leading,
+    trailing, and CR whitespace. No private source content enters the report.
+    """
+    from workers.claim_extract import extract_claim
+
+    valid = {
+        "iteration_id": "iter-valid-after-corruption",
+        "seed": {"topic": "Repeated public-goods games"},
+        "hypothesis": {"text": "Payoff arithmetic changes disclosed action"},
+        "_lvl": "L0",
+    }
+    malformed_blob = {
+        "iteration_id": "iter-bad-structured-output",
+        "seed": {"topic": "Private fallback text must not project"},
+        "hypothesis": {"text": '{"candidates":[{"problem":"unfinished"}'},
+        "_lvl": "L1",
+    }
+    invalid_line = b'  {"iteration_id":"private-invalid"  '
+    nonobject_line = b' ["private-non-object"] '
+    valid_line = b"  " + json.dumps(valid).encode("utf-8") + b"  "
+    malformed_line = b"\t" + json.dumps(malformed_blob).encode("utf-8") + b" \r"
+    source = (
+        b"\n"
+        + invalid_line + b"\n"
+        + nonobject_line + b"\n"
+        + valid_line + b"\n"
+        + malformed_line + b"\n"
+    )
+    lm = tmp_path / "loop_memory.jsonl"
+    sf = tmp_path / "surfaced_findings.jsonl"
+    lm.write_bytes(source)
+    sf.write_bytes(b"")
+    kwargs = {
+        "loop_memory_path": lm,
+        "surfaced_path": sf,
+        "feedback_path": tmp_path / "loop_feedback.jsonl",
+        "ledger_path": tmp_path / "idea_ledger.jsonl",
+        "archive_path": tmp_path / "idea_archive.jsonl",
+        "quarantine_path": tmp_path / "consolidation_quarantine.jsonl",
+        "derive_level_fn": _stub_derive,
+        "extract_claim_fn": extract_claim,
+        "append_event_fn": _stub_append_event,
+    }
+
+    dry = cm.consolidate(execute=False, **kwargs)
+    assert dry["loop_rows"] == 4
+    assert dry["quarantined_rows"] == 3
+    assert dry["clusters"] == 1
+    assert not (tmp_path / "idea_ledger.jsonl").exists()
+    assert not (tmp_path / "consolidation_quarantine.jsonl").exists()
+    assert not cm._execute_lock_path(tmp_path / "idea_ledger.jsonl").exists()
+
+    first = cm.consolidate(execute=True, **kwargs)
+    failures = _quarantines(tmp_path)
+    assert first["quarantine_appended"] == 3
+    assert [row["source"]["record_ordinal"] for row in failures] == [2, 3, 5]
+    assert [row["reason"]["code"] for row in failures] == [
+        "invalid_source_json",
+        "non_object_source_json",
+        "unrecoverable_hypothesis_blob",
+    ]
+    assert [row["source"]["source_row_sha256"] for row in failures] == [
+        _line_hash(invalid_line),
+        _line_hash(nonobject_line),
+        _line_hash(malformed_line),
+    ]
+    assert failures[2]["source"]["source_id"] == "iter-bad-structured-output"
+    assert {event.get("member_id") for event in _events(tmp_path)} == {
+        "iter-valid-after-corruption"
+    }
+    serialized_receipts = json.dumps(failures)
+    assert "private-invalid" not in serialized_receipts
+    assert "private-non-object" not in serialized_receipts
+    assert "Private fallback" not in serialized_receipts
+
+    second = cm.consolidate(execute=True, **kwargs)
+    assert second["quarantine_appended"] == 0
+    assert second["quarantine_already_recorded"] == 3
+    assert second["events_appended"] == 0
+
+
+def test_source_hash_preserves_semantically_irrelevant_whitespace(tmp_path):
+    first_line = b'{"seed":{"topic":"same"}}'
+    second_line = b' { "seed" : { "topic" : "same" } } \r'
+    lm = tmp_path / "loop_memory.jsonl"
+    sf = tmp_path / "surfaced_findings.jsonl"
+    lm.write_bytes(first_line + b"\n" + second_line + b"\n")
+    sf.write_bytes(b"")
+
+    report = cm.consolidate(
+        loop_memory_path=lm,
+        surfaced_path=sf,
+        feedback_path=tmp_path / "feedback.jsonl",
+        ledger_path=tmp_path / "ledger.jsonl",
+        archive_path=tmp_path / "archive.jsonl",
+        quarantine_path=tmp_path / "quarantine.jsonl",
+        execute=False,
+        derive_level_fn=_stub_derive,
+        extract_claim_fn=_make_extract([]),
+        append_event_fn=_stub_append_event,
+    )
+    failures = report["quarantine_failures"]
+    assert [row["reason"]["code"] for row in failures] == [
+        "missing_iteration_id",
+        "missing_iteration_id",
+    ]
+    assert [row["source"]["source_row_sha256"] for row in failures] == [
+        _line_hash(first_line),
+        _line_hash(second_line),
+    ]
+    assert failures[0]["source"]["source_row_sha256"] != failures[1]["source"][
+        "source_row_sha256"
+    ]
+
+
+def test_execute_lock_fails_fast_before_read_or_append(tmp_path):
+    _write_corpus(tmp_path)
+    ledger = tmp_path / "idea_ledger.jsonl"
+    lock_path = cm._execute_lock_path(ledger)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+") as holder:
+        fcntl.flock(holder.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(cm.ConsolidationBusyError, match="another execute pass"):
+            _run(tmp_path, execute=True)
+        fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+    assert not ledger.exists()
+    assert not (tmp_path / "idea_archive.jsonl").exists()
+    assert not (tmp_path / "consolidation_quarantine.jsonl").exists()
+
+
+def test_unexpected_source_io_error_is_not_quarantined(tmp_path):
+    loop_directory = tmp_path / "loop-memory-directory"
+    loop_directory.mkdir()
+    surfaced = tmp_path / "surfaced.jsonl"
+    surfaced.write_text("", encoding="utf-8")
+    with pytest.raises(IsADirectoryError):
+        cm.consolidate(
+            loop_memory_path=loop_directory,
+            surfaced_path=surfaced,
+            ledger_path=tmp_path / "ledger.jsonl",
+            archive_path=tmp_path / "archive.jsonl",
+            quarantine_path=tmp_path / "quarantine.jsonl",
+            execute=False,
+            derive_level_fn=_stub_derive,
+            extract_claim_fn=_make_extract([]),
+            append_event_fn=_stub_append_event,
+        )
+    assert not (tmp_path / "quarantine.jsonl").exists()
 
 
 # ── D-075 R4: refills match EXISTING open clusters before minting. ──────────

@@ -204,9 +204,11 @@ vi.mock("../src/api/activity", () => ({
 import Pulse, {
   inventoryGenerationKey,
   isModelRuntime,
+  permanentDeploymentHealth,
   stripMonitorChurn,
 } from "../src/routes/Pulse";
 import { getLabTodo, type ServedModel } from "../src/api/http";
+import type { ModelRuntime } from "../src/api/http";
 import { refreshPoll } from "../src/api/pollhub";
 import type { MonitorResponse } from "../src/types/activity";
 
@@ -234,6 +236,57 @@ function modelInventoryRow(overrides: Partial<ServedModel> = {}): ServedModel {
     ...overrides,
   };
 }
+
+function permanentRuntime(): ModelRuntime {
+  return {
+    schema_version: "model-runtime/v1",
+    observed_at: new Date().toISOString(),
+    mode: "resident",
+    mode_source: "permanent_deployment",
+    production_authorized: true,
+    mode_source_sha256: "a".repeat(64),
+    resident_services_expected: "stopped",
+    nara_service_expected: "running",
+    run_id: "flash-permanent-20260919",
+    phase: "ready",
+    candidate_variant: null,
+    source_error: null,
+  };
+}
+
+describe("permanent Flash deployment health", () => {
+  it("uses the production-resident Flash inventory instead of absent Gemma telemetry", () => {
+    const flash = modelInventoryRow({
+      url: "http://127.0.0.1:30080",
+      model: "nvidia/Qwen3.8-Flash-Next-NVFP4",
+      configured_model: "nvidia/Qwen3.8-Flash-Next-NVFP4",
+      deployment_role: "production_resident",
+      promotion_authorized: true,
+      service_status: "online",
+      identity_status: "match",
+      metrics_endpoint_status: "available",
+    });
+    expect(permanentDeploymentHealth(permanentRuntime(), { flash }, false)).toMatchObject({
+      active: true,
+      level: "healthy",
+      headline: "Flash production resident online",
+    });
+  });
+
+  it("reports the selected endpoint offline or stale without falling back to Gemma", () => {
+    const flash = modelInventoryRow({
+      deployment_role: "production_resident",
+      promotion_authorized: true,
+      service_status: "offline",
+      identity_status: "unknown",
+      metrics_endpoint_status: "unreachable",
+    });
+    expect(permanentDeploymentHealth(permanentRuntime(), { flash }, false).level).toBe("down");
+    expect(permanentDeploymentHealth(permanentRuntime(), {
+      flash: { ...flash, service_status: "online", identity_status: "match" },
+    }, true).level).toBe("unknown");
+  });
+});
 
 afterEach(() => {
   D.samples = baselineTelemetry.map((sample) => ({

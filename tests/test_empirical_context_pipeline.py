@@ -14,6 +14,7 @@ from agent_wrapper.wrapper import get_run_id
 from orchestrator import (
     active_run,
     empirical_context,
+    experiment_admission,
     nara,
     novelty_skeptic,
     research_campaign,
@@ -141,6 +142,101 @@ def test_invalid_or_oversized_outcome_refuses_before_model(cache, monkeypatch, t
                            experiment_outcome=bad, log_path=None)
     assert requests == []
     assert not cache.has_entry("iter-2099-01-01-001", "empirical_context")
+
+
+def test_v2_outcome_without_registered_admission_refuses_before_model(
+    cache, monkeypatch, tmp_path
+):
+    requests = []
+    _nara_seams(monkeypatch, tmp_path, requests)
+    campaign = research_campaign.load_campaign(
+        research_campaign.KNOWN_OPPONENT_CAMPAIGN_ID
+    )
+    topic = campaign["topic_policy"]["topics"][0]["text"]
+    monkeypatch.setattr(
+        research_campaign, "load_active_campaign", lambda: campaign
+    )
+    with pytest.raises(experiment_admission.AdmissionError, match="requires registered"):
+        nara.run_iteration(
+            topic,
+            runtime=_Runtime(),
+            experiment_outcome=OUTCOME,
+            campaign_id=campaign["campaign_id"],
+            campaign_manifest_sha256=campaign["_manifest_sha256"],
+            log_path=None,
+        )
+    assert requests == []
+    assert not cache.has_entry("iter-2099-01-01-001", "empirical_context")
+
+
+def test_verified_v2_admission_reference_is_threaded_to_record_builder(
+    monkeypatch, tmp_path
+):
+    requests = []
+    _nara_seams(monkeypatch, tmp_path, requests)
+    campaign = research_campaign.load_campaign(
+        research_campaign.KNOWN_OPPONENT_CAMPAIGN_ID
+    )
+    topic = campaign["topic_policy"]["topics"][0]["text"]
+    monkeypatch.setattr(
+        research_campaign, "load_active_campaign", lambda: campaign
+    )
+    reference = {"schema_version": "experiment-admission-ref/v1", "bound": True}
+    observed = []
+
+    def admit(**kwargs):
+        observed.append(kwargs)
+        return SimpleNamespace(reference=reference)
+
+    monkeypatch.setattr(experiment_admission, "admit_for_dispatch", admit)
+    monkeypatch.setattr(
+        nara,
+        "_run_iteration_impl",
+        lambda *_args, **kwargs: kwargs,
+    )
+    request = experiment_admission.AdmissionRequest(
+        verifier_id="known-opponent-utility-pilot/v1",
+        artifact_root_id="known-opponent-lab-20260915",
+        artifact_subpath="qfn-followon-known-opponent-lab8h-a/pilot",
+    )
+    result = nara.run_iteration(
+        topic,
+        runtime=_Runtime(),
+        experiment_outcome=OUTCOME,
+        experiment_admission_request=request,
+        campaign_id=campaign["campaign_id"],
+        campaign_manifest_sha256=campaign["_manifest_sha256"],
+        log_path=None,
+    )
+    assert len(observed) == 1
+    assert observed[0]["request"] is request
+    assert observed[0]["campaign_link"] == research_campaign.bind_topic(
+        campaign, topic
+    )
+    assert result["experiment_admission_ref"] == reference
+    assert result["experiment_outcome"] == OUTCOME
+    assert requests == []
+
+
+def test_admission_request_without_v2_campaign_refuses_before_model(
+    monkeypatch, tmp_path
+):
+    requests = []
+    _nara_seams(monkeypatch, tmp_path, requests)
+    request = experiment_admission.AdmissionRequest(
+        verifier_id="known-opponent-utility-pilot/v1",
+        artifact_root_id="known-opponent-lab-20260915",
+        artifact_subpath="qfn-followon-known-opponent-lab8h-a/pilot",
+    )
+    with pytest.raises(experiment_admission.AdmissionError, match="requires a V2"):
+        nara.run_iteration(
+            "ordinary topic",
+            runtime=_Runtime(),
+            experiment_outcome=OUTCOME,
+            experiment_admission_request=request,
+            log_path=None,
+        )
+    assert requests == []
 
 
 def test_context_freezes_caller_owned_outcome():

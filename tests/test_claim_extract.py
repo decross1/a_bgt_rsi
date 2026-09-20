@@ -62,6 +62,15 @@ def test_deterministic_fields_with_mechanism_marker():
     assert claim["mechanism"] == ("because free-riding is harder to attribute")
 
 
+def test_explicit_projection_mode_never_refines_without_mock_env(monkeypatch):
+    monkeypatch.delenv("MOCK_LLM", raising=False)
+    calls = []
+    monkeypatch.setattr(ce, "_refine_fields", lambda *args: calls.append(args))
+    claim = ce.extract_claim(_row("Bidders shade bids."), refine=False)
+    assert claim["predicted_effect"] == "Bidders shade bids."
+    assert calls == []
+
+
 def test_earliest_marker_wins():
     text = "Bids fall where exposure rises because loss aversion dominates."
     claim = ce.extract_claim(_row(text))

@@ -1,12 +1,12 @@
 """LOOP_V0 step 2 worker — hypothesize.
 
-Given a research topic, ask Gemma to generate 1–3 candidate hypotheses
+Given a research topic, ask the configured generator to produce 1–3 candidate hypotheses
 in the domain of game theory / behavioral game theory / learning in
 games, then pick the most specific.
 
 Output matches the `iteration_record.hypothesis` subschema:
 - `text` — the chosen hypothesis (the most specific candidate)
-- `candidates_considered` — how many candidates Gemma generated (1–3)
+- `candidates_considered` — how many candidates the generator returned (1–3)
 - `all_candidates` — every candidate, including the chosen one
 
 The LLM call goes through `agent_wrapper.wrapper.call_sync`, which
@@ -19,13 +19,46 @@ import json
 import os
 from typing import Any
 
-from agent_wrapper.cleanup import strip_channel_markup
 from agent_wrapper.wrapper import call_sync
-
 
 CALLS_LOG_PATH = os.environ.get(
     "LOOP_V0_CALLS_LOG", "logs/calls.jsonl"
 )
+
+_MAX_TOKENS = 1024
+_REPAIR_MAX_TOKENS = 1024
+_REASONING_CHANNEL_MARKERS = (
+    "<|channel",
+    "<channel|>",
+    "<think>",
+    "</think>",
+    "<analysis>",
+    "</analysis>",
+    "[analysis]",
+    "[/analysis]",
+)
+_EXPECTED_KEYS = {"candidates", "chosen"}
+
+
+class _DuplicateKey(ValueError):
+    pass
+
+
+class _NonFinite(ValueError):
+    pass
+
+
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise _DuplicateKey(key)
+        result[key] = value
+    return result
+
+
+def _reject_constant(value: str) -> Any:
+    raise _NonFinite(value)
 
 
 HYPOTHESIZE_SYSTEM_PROMPT = (
@@ -52,9 +85,10 @@ HYPOTHESIZE_SYSTEM_PROMPT = (
     "  - **specific** — narrows the topic to a falsifiable claim\n"
     "  - **mechanistic** — names a concrete variable, condition, or comparison\n"
     "  - **testable** — could be checked against literature or a sandbox experiment\n"
+    "  - **concise** — no more than 80 words and 1200 characters\n"
     "\n"
     "When the topic is IN SCOPE and already a sharp, falsifiable claim with a\n"
-    "stated mechanism, include it VERBATIM as one of the candidates — do\n"
+    "stated mechanism and fits those bounds, include it VERBATIM as one of the candidates — do\n"
     "not paraphrase or 'fix' an in-scope claim that's already specific.\n"
     "Preserve its stated mechanism, including deliberately testable errors.\n"
     "\n"
@@ -85,72 +119,119 @@ HYPOTHESIZE_SYSTEM_PROMPT = (
 )
 
 
-def _extract_json_object(text: str) -> dict[str, Any] | None:
-    """Find the first balanced JSON object in `text` and parse it.
+def _validate_record(record: Any) -> tuple[list[str] | None, str | None, str | None]:
+    """Validate one complete wrapper record without repairing model output.
 
-    Gemma occasionally wraps JSON in prose or in `<channel|>` markup.
-    We scan for the first `{` and find its matching `}` by counting
-    braces, then try to parse that slice."""
-    if not isinstance(text, str):
-        return None
-    start = text.find("{")
-    if start < 0:
-        return None
-    depth = 0
-    in_string = False
-    escape = False
-    for i in range(start, len(text)):
-        ch = text[i]
-        if escape:
-            escape = False
-            continue
-        if ch == "\\" and in_string:
-            escape = True
-            continue
-        if ch == '"':
-            in_string = not in_string
-            continue
-        if in_string:
-            continue
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                try:
-                    return json.loads(text[start:i + 1])
-                except json.JSONDecodeError:
-                    return None
-    return None
+    Returns ``(candidates, chosen, diagnostic)``.  The diagnostic starts with
+    a stable failure code so callers can distinguish transport truncation,
+    protocol leakage, and field-contract errors.  Invalid visible text is
+    never promoted into a scientific hypothesis.
+    """
+    if not isinstance(record, dict):
+        return None, None, "wrapper_record: wrapper returned a non-object record"
 
+    finish_reason = record.get("finish_reason")
+    if finish_reason == "length":
+        return None, None, "truncated_completion: generation reached its output limit"
+    if finish_reason != "stop":
+        return (
+            None,
+            None,
+            ("incomplete_completion: wrapper did not report finish_reason='stop' "
+             f"(got {finish_reason!r})"),
+        )
 
-def _validate_payload(payload: Any) -> tuple[list[str], str | None]:
-    """Pull candidates + chosen out of a parsed JSON object. Returns
-    `(candidates, chosen)`. Either may be empty / None if invalid."""
-    if not isinstance(payload, dict):
-        return [], None
-    cand_raw = payload.get("candidates")
-    chosen = payload.get("chosen")
-    candidates: list[str] = []
-    if isinstance(cand_raw, list):
-        for c in cand_raw:
-            if isinstance(c, str) and c.strip():
-                candidates.append(c.strip())
-    candidates = candidates[:3]  # schema cap
+    completion = record.get("completion")
+    if not isinstance(completion, str):
+        return None, None, "completion_not_text: visible completion is not text"
+    if not completion.strip():
+        return None, None, "empty_completion: visible completion is empty"
+
+    # A complete Markdown JSON fence is a harmless transport envelope.  Strip
+    # exactly one whole envelope, but never scan prose for an embedded object.
+    # This still rejects partial fences, surrounding prose, and multiple values.
+    candidate_text = completion.strip()
+    if candidate_text.startswith("```json\n") and candidate_text.endswith("\n```"):
+        candidate_text = candidate_text[len("```json\n"):-len("\n```")]
+
+    try:
+        payload = json.loads(
+            candidate_text,
+            object_pairs_hook=_unique_object,
+            parse_constant=_reject_constant,
+        )
+    except _DuplicateKey as exc:
+        return None, None, f"duplicate_json_key: duplicate object key {exc.args[0]!r}"
+    except _NonFinite:
+        return None, None, "non_finite_json: JSON contains NaN or infinity"
+    except json.JSONDecodeError as exc:
+        lowered = candidate_text.casefold()
+        if any(marker in lowered for marker in _REASONING_CHANNEL_MARKERS):
+            return (
+                None,
+                None,
+                ("reasoning_channel_leakage: visible completion contains "
+                 "reasoning/channel protocol markup outside valid JSON"),
+            )
+        return (
+            None,
+            None,
+            ("malformed_json: visible completion is not exactly one JSON "
+             f"object (line {exc.lineno} column {exc.colno})"),
+        )
+
+    if not isinstance(payload, dict) or set(payload) != _EXPECTED_KEYS:
+        return None, None, "field_schema: response must have exactly candidates and chosen"
+
+    candidate_value = payload["candidates"]
+    chosen = payload["chosen"]
+    if not isinstance(candidate_value, list) or not 1 <= len(candidate_value) <= 3:
+        return None, None, "field_schema: candidates must contain 1 to 3 items"
+    if any(not isinstance(item, str) or not item.strip() for item in candidate_value):
+        return None, None, "field_schema: every candidate must be a non-empty string"
+    candidates = [item.strip() for item in candidate_value]
+    if any(item.casefold().startswith(_REASONING_CHANNEL_MARKERS) for item in candidates):
+        return None, None, "reasoning_channel_leakage: candidate starts with channel markup"
+    if any(item.startswith(("{", "[", "```")) for item in candidates):
+        return None, None, "field_schema: candidate is a structured envelope rather than a claim"
+    if any(len(item.split()) > 80 or len(item) > 1200 for item in candidates):
+        return None, None, "field_schema: candidates must fit 80 words and 1200 characters"
+    if len(set(candidates)) != len(candidates):
+        return None, None, "field_schema: candidates must be distinct"
     if not isinstance(chosen, str) or not chosen.strip():
-        chosen = None
-    else:
-        chosen = chosen.strip()
-        # Ensure chosen is among candidates (per the prompt's contract).
-        # If not, fall back to using chosen as the only candidate.
-        if chosen not in candidates:
-            if not candidates:
-                candidates = [chosen]
-            else:
-                # Prefer the model's chosen even when not in list — it's
-                # the model's pick, after all. But also keep the list.
-                candidates = [chosen] + [c for c in candidates if c != chosen][:2]
-    return candidates, chosen
+        return None, None, "field_schema: chosen must be a non-empty string"
+    chosen = chosen.strip()
+    if chosen not in candidates:
+        return (
+            None,
+            None,
+            "field_schema: chosen must exactly equal one candidate",
+        )
+    return candidates, chosen, None
+
+
+def _messages(topic: str, *, repair_code: str | None = None) -> list[dict[str, str]]:
+    messages = [
+        {"role": "system", "content": HYPOTHESIZE_SYSTEM_PROMPT},
+        {"role": "user", "content": f"Research topic: {topic}"},
+    ]
+    if repair_code is not None:
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "The previous attempt failed the machine-readable response "
+                    f"contract ({repair_code}). Retry once from the research topic. "
+                    "Return exactly one JSON object with only `candidates` and "
+                    "`chosen`; do not repeat or discuss the previous response."
+                ),
+            }
+        )
+    return messages
+
+
+def _failure_code(diagnostic: str) -> str:
+    return diagnostic.split(":", 1)[0]
 
 
 def hypothesize(
@@ -209,17 +290,12 @@ def hypothesize(
             "parent_request_id": parent_request_id,
         }
 
-    messages = [
-        {"role": "system", "content": HYPOTHESIZE_SYSTEM_PROMPT},
-        {"role": "user", "content": f"Research topic: {topic}"},
-    ]
-
     try:
         record = call_sync(
-            messages,
+            _messages(topic),
             temperature=0.7,
             top_p=0.95,
-            max_tokens=512,
+            max_tokens=_MAX_TOKENS,
             caller_tag="hypothesize",
             parent_request_id=parent_request_id,
             log_path=log_path,
@@ -234,29 +310,60 @@ def hypothesize(
             "parent_request_id": parent_request_id,
         }
 
-    completion = record.get("completion") or ""
-    wrapper_rid = record.get("request_id")
+    wrapper_rid = record.get("request_id") if isinstance(record, dict) else None
+    candidates, chosen, diagnostic = _validate_record(record)
+    initial_diagnostic = diagnostic
 
-    payload = _extract_json_object(completion)
-    candidates, chosen = _validate_payload(payload)
+    if diagnostic is not None:
+        # One fresh repair attempt is intentionally bounded.  Do not feed the
+        # malformed response back to the model: the topic and stable failure
+        # code are sufficient, and treating model output as a new instruction
+        # would blur the protocol boundary.
+        try:
+            repair = call_sync(
+                _messages(topic, repair_code=_failure_code(diagnostic)),
+                temperature=0.2,
+                top_p=0.9,
+                max_tokens=_REPAIR_MAX_TOKENS,
+                caller_tag="hypothesize_repair",
+                parent_request_id=(wrapper_rid or parent_request_id),
+                log_path=log_path,
+                model=model,
+            )
+        except Exception as exc:  # noqa: BLE001 — worker boundary reports failed repair without admitting output
+            return {
+                "status": "error",
+                "result": None,
+                "errors": [
+                    f"initial structured output rejected: {diagnostic}",
+                    ("bounded repair call failed: "
+                     f"{type(exc).__name__}: {exc}"),
+                ],
+                "wrapper_request_id": wrapper_rid,
+                "parent_request_id": parent_request_id,
+            }
 
-    if not candidates or chosen is None:
-        # Robust fallback: use the raw completion as a single candidate.
-        # Marks status=passed but with an error annotation so callers can
-        # decide whether to retry / surface to the human.
-        text = strip_channel_markup((completion or "").strip()) or "(empty completion)"
-        text = text[:2000]
+        repair_rid = repair.get("request_id") if isinstance(repair, dict) else None
+        wrapper_rid = repair_rid or wrapper_rid
+        candidates, chosen, diagnostic = _validate_record(repair)
+        if diagnostic is not None:
+            return {
+                "status": "error",
+                "result": None,
+                "errors": [
+                    f"initial structured output rejected: {initial_diagnostic}",
+                    f"bounded repair output rejected: {diagnostic}",
+                ],
+                "wrapper_request_id": wrapper_rid,
+                "parent_request_id": parent_request_id,
+            }
+
+    if candidates is None or chosen is None:
+        # Defensive invariant: every successful validation supplies both.
         return {
-            "status": "passed",
-            "result": {
-                "text": text,
-                "candidates_considered": 1,
-                "all_candidates": [text],
-            },
-            "errors": [
-                "JSON parse fell back to raw-completion-as-hypothesis; "
-                "model emitted unstructured output"
-            ],
+            "status": "error",
+            "result": None,
+            "errors": ["internal validation error: accepted output has no candidate"],
             "wrapper_request_id": wrapper_rid,
             "parent_request_id": parent_request_id,
         }
@@ -268,7 +375,11 @@ def hypothesize(
             "candidates_considered": len(candidates),
             "all_candidates": candidates,
         },
-        "errors": [],
+        "errors": (
+            [f"initial structured output rejected and repaired: {initial_diagnostic}"]
+            if initial_diagnostic is not None
+            else []
+        ),
         "wrapper_request_id": wrapper_rid,
         "parent_request_id": parent_request_id,
     }

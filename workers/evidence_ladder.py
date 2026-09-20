@@ -13,7 +13,10 @@ Pure Python — no I/O, no LLM, never coerced (inviolate rule 4):
                         AND redteam.verdict != "fatal_flaw"
                         (redteam ABSENT is acceptable at L1 only).
   L2  synthetic       — experiment_outcome present, trials >= 30, and
-                        summary not INVALID.
+                        summary not INVALID. V2 campaign rows additionally
+                        require a replayed source-bound admission context from
+                        their registered study verifier; row-carried flags or
+                        receipt dictionaries have no authority.
   L3  replicated      — cross_tier_comparison / replication evidence present.
   L4  adversarial     — adversarial_block survived == True
                         AND redteam.verdict == "proceed" (BOTH; the two
@@ -43,6 +46,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from orchestrator.experiment_admission import AdmissionContext
+
 LEVELS = ["L0", "L1", "L2", "L3", "L4", "L5"]
 
 # The test that advances FROM this level to the next rung.
@@ -59,9 +64,62 @@ _MIN_TRIALS = 30
 
 
 _SURPRISE_RE = re.compile(r"Verdict=NO|signed_residual", re.IGNORECASE)
+_RAW_HYPOTHESIS_PREFIXES = ("{", "[", "```", "<think>", "<analysis>")
+_REASONING_MARKERS = (
+    "<|channel",
+    "<channel|>",
+    "<think>",
+    "</think>",
+    "<analysis>",
+    "</analysis>",
+    "[analysis]",
+    "[/analysis]",
+)
 
 
-def _surprising_vs_theory(row: dict[str, Any]) -> bool:
+def v2_hypothesis_failures(row: dict[str, Any]) -> list[str]:
+    """Require the canonical worker result before a V2 row can earn L1."""
+    if not isinstance(row.get("campaign"), dict):
+        return []
+    hypothesis = row.get("hypothesis")
+    if not isinstance(hypothesis, dict):
+        return ["V2 hypothesis object absent"]
+    text = hypothesis.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return ["V2 hypothesis.text absent"]
+    if (
+        text != text.strip()
+        or text.lstrip().casefold().startswith(_RAW_HYPOTHESIS_PREFIXES + _REASONING_MARKERS)
+    ):
+        return ["V2 hypothesis.text is raw structured or reasoning-channel output"]
+    if len(text.split()) > 80 or len(text) > 1200:
+        return ["V2 hypothesis.text exceeds the registered size bound"]
+    count = hypothesis.get("candidates_considered")
+    candidates = hypothesis.get("all_candidates")
+    if (
+        type(count) is not int
+        or not 1 <= count <= 3
+        or not isinstance(candidates, list)
+        or len(candidates) != count
+        or any(
+            not isinstance(candidate, str)
+            or not candidate.strip()
+            or candidate != candidate.strip()
+            or len(candidate.split()) > 80
+            or len(candidate) > 1200
+            or candidate.lstrip().casefold().startswith(_RAW_HYPOTHESIS_PREFIXES + _REASONING_MARKERS)
+            for candidate in candidates
+        )
+        or len(set(candidates)) != len(candidates)
+        or text not in candidates
+    ):
+        return ["V2 hypothesis candidate-selection contract is invalid"]
+    return []
+
+
+def _surprising_vs_theory(
+    row: dict[str, Any], admission_context: AdmissionContext | None
+) -> bool:
     """The exp005-shaped alternative novelty route at L1: novelty 'unclear'
     (or 'novel') backed by a SOUND experiment whose summary ran against
     expectation (/Verdict=NO|signed_residual/i). A bad experiment (low
@@ -70,16 +128,18 @@ def _surprising_vs_theory(row: dict[str, Any]) -> bool:
     novelty = row.get("novelty")
     if not isinstance(novelty, dict) or novelty.get("class") not in {"novel", "unclear"}:
         return False
-    l2_passed, _ = _rung_l2(row)
+    l2_passed, _ = _rung_l2(row, admission_context)
     if not l2_passed:
         return False
     outcome = row.get("experiment_outcome") or {}
     return bool(_SURPRISE_RE.search(str(outcome.get("summary") or "")))
 
 
-def _rung_l1(row: dict[str, Any]) -> tuple[bool, list[str]]:
+def _rung_l1(
+    row: dict[str, Any], admission_context: AdmissionContext | None
+) -> tuple[bool, list[str]]:
     """L1 literature-consistent. Returns (passed, missing/failure notes)."""
-    missing: list[str] = []
+    missing: list[str] = v2_hypothesis_failures(row)
 
     retrieval = row.get("retrieval")
     relevance = retrieval.get("relevance") if isinstance(retrieval, dict) else None
@@ -91,7 +151,9 @@ def _rung_l1(row: dict[str, Any]) -> tuple[bool, list[str]]:
     novelty = row.get("novelty")
     if not isinstance(novelty, dict) or "class" not in novelty:
         missing.append("novelty.class absent")
-    elif novelty.get("class") != "novel" and not _surprising_vs_theory(row):
+    elif novelty.get("class") != "novel" and not _surprising_vs_theory(
+        row, admission_context
+    ):
         missing.append(
             f"novelty.class={novelty.get('class')!r} (need 'novel', and the "
             "result is not surprising-vs-theory)"
@@ -111,8 +173,10 @@ def _rung_l1(row: dict[str, Any]) -> tuple[bool, list[str]]:
     return (not missing, missing)
 
 
-def _rung_l2(row: dict[str, Any]) -> tuple[bool, list[str]]:
-    """L2 synthetic experiment: outcome present, trials >= 30, not INVALID."""
+def _rung_l2(
+    row: dict[str, Any], admission_context: AdmissionContext | None
+) -> tuple[bool, list[str]]:
+    """L2: legacy outcome bar plus replayed registered admission for V2."""
     missing: list[str] = []
     outcome = row.get("experiment_outcome")
     if not isinstance(outcome, dict) or not outcome:
@@ -132,6 +196,12 @@ def _rung_l2(row: dict[str, Any]) -> tuple[bool, list[str]]:
         # lowercase "invalid: harness crashed" must not pass L2 (2026-08-14
         # review regression).
         missing.append("experiment_outcome.summary is INVALID")
+
+    if isinstance(row.get("campaign"), dict):
+        if not isinstance(admission_context, AdmissionContext):
+            missing.append("verified experiment admission absent for V2 outcome")
+        else:
+            missing.extend(admission_context.l2_failures(row, _MIN_TRIALS))
 
     return (not missing, missing)
 
@@ -178,6 +248,7 @@ def derive_level(
     feedback_row: dict[str, Any] | None,
     adversarial_block: dict[str, Any] | None,
     health_rows: list,
+    admission_context: AdmissionContext | None = None,
 ) -> dict[str, Any]:
     """Derive the earned evidence level for one loop-memory row.
 
@@ -191,8 +262,8 @@ def derive_level(
     reasons: list[str] = []
 
     rungs: list[tuple[str, tuple[bool, list[str]]]] = [
-        ("L1", _rung_l1(row)),
-        ("L2", _rung_l2(row)),
+        ("L1", _rung_l1(row, admission_context)),
+        ("L2", _rung_l2(row, admission_context)),
         ("L3", _rung_l3(row)),
         ("L4", _rung_l4(row, adversarial_block)),
         ("L5", _rung_l5(feedback_row)),

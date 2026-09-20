@@ -42,14 +42,19 @@ from agent_wrapper.generation_policy import (
     resolve_generation_policy,
 )
 from agent_wrapper.wrapper import (
-    DEFAULT_BACKEND,
     _emit,
     _project_for_log,
     get_run_id,
     resolve_backend_route,
     set_run_id,
 )
-from orchestrator import active_run, domain_anchor, empirical_context, iteration_cache
+from orchestrator import (
+    active_run,
+    domain_anchor,
+    empirical_context,
+    experiment_admission,
+    iteration_cache,
+)
 from orchestrator import topicality as topicality_mod
 from orchestrator.journal_stub import finalize_iteration_record
 from orchestrator.runtime import PyRuntime, Runtime
@@ -491,6 +496,7 @@ def run_iteration(
     backend: str | None = None,
     profile: str | None = None,
     experiment_outcome: dict | None = None,
+    experiment_admission_request: experiment_admission.AdmissionRequest | None = None,
     cross_tier_comparison: dict | None = None,
     campaign_id: str | None = None,
     campaign_manifest_sha256: str | None = None,
@@ -509,6 +515,12 @@ def run_iteration(
         attach it to the resulting iteration_record. Used by
         experiment → LOOP_V0 bridges (e.g., exp003_vickrey_rediscovery's
         loop_bridge.py).
+
+    experiment_admission_request: closed verifier/artifact-root selector for
+        a V2 campaign outcome.  V2 outcomes refuse before runtime registration
+        or model dispatch unless the registered study verifier admits the raw
+        evidence and writes a source-bound receipt.  Legacy unlinked outcomes
+        retain their historical behavior.
 
     cross_tier_comparison: optional Loop v1 Step-5 cross-mechanism
         replication comparison (from experiments/replication_driver). When
@@ -543,8 +555,28 @@ def run_iteration(
         campaign_link = bind_topic(campaign, topic)
     if expected_campaign_link is not None and campaign_link != expected_campaign_link:
         raise CampaignError("registered campaign topic changed after dispatch planning")
-    context = (empirical_context.build(experiment_outcome)
-               if experiment_outcome is not None else None)
+    context = (
+        empirical_context.build(experiment_outcome)
+        if experiment_outcome is not None
+        else None
+    )
+    admission_bundle: experiment_admission.AdmissionBundle | None = None
+    if context is not None and campaign_link is not None:
+        if experiment_admission_request is None:
+            raise experiment_admission.AdmissionError(
+                "V2 experiment outcome requires registered study admission"
+            )
+        admission_bundle = experiment_admission.admit_for_dispatch(
+            repo_root=campaign.get("_repo_root", REPO_ROOT),
+            campaign=campaign,
+            campaign_link=campaign_link,
+            outcome=context["outcome"],
+            request=experiment_admission_request,
+        )
+    elif experiment_admission_request is not None:
+        raise experiment_admission.AdmissionError(
+            "experiment admission request requires a V2 campaign outcome"
+        )
     if log_path is _USE_DEFAULT_LOG:
         log_path = _DEFAULT_LOG_PATH  # resolved at call time (patchable)
     runtime = runtime or PyRuntime()
@@ -599,6 +631,9 @@ def run_iteration(
             source=source, log_path=log_path, max_depth=max_depth,
             experiment_outcome=(context["outcome"] if context is not None else None),
             empirical_entry=context,
+            experiment_admission_ref=(
+                admission_bundle.reference if admission_bundle is not None else None
+            ),
             cross_tier_comparison=cross_tier_comparison,
             generation_policy=policy,
             host_metadata=route.host_metadata,
@@ -623,6 +658,7 @@ def _run_iteration_impl(
     max_depth: int,
     experiment_outcome: dict | None,
     empirical_entry: dict | None,
+    experiment_admission_ref: dict | None,
     cross_tier_comparison: dict | None,
     generation_policy=None,
     host_metadata: dict | None = None,
@@ -956,6 +992,25 @@ def _run_iteration_impl(
                 })
 
             tool_calls_made.append(name)
+            # The worker already attempted its bounded structured-output repair.
+            # Without a valid hypothesis there is no claim for later stages to
+            # retrieve, criticize, or journal. Stop before another tool in this
+            # same assistant turn can invent a replacement claim inline.
+            if name == "hypothesize" and (
+                not isinstance(tool_result, dict)
+                or tool_result.get("status") != "passed"
+                or not isinstance(tool_result.get("result"), dict)
+                or not isinstance(tool_result["result"].get("text"), str)
+                or not tool_result["result"]["text"].strip()
+            ):
+                runtime.log_event({
+                    "event_type": "loop_v0_iteration_failed",
+                    "iteration_id": iteration_id,
+                    "stage": "hypothesize",
+                    "reason": "no_valid_hypothesis_after_bounded_repair",
+                    "parent_request_id": last_id,
+                })
+                raise RuntimeError("hypothesize failed: no valid claim for downstream research")
             # Capture each LOOP_V0 step's payload so the iteration_record
             # ends up complete even if Nara forgets a step at the end.
             # Also write the FULL tool_result to the per-iteration cache
@@ -1328,6 +1383,8 @@ def _run_iteration_impl(
     # Bridge field for Tier-1/Tier-2 sandbox experiments (Slice 1 / exp003).
     if experiment_outcome is not None:
         record["experiment_outcome"] = experiment_outcome
+    if experiment_admission_ref is not None:
+        record["experiment_admission_ref"] = experiment_admission_ref
 
     # Loop v1 Step 5 — cross-mechanism replication comparison bridge.
     if cross_tier_comparison is not None:

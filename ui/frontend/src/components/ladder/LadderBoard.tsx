@@ -9,7 +9,14 @@
 // page put every field on every row.
 import RungGlyph from "../../design/RungGlyph";
 import { ageLabel } from "../../ladderBar";
-import { LEVELS, asCount, asText, stemOf } from "./ladderModel";
+import {
+  LEVELS,
+  asCount,
+  asText,
+  claimSourceQualification,
+  rungQualification,
+  stemOf,
+} from "./ladderModel";
 import type { LadderModel } from "./ladderModel";
 import type { LadderCluster } from "../../types/schemas";
 
@@ -38,6 +45,13 @@ function ClusterCard({
   const killed = asText(c.status) === "killed";
   const agendaOpen = asCount(c.open_agenda_count);
   const members = asCount(c.member_count);
+  const sourceQualification = claimSourceQualification(c);
+  const evidenceQualification = rungQualification(c);
+  const qualificationLabel = asText(c.claim_source_status) === "v2_contract_invalid"
+    ? "source unvalidated"
+    : evidenceQualification !== null
+      ? "rung qualified"
+      : null;
   // ONE metric: an open agenda is the live signal; otherwise cluster size.
   const metric =
     agendaOpen > 0
@@ -88,6 +102,14 @@ function ClusterCard({
         <span className="tnum">{ageLabel(c.last_event_ts, nowMs)}</span>
         <span className="tnum">{metric}</span>
       </span>
+      {qualificationLabel !== null && (
+        <span
+          style={{ display: "block", marginTop: "var(--space-1)", color: "var(--status-warn)", fontSize: "var(--text-meta)" }}
+          title={[evidenceQualification, sourceQualification].filter(Boolean).join(" ")}
+        >
+          {qualificationLabel}
+        </span>
+      )}
     </button>
   );
 }

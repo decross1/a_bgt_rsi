@@ -1,5 +1,6 @@
 /** Source-bound campaign operations; scientific scores live in Benchmark Progress. */
 import { Link } from "react-router-dom";
+import { ResearchFocusCard, admitResearchFocus } from "./ResearchFocusCard";
 
 const SHA = /^[0-9a-f]{64}$/;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
@@ -263,6 +264,9 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
   const ingestion = obj(view?.ingestion) ? view.ingestion : null;
   const legacy = obj(view?.ingestion_legacy_log) ? view.ingestion_legacy_log : null;
   const empirical = obj(view?.empirical_pilot) ? view.empirical_pilot : null;
+  const focus = view && Object.prototype.hasOwnProperty.call(view, "research_focus")
+    ? admitResearchFocus(view.research_focus)
+    : null;
   const miaPilot = obj(view?.mia_known_opponent_pilot) ? view.mia_known_opponent_pilot : null;
   const miaPending = miaPilot?.schema_version === MIA_PILOT_SCHEMA &&
     miaPilot.window_id === MIA_PILOT_ID &&
@@ -398,6 +402,14 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
   const successorWork = plannedWork && workCode === "activate_registered_successor" &&
     plannedWork.activation_required === true && nextId === plannedWork.campaign_id &&
     next?.manifest_sha256 === plannedWork.manifest_sha256;
+  const focusWork = plannedWork && focus?.status === "selected" &&
+    workCode === "research_focus_next_gate" &&
+    plannedWork.focus_id === focus.focusId &&
+    plannedWork.source_iteration_id === focus.sourceIterationId &&
+    plannedWork.stage === focus.stage &&
+    plannedWork.next_action === focus.nextAction &&
+    plannedWork.activation_required === false &&
+    plannedWork.execution_authorized === false;
   const linked = iteration && iteration.kind === "campaign_iteration_recorded" && ID.test(String(iteration.iteration_id)) &&
     ID.test(String(iteration.topic_id)) && utc(iteration.at) && SHA.test(String(iteration.loop_source_sha256)) ? iteration : null;
   const linkedGate = linked && ["pending", "blocked", "passed", "failed"].includes(String(linked.gate_status))
@@ -448,6 +460,10 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
 
   let nextWork = "Next topic work is unknown";
   if (gate?.operator_pause === true) nextWork = "Coordinator paused";
+  else if (focusWork) nextWork = "Advance the selected research focus through the next gate shown above; new-topic intake is held.";
+  else if (focus?.status === "selected") nextWork = "Selected research focus governs next work; its source-bound gate is shown above.";
+  else if (focus?.status === "source_invalid" || focus?.status === "malformed")
+    nextWork = "Research focus must be repaired before choosing more topic work.";
   else if (successorWork) nextWork = `Activate registered successor ${nextId}`;
   else if (registeredWork && workCode === "freeze_and_run_registered_empirical_study" &&
            ID.test(String(plannedWork.study_id)) && SHA.test(String(plannedWork.preregistration_sha256)))
@@ -504,8 +520,11 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
     </div>
     {!view ? <p className="mt-4 text-sm text-[var(--fg-muted)]">Current research operations and ingestion are unknown. System health and historical traces remain separate.</p>
       : <>
+      {Object.prototype.hasOwnProperty.call(view, "research_focus") && (
+        <ResearchFocusCard focus={view.research_focus} className="mt-4" />
+      )}
       <dl className="mt-4 grid gap-3 text-sm md:grid-cols-2">
-        <div className="rounded border border-[var(--border-1)] p-3"><dt className="font-semibold">Campaign queue and next registered step</dt>
+        <div className="rounded border border-[var(--border-1)] p-3"><dt className="font-semibold">Campaign queue and next work signal</dt>
           <dd className="mt-1">{queueLine}</dd>
           {firstEligible && <dd className="mt-1 text-xs text-[var(--fg-muted)]">Next eligible registered topic {firstEligible}; eligibility does not establish dispatch.</dd>}
           <dd className="mt-1">{nextWork}</dd>

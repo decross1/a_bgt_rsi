@@ -173,12 +173,14 @@ def _refine_fields(fields: dict[str, str], hypothesis_text: str) -> dict[str, st
 
 # ── Public API ───────────────────────────────────────────────────────────────
 
-def extract_claim(iteration_row: dict) -> dict[str, Any]:
+def extract_claim(iteration_row: dict, *, refine: bool = True) -> dict[str, Any]:
     """Canonical claim record for one iteration row.
 
     Source text = hypothesis.text (blob-repaired when it is a leaked JSON
     candidates blob), falling back to seed.topic for a hypothesis-less legacy
     row. A row with neither RAISES ValueError — no silent empty claim.
+    ``refine=False`` makes historical projection deterministic and model-free;
+    it does not assert a mock model result or alter the source record.
     """
     hyp = iteration_row.get("hypothesis")
     text = hyp.get("text") if isinstance(hyp, dict) else None
@@ -199,7 +201,7 @@ def extract_claim(iteration_row: dict) -> dict[str, Any]:
 
     fields = _derive_fields(text, topic)
 
-    if not os.environ.get("MOCK_LLM"):
+    if refine and not os.environ.get("MOCK_LLM"):
         # Real run: one low-temp refinement pass. Failure -> explicit, logged
         # fallback to the deterministic draft (rule 7).
         t0 = time.perf_counter()

@@ -115,7 +115,7 @@ describe("ConcurrencyWarning hardening — injected prop (bypasses api sanitizer
       expect(container.innerHTML).not.toContain("12345");
       expect(container.innerHTML).not.toContain("NaN");
       expect(container.innerHTML).not.toContain("Infinity");
-      expect(banner).toHaveTextContent(/iteration is mid-flight/i);
+      expect(banner).toHaveTextContent(/lab run is using the active model service/i);
       expect(c.error).not.toHaveBeenCalled();
       expect(c.warn).not.toHaveBeenCalled();
       unmount();
@@ -149,7 +149,8 @@ describe("ConcurrencyWarning hardening — injected prop (bypasses api sanitizer
     );
     const banner = screen.getByTestId("concurrency-warning");
     // empty narration → honest stub, not a blank dangling "— ".
-    expect(banner).toHaveTextContent(/iteration is mid-flight/i);
+    expect(banner).toHaveTextContent(/lab run is using the active model service/i);
+    expect(banner).not.toHaveTextContent(/Gemma|Qwen/);
     expect(c.error).not.toHaveBeenCalled();
   });
 });
@@ -210,7 +211,7 @@ describe("ConcurrencyWarning — VALID input unchanged (fix did not over-suppres
     const banner = screen.getByTestId("concurrency-warning");
     // It is a real non-empty string → surfaced, NOT replaced by the stub.
     expect(banner.textContent).toContain("[object Object]");
-    expect(banner).not.toHaveTextContent(/iteration is mid-flight/i);
+    expect(banner).not.toHaveTextContent(/lab run is using the active model service/i);
     expect(c.error).not.toHaveBeenCalled();
   });
 

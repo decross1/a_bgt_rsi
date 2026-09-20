@@ -564,6 +564,41 @@ describe("ResearchOpsCard", () => {
     expect(screen.getByText("Current observation unavailable")).toBeInTheDocument();
   });
 
+  it("puts the selected focus gate ahead of an otherwise eligible topic queue", () => {
+    const focus = {
+      schema_version: "research-focus/v1", status: "selected",
+      focus_id: "disclosed-payoff-competence", receipt_sha256: sha("1"),
+      title: "Disclosed payoff information and action competence",
+      source_iteration_id: "iter-2026-09-15-007", source_record_ordinal: 127,
+      source_row_sha256: sha("2"),
+      source_campaign_id: "v2-campaign", source_campaign_manifest_sha256: sha("a"),
+      source_evidence_level: null, stage: "needs_clean_refinement",
+      next_action: "Write a clean hypothesis and preregistration.",
+      blockers: ["Raw structured hypothesis."], source_quality: "raw_structured_hypothesis",
+      selected_at: "2026-09-20T04:00:00+00:00", selected_by: "codex",
+      selection_reason: "Advance one seed.", intake_policy: "focus_before_new_topics",
+      next_gate: { from: "research_seed", to: "study_ready",
+        artifact: "clean hypothesis + preregistration", status: "pending", owner: "Oracle + Codex" },
+      execution_authorized: false, scientific_credit: "none_selection_only",
+      evidence_refs: [{ path: "memory/loop_memory.jsonl",
+        iteration_id: "iter-2026-09-15-007", record_ordinal: 127,
+        row_sha256: sha("2") }],
+    };
+    const data = {
+      ...receipt(), research_focus: focus,
+      campaign_queue: { status: "eligible", eligible_count: 1, consumed_count: 1,
+        eligible_topic_ids: ["topic-unused"], loop_source_sha256: sha("b") },
+      next_work: { code: "research_focus_next_gate", focus_id: focus.focus_id,
+        source_iteration_id: focus.source_iteration_id, campaign_id: "v2-campaign",
+        manifest_sha256: sha("a"), activation_required: false,
+        execution_authorized: false, next_action: focus.next_action, stage: focus.stage },
+    };
+    show(data);
+    expect(screen.getByTestId("research-focus-card")).toHaveTextContent(focus.title);
+    expect(screen.getByText(/Advance the selected research focus through the next gate/)).toBeInTheDocument();
+    expect(screen.queryByText(/^1 registered topic eligible$/)).not.toBeInTheDocument();
+  });
+
   it("withholds tampered linked-iteration, cycle, and source-success details", () => {
     const data = receipt();
     data.last_productive = { ...data.last_productive, loop_source_sha256: "unbound" };

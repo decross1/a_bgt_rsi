@@ -199,7 +199,7 @@ def _record_level_event(iteration_id: str, level: str, errors: list[str]) -> Non
 
 
 def _passes_threshold(
-    row: dict[str, Any], human_verdict: str | None
+    row: dict[str, Any], human_verdict: str | None, *, repo_root: Path = REPO_ROOT,
 ) -> tuple[bool, str | None]:
     """Pure-Python gate, D-059: the cheap gate IS the evidence ladder.
 
@@ -210,13 +210,14 @@ def _passes_threshold(
         L1 rung itself admits — critique survives, redteam != fatal_flaw:
         the ladder consults the negative signals the old threshold ignored).
     """
-    from workers.evidence_ladder import LEVELS, derive_level
+    from orchestrator.experiment_admission import derive_verified_level
+    from workers.evidence_ladder import LEVELS
 
     if human_verdict == "invalid":
         return False, "human verdict is 'invalid'"
 
     feedback_row = {"verdict": human_verdict} if human_verdict else None
-    derived = derive_level(row, feedback_row, None, [])
+    derived = derive_verified_level(row, feedback_row, None, [], repo_root=repo_root)
     if LEVELS.index(derived["level"]) >= LEVELS.index("L1"):
         return True, None
     missing = "; ".join(derived["missing_for_next"]) or "below L1"
@@ -608,6 +609,7 @@ def _promote_findings(
     campaign: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Inner funnel body. See promote_findings for the contract."""
+    admission_root = Path(loop_memory_path).parent.parent
     rows = _read_jsonl(loop_memory_path)
     if campaign is not None:
         from orchestrator.research_campaign import unique_matching_records
@@ -660,7 +662,7 @@ def _promote_findings(
             continue
 
         human_verdict = (feedback.get(iid) or {}).get("verdict")
-        passes, reason = _passes_threshold(row, human_verdict)
+        passes, reason = _passes_threshold(row, human_verdict, repo_root=admission_root)
         if not passes:
             near_misses.append(
                 {"source_iteration_id": iid, "reason": reason, "stage": "threshold"}
@@ -749,13 +751,14 @@ def _promote_findings(
     # consults BOTH previously-ignored negatives: the vote outcome and
     # redteam.verdict. Below-L3 candidates are near-missed with the exact
     # test they owe — the coordinator's ladder-gap signal). ──
-    from workers.evidence_ladder import derive_level, next_test_owed
+    from orchestrator.experiment_admission import derive_verified_level
+    from workers.evidence_ladder import next_test_owed
 
     for row in survivors:
         iid = row["iteration_id"]
         claim = _claim_text(row)
 
-        pre = derive_level(row, feedback.get(iid), None, health_rows)
+        pre = derive_verified_level(row, feedback.get(iid), None, health_rows, repo_root=admission_root)
         if pre["level"] != "L3":
             missing = "; ".join(pre["missing_for_next"]) or "unmet rungs"
             near_misses.append({
@@ -801,11 +804,11 @@ def _promote_findings(
             })
             continue
 
-        derived = derive_level(
+        derived = derive_verified_level(
             row,
             feedback.get(iid),
             {"survived": tally["survived"]},
-            health_rows,
+            health_rows, repo_root=admission_root,
         )
         if derived["level"] not in ("L4", "L5"):
             near_misses.append({

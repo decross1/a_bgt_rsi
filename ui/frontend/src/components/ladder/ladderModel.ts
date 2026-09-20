@@ -52,6 +52,43 @@ export function isKilled(c: LadderCluster): boolean {
   return asText(c.status) === "killed";
 }
 
+/** Qualification for readable hypothesis text recovered from source rows. */
+export function claimSourceQualification(c: LadderCluster): string | null {
+  const status = asText(c.claim_source_status);
+  if (status === "v2_contract_invalid") {
+    return "Readable text was recovered from source output that fails the current V2 hypothesis contract; it is not validated claim evidence.";
+  }
+  if (status === "mixed") {
+    return "This collection mixes hypothesis-source contracts; readable text is source context, not validated claim evidence.";
+  }
+  if (status === "legacy_unverified") {
+    return "Legacy hypothesis source; the current rung was rederived, but the source predates the V2 claim contract.";
+  }
+  if (status === "unavailable") {
+    return "No exact hypothesis source is available for validation.";
+  }
+  return null;
+}
+
+/** Explain a changed or unavailable current rung without rewriting history. */
+export function rungQualification(c: LadderCluster): string | null {
+  const historical = asText(c.historical_evidence_level);
+  const current = asText(c.evidence_level);
+  const status = asText(c.evidence_qualification?.status);
+  const notes: string[] = [];
+  if (historical !== null && historical !== current) {
+    notes.push(`Historical ledger ${historical}; current verified projection ${current ?? "has no rung"}.`);
+  }
+  if (status === "partial") {
+    notes.push("Current rung uses exact available sources; at least one cluster member could not be rebound.");
+  } else if (status === "source_ambiguous") {
+    notes.push("Current rung is unavailable because the source identity is ambiguous.");
+  } else if (status === "source_unavailable") {
+    notes.push("Current rung is unavailable because no exact source row could be rebound.");
+  }
+  return notes.length > 0 ? notes.join(" ") : null;
+}
+
 /** The kill code a graveyard group is keyed on. */
 export function killCodeOf(c: LadderCluster): string {
   const kill =

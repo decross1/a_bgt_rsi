@@ -13,7 +13,9 @@ promoted with margin +1), the Qwen-failure path (2 timeouts + 1 stands ->
 n_voting below quorum -> NOT promoted, qwen_failures==2, never silent),
 idempotency, schema validity, and the max_candidates cap.
 """
+import hashlib
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -22,6 +24,7 @@ import jsonschema
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from orchestrator import experiment_admission
 from orchestrator import finding_promotion as fp
 from orchestrator import research_campaign as campaigns
 from orchestrator.subagent import SubAgentResult
@@ -89,6 +92,136 @@ def _paths(tmp_path):
         "feedback_path": tmp_path / "loop_feedback.jsonl",
         "surfaced_path": tmp_path / "surfaced_findings.jsonl",
     }
+
+
+def _admitted_campaign_row(monkeypatch, tmp_path, iteration_id):
+    """Return one campaign row carrying replayable registered evidence.
+
+    Promotion of a V2 row must pass the same source-bound admission reader as
+    production.  The fixture therefore freezes a tiny verifier and raw result
+    in a temporary repository instead of stubbing ladder derivation.
+    """
+    relative_files = (
+        "schema/research_campaign.schema.json",
+        "experiments/research_campaign_v2_agentic_game_theory_20260914.json",
+        "experiments/agentic_game_theory_v2_calibration_2026-09-14.json",
+        "experiments/PREREG_agentic_game_theory_v2_calibration_2026-09-14.md",
+    )
+    for relative in relative_files:
+        destination = tmp_path / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO_ROOT / relative, destination)
+
+    verifier_relative = "experiments/test_promotion_admission.py"
+    verifier_path = tmp_path / verifier_relative
+    verifier_path.write_text("# frozen promotion test verifier\n", encoding="utf-8")
+    study_path = (
+        tmp_path / "experiments/agentic_game_theory_v2_calibration_2026-09-14.json"
+    )
+    study = json.loads(study_path.read_text(encoding="utf-8"))
+    study["execution_modules"] = {
+        "independent_admission_path": verifier_relative,
+        "independent_admission_sha256": hashlib.sha256(
+            verifier_path.read_bytes()
+        ).hexdigest(),
+    }
+    study_path.write_text(
+        json.dumps(study, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    manifest_path = (
+        tmp_path / "experiments/research_campaign_v2_agentic_game_theory_20260914.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["study_manifests"][0]["sha256"] = hashlib.sha256(
+        study_path.read_bytes()
+    ).hexdigest()
+    preregistration = tmp_path / manifest["study_manifests"][0]["preregistration_path"]
+    manifest["study_manifests"][0]["preregistration_sha256"] = hashlib.sha256(
+        preregistration.read_bytes()
+    ).hexdigest()
+    manifest_path.write_text(
+        json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    campaign = campaigns.load_campaign(repo_root=tmp_path)
+    topic = campaign["topic_policy"]["topics"][0]["text"]
+    link = campaigns.bind_topic(campaign, topic)
+    artifact_root = tmp_path / "test_artifacts"
+    artifact_output = artifact_root / iteration_id
+    artifact_output.mkdir(parents=True)
+    run_path = artifact_output / "run.json"
+    run_path.write_text(
+        json.dumps(
+            {"status": "complete", "independent_episodes": 30, "effect": 0.25},
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def validator(path):
+        raw = (path / "run.json").read_bytes()
+        value = json.loads(raw)
+        return {
+            "campaign_id": campaign["campaign_id"],
+            "study_id": study["study_id"],
+            "admission_eligible": value.get("status") == "complete",
+            "recorded_episodes": value["independent_episodes"],
+            "run_sha256": hashlib.sha256(raw).hexdigest(),
+            "effect": value["effect"],
+        }
+
+    def outcome_builder(gate):
+        return {
+            "experiment_id": study["study_id"],
+            "metric": "registered_effect",
+            "value": {
+                "effect": gate["effect"],
+                "run_sha256": gate["run_sha256"],
+            },
+            "trials": gate["recorded_episodes"],
+            "summary": "Registered synthetic outcome for promotion.",
+        }
+
+    verifier_id = "promotion-test-study/v1"
+    spec = experiment_admission.VerifierSpec(
+        verifier_id=verifier_id,
+        campaign_id=campaign["campaign_id"],
+        study_id=study["study_id"],
+        metric="registered_effect",
+        verifier_source_path=verifier_relative,
+        raw_result_path="run.json",
+        unit_name="independent_episodes",
+        evidence_kind="registered_synthetic_study",
+        l2_capable=True,
+        artifact_roots={"promotion-test": artifact_root},
+        validator_loader=lambda: validator,
+        outcome_builder=outcome_builder,
+    )
+    specs = {verifier_id: spec}
+    monkeypatch.setattr(experiment_admission, "DEFAULT_VERIFIERS", specs)
+    monkeypatch.setattr(fp, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(campaigns, "load_active_campaign", lambda: campaign)
+    outcome = outcome_builder(validator(artifact_output))
+    bundle = experiment_admission.admit_for_dispatch(
+        repo_root=tmp_path,
+        campaign=campaign,
+        campaign_link=link,
+        outcome=outcome,
+        request=experiment_admission.AdmissionRequest(
+            verifier_id=verifier_id,
+            artifact_root_id="promotion-test",
+            artifact_subpath=iteration_id,
+        ),
+        specs=specs,
+    )
+    row = _row(iteration_id)
+    row["hypothesis"]["all_candidates"] = [row["hypothesis"]["text"]]
+    row["campaign"] = link
+    row["experiment_outcome"] = outcome
+    row["experiment_admission_ref"] = bundle.reference
+    return campaign, link, row
 
 
 def _stub_skeptics(monkeypatch, verdicts):
@@ -380,24 +513,19 @@ def test_since_filters_old_iterations(monkeypatch, tmp_path):
 
 
 def test_campaign_promotion_filters_exact_rows_and_copies_link(monkeypatch, tmp_path):
-    campaign = campaigns.load_campaign()
-    topic = campaign["topic_policy"]["topics"][0]["text"]
-    link = campaigns.bind_topic(campaign, topic)
-    pointer = tmp_path / "active_research_campaign.json"
-    pointer.write_text(json.dumps({
-        "schema_version": "research-campaign-activation/v1",
-        "campaign_id": campaign["campaign_id"],
-        "campaign_manifest_sha256": campaign["_manifest_sha256"],
-        "activated_at": "2026-09-14T22:20:00Z",
-        "activated_by": "test-owner",
-    }))
-    monkeypatch.setattr(campaigns, "DEFAULT_ACTIVATION_PATH", pointer)
+    campaign, link, exact = _admitted_campaign_row(
+        monkeypatch, tmp_path, "iter-2026-06-01-002"
+    )
     monkeypatch.delenv("NARA_RESEARCH_CAMPAIGN", raising=False)
 
-    p = _paths(tmp_path)
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    p = {
+        "loop_memory_path": memory / "loop_memory.jsonl",
+        "feedback_path": memory / "loop_feedback.jsonl",
+        "surfaced_path": memory / "surfaced_findings.jsonl",
+    }
     legacy = _row("iter-2026-06-01-001")
-    exact = _row("iter-2026-06-01-002")
-    exact["campaign"] = link
     _write_jsonl(p["loop_memory_path"], [legacy, exact])
     _stub_skeptics(monkeypatch, ["stands", "stands", "stands"])
     _stub_synthesis(monkeypatch)

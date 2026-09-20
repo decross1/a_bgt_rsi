@@ -180,6 +180,15 @@ function ClaimContext({
         {context.claimStanding}
       </div>
 
+      {(context.sourceQualification !== null || context.rungQualification !== null) && (
+        <p
+          data-testid="research-canvas-source-qualification"
+          style={{ margin: "var(--space-2) 0 0", color: "var(--status-warn)", fontSize: "var(--text-ui)", lineHeight: 1.45 }}
+        >
+          {[context.rungQualification, context.sourceQualification].filter(Boolean).join(" ")}
+        </p>
+      )}
+
       <p className="research-canvas__provenance" data-testid="research-canvas-journey-state" aria-live="polite">
         {journeyState === "loaded"
           ? `Exact iteration journey loaded · ${context.iterationId}`
@@ -213,7 +222,7 @@ function ClaimContext({
       </section>
 
       <section className="research-canvas__context-section">
-        <h4 style={LABEL}>Next agenda</h4>
+        <h4 style={LABEL}>Evidence gate requirement</h4>
         <p style={{ margin: "var(--space-2) 0 0", color: "var(--fg)", lineHeight: 1.45 }}>
           {nextTestText(context)}
         </p>
@@ -301,10 +310,9 @@ export default function ResearchCanvas({
     };
   }), [model.families]);
   const preferred = familyOptions[0];
-  // A null choice follows the best family in the latest source snapshot. This
-  // lets separately arriving Ladder/topic payloads promote the real collection
-  // without pinning a transient first record. An explicit user choice is kept
-  // only while that exact family key still exists.
+  // A null choice follows the first family in the latest source snapshot. This
+  // is a browser default, never the lab's durable research focus. An explicit
+  // user choice is kept only while that exact family key still exists.
   const [chosenFamilyKey, setChosenFamilyKey] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [chosenClaim, setChosenClaim] = useState<{ familyId: string; key: string } | null>(null);
@@ -513,7 +521,7 @@ export default function ResearchCanvas({
           />
         </label>
         <label className="research-canvas__control-label" htmlFor={selectId}>
-          Selected thesis
+          Browse recorded theses
           <select
             id={selectId}
             className="research-canvas__control"
@@ -526,8 +534,8 @@ export default function ResearchCanvas({
         </label>
         {query.trim() !== "" && <p className="research-canvas__match-note" role="status">
           {familyOptions.some((option) => matchesFamily(option, query))
-            ? "Matching choices shown; the selected thesis is retained."
-            : "No matching thesis. Your selected thesis is retained."}
+            ? "Matching choices shown; the current browse selection is retained."
+            : "No matching thesis. Your current browse selection is retained."}
         </p>}
       </div>
 
