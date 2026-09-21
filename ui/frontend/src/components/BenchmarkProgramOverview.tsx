@@ -154,7 +154,7 @@ function hasClaimedProductionResident(value: unknown): boolean {
     isRecord(row) && row.deployment_role === "production_resident");
 }
 
-function armUsesExactModel(row: Record<string, unknown>, model: string): boolean {
+function armUsesModelIdentifier(row: Record<string, unknown>, model: string): boolean {
   const policy = isRecord(row.policy) ? row.policy : null;
   const routes = policy !== null && isRecord(policy.routes) ? policy.routes : null;
   if (routes === null) return false;
@@ -604,13 +604,13 @@ export default function BenchmarkProgramOverview({
   const currentResident = verifiedProductionResident(servedModels, servedRefreshFailing);
   const servingContextUnavailable = currentResident === null
     && hasClaimedProductionResident(servedModels);
-  const exactResidentAdmissionKnown = currentResident !== null
+  const residentIdentifierAdmissionKnown = currentResident !== null
     && data.release.version === "1.1.0"
     && Array.isArray(data.comparison?.history);
-  const exactResidentAdmitted = currentResident !== null && history.some((row) =>
+  const residentIdentifierAdmitted = currentResident !== null && history.some((row) =>
     row.admission_status === "admitted"
     && asRows(row.results).length > 0
-    && armUsesExactModel(row, currentResident.configured_model));
+    && armUsesModelIdentifier(row, currentResident.configured_model));
 
   return <section className="benchmark-hero benchmark-program-overview" data-testid="benchmark-program" aria-labelledby="benchmark-program-heading">
     <header className="benchmark-program-head">
@@ -654,10 +654,10 @@ export default function BenchmarkProgramOverview({
     >
       <strong>Currently served</strong>
       <span><code>{currentResident.configured_model}</code> is the verified online production resident. This live serving observation is separate from the frozen historical reference below.
-        {exactResidentAdmissionKnown
-          ? exactResidentAdmitted
-            ? " This exact served identity has an admitted v1.1 arm; inspect its dated construct results below."
-            : " This exact served identity is not yet admitted on v1.1, so no v1.1 quality score or comparison is inferred."
+        {residentIdentifierAdmissionKnown
+          ? residentIdentifierAdmitted
+            ? " This model identifier appears in an admitted v1.1 arm; inspect its dated configuration and results below. This does not establish a match to the current weights or runtime."
+            : " This model identifier is not yet admitted on v1.1, so no v1.1 quality score or comparison is inferred."
           : " Its admission status on the selected release is not established by the available projection."}
       </span>
     </aside>}

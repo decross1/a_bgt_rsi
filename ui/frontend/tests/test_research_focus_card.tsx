@@ -137,6 +137,32 @@ describe("ResearchFocusCard", () => {
     expect(focus).toHaveTextContent("Disclosed payoff information");
   });
 
+  it.each([
+    ["/ladder?iteration=bad%2Fid", "Requested iteration is invalid", false],
+    ["/ladder?iteration=iter-missing", "Requested iteration is outside this view", true],
+  ])("does not silently substitute the focus for %s", (url, heading, hasDossier) => {
+    render(<MemoryRouter initialEntries={[url]}><Ladder
+      initial={{ clusters: [], counts: { open: 0, surfaced: 0, killed: 0 }, agenda: [], next_owed: {} }}
+      initialResearchOps={{ schema: "research-ops-status/v1", research_focus: selectedFocus() }}
+      initialIterations={[]}
+    /></MemoryRouter>);
+    const boundary = screen.getByTestId("research-selection-boundary");
+    expect(boundary).toHaveTextContent(heading);
+    expect(screen.queryByTestId("research-canvas")).toBeNull();
+    expect(within(boundary).queryByRole("link", { name: "Open the source dossier →" }) !== null).toBe(hasDossier);
+  });
+
+  it("allows explicit campaign browsing while retaining the selected focus", () => {
+    render(<MemoryRouter initialEntries={["/ladder?browse=campaign"]}><Ladder
+      initial={{ clusters: [{ cluster_id: "cl-other", stem: "Other claim", status: "open", evidence_level: "L0", members: ["iter-other"] }], counts: { open: 1, surfaced: 0, killed: 0 }, agenda: [], next_owed: {} }}
+      initialResearchOps={{ schema: "research-ops-status/v1", research_focus: selectedFocus() }}
+      initialIterations={[{ iteration_id: "iter-other", seed: { topic: "Other topic" }, hypothesis: { text: "Other question" } }]}
+    /></MemoryRouter>);
+    expect(screen.queryByTestId("research-selection-boundary")).toBeNull();
+    expect(screen.getByTestId("research-focus-browse-boundary")).toHaveTextContent("selected focus remains iter-2026-09-15-007");
+    expect(screen.getByTestId("research-canvas-context")).toHaveTextContent("Other question");
+  });
+
   it("defaults the research canvas to an available selected focus", () => {
     const ladder = {
       clusters: [{ cluster_id: "cl-other", stem: "Other claim", status: "open", evidence_level: "L0", members: ["iter-other"] },
