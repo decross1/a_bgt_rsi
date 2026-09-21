@@ -402,6 +402,7 @@ describe("BenchmarkProgramOverview", () => {
         url: "http://127.0.0.1:30080/v1",
         model: "nvidia/Qwen3.8-Flash-Next-NVFP4",
         error: null,
+        probed_at: new Date().toISOString(),
         configured_model: "nvidia/Qwen3.8-Flash-Next-NVFP4",
         deployment_role: "production_resident",
         promotion_authorized: true,
@@ -427,6 +428,7 @@ describe("BenchmarkProgramOverview", () => {
         url: "http://127.0.0.1:30080/v1",
         model: "different-model",
         error: null,
+        probed_at: new Date().toISOString(),
         configured_model: "nvidia/Qwen3.8-Flash-Next-NVFP4",
         deployment_role: "production_resident",
         promotion_authorized: true,
@@ -436,6 +438,58 @@ describe("BenchmarkProgramOverview", () => {
       },
     }} />);
     expect(screen.queryByTestId("benchmark-current-resident")).toBeNull();
+  });
+
+  it("does not call retained serving data current after the inventory refresh fails", () => {
+    const current = program("frozen");
+    current.release = { ...current.release, version: "1.1.0" };
+    render(<BenchmarkProgramOverview
+      initial={current}
+      initialServedModelsRefreshFailed
+      initialServedModels={{
+        flash: {
+          url: "http://127.0.0.1:30080/v1",
+          model: "nvidia/Qwen3.8-Flash-Next-NVFP4",
+          error: null,
+          probed_at: new Date().toISOString(),
+          configured_model: "nvidia/Qwen3.8-Flash-Next-NVFP4",
+          deployment_role: "production_resident",
+          promotion_authorized: true,
+          models_endpoint_status: "available",
+          service_status: "online",
+          identity_status: "match",
+        },
+      }}
+    />);
+
+    expect(screen.queryByTestId("benchmark-current-resident")).toBeNull();
+    expect(screen.getByTestId("benchmark-current-resident-unavailable")).toHaveTextContent(
+      "retained payload is not presented as current online evidence",
+    );
+  });
+
+  it("does not call an old endpoint probe current after its freshness window", () => {
+    const current = program("frozen");
+    current.release = { ...current.release, version: "1.1.0" };
+    render(<BenchmarkProgramOverview initial={current} initialServedModels={{
+      flash: {
+        url: "http://127.0.0.1:30080/v1",
+        model: "nvidia/Qwen3.8-Flash-Next-NVFP4",
+        error: null,
+        probed_at: new Date(Date.now() - 90_001).toISOString(),
+        configured_model: "nvidia/Qwen3.8-Flash-Next-NVFP4",
+        deployment_role: "production_resident",
+        promotion_authorized: true,
+        models_endpoint_status: "available",
+        service_status: "online",
+        identity_status: "match",
+      },
+    }} />);
+
+    expect(screen.queryByTestId("benchmark-current-resident")).toBeNull();
+    expect(screen.getByTestId("benchmark-current-resident-unavailable")).toHaveTextContent(
+      "does not have a fresh, identity-matched endpoint probe",
+    );
   });
 
   it("requests an exact release and rejects a mismatched response without fallback", async () => {

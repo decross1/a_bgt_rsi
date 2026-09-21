@@ -120,9 +120,17 @@ function comparisonRows(value: unknown): Record<string, unknown>[] {
 type VerifiedProductionResident = ServedModel & {
   configured_model: string;
   model: string;
+  probed_at: string;
 };
 
-function verifiedProductionResident(value: unknown): VerifiedProductionResident | null {
+const CURRENT_SERVING_MAX_AGE_MS = 90_000;
+
+function verifiedProductionResident(
+  value: unknown,
+  refreshFailing: boolean,
+  nowMs = Date.now(),
+): VerifiedProductionResident | null {
+  if (refreshFailing) return null;
   if (!isRecord(value)) return null;
   const rows = Object.values(value).filter((row): row is VerifiedProductionResident =>
     isRecord(row)
@@ -133,8 +141,17 @@ function verifiedProductionResident(value: unknown): VerifiedProductionResident 
     && row.identity_status === "match"
     && typeof row.configured_model === "string"
     && row.configured_model.trim() !== ""
-    && row.model === row.configured_model);
+    && row.model === row.configured_model
+    && typeof row.probed_at === "string"
+    && Number.isFinite(Date.parse(row.probed_at))
+    && nowMs - Date.parse(row.probed_at) >= 0
+    && nowMs - Date.parse(row.probed_at) <= CURRENT_SERVING_MAX_AGE_MS);
   return rows.length === 1 ? rows[0] : null;
+}
+
+function hasClaimedProductionResident(value: unknown): boolean {
+  return isRecord(value) && Object.values(value).some((row) =>
+    isRecord(row) && row.deployment_role === "production_resident");
 }
 
 function armUsesExactModel(row: Record<string, unknown>, model: string): boolean {
@@ -435,10 +452,13 @@ export default function BenchmarkProgramOverview({
   initial,
   release: requestedRelease,
   initialServedModels,
+  initialServedModelsRefreshFailed = false,
 }: {
   initial?: BenchmarkProgramResponse | null;
   release?: string | null;
   initialServedModels?: Record<string, ServedModel> | null;
+  /** Fixture seam mirroring pollhub's stale-while-revalidate failure state. */
+  initialServedModelsRefreshFailed?: boolean;
 }) {
   const selectedRelease = typeof requestedRelease === "string" && requestedRelease.trim() !== ""
     ? requestedRelease.trim()
@@ -453,6 +473,9 @@ export default function BenchmarkProgramOverview({
     deadlineMs: 20_000,
   });
   const servedModels = initialServedModels === undefined ? servedPoll.data : initialServedModels;
+  const servedRefreshFailing = initialServedModels === undefined
+    ? servedPoll.failing
+    : initialServedModelsRefreshFailed;
 
   useEffect(() => {
     if (initial !== undefined) return;
@@ -578,7 +601,9 @@ export default function BenchmarkProgramOverview({
   const reviewPayloadPresent = data.measurement_review !== undefined && data.measurement_review !== null;
   const measurementReviewRequired = review !== null || data.comparison?.status === "measurement_review_required";
   const comparisonGaps = history.filter((row) => asRows(row.results).length === 0);
-  const currentResident = verifiedProductionResident(servedModels);
+  const currentResident = verifiedProductionResident(servedModels, servedRefreshFailing);
+  const servingContextUnavailable = currentResident === null
+    && hasClaimedProductionResident(servedModels);
   const exactResidentAdmissionKnown = currentResident !== null
     && data.release.version === "1.1.0"
     && Array.isArray(data.comparison?.history);
@@ -634,6 +659,19 @@ export default function BenchmarkProgramOverview({
             ? " This exact served identity has an admitted v1.1 arm; inspect its dated construct results below."
             : " This exact served identity is not yet admitted on v1.1, so no v1.1 quality score or comparison is inferred."
           : " Its admission status on the selected release is not established by the available projection."}
+      </span>
+    </aside>}
+
+    {servingContextUnavailable && <aside
+      className="benchmark-evidence-note benchmark-current-resident"
+      aria-label="Current serving context unavailable"
+      data-testid="benchmark-current-resident-unavailable"
+      role="status"
+    >
+      <strong>Serving context unavailable</strong>
+      <span>{servedRefreshFailing
+        ? "The endpoint inventory refresh failed. Its retained payload is not presented as current online evidence."
+        : "The production-resident claim does not have a fresh, identity-matched endpoint probe. No current online identity is inferred."}
       </span>
     </aside>}
 
