@@ -97,7 +97,7 @@ describe("ResearchFocusCard", () => {
     expect(screen.getByText(/source binding changed/)).toBeInTheDocument();
   });
 
-  it("pins the durable focus above the recorded-thesis browser", () => {
+  it("does not substitute an unrelated campaign thesis when the focus source is absent", () => {
     const ladder = {
       clusters: [{
         cluster_id: "cl-other",
@@ -126,10 +126,54 @@ describe("ResearchFocusCard", () => {
       </MemoryRouter>,
     );
     const focus = screen.getByTestId("research-focus-card");
-    const browser = screen.getByTestId("research-canvas");
-    expect(focus.compareDocumentPosition(browser) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getByText("Browse recorded theses")).toBeInTheDocument();
-    expect(browser).toHaveTextContent("Other topic");
+    const boundary = screen.getByTestId("research-selection-boundary");
+    expect(focus.compareDocumentPosition(boundary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(boundary).toHaveTextContent("Selected focus is outside this campaign view");
+    expect(boundary).toHaveTextContent("An unrelated campaign thesis was not substituted");
+    expect(within(boundary).getByRole("link", { name: "Open the source dossier →" })).toHaveAttribute(
+      "href", "/dossier/iter-2026-09-15-007?research_scope=all",
+    );
+    expect(screen.queryByTestId("research-canvas")).toBeNull();
     expect(focus).toHaveTextContent("Disclosed payoff information");
+  });
+
+  it("defaults the research canvas to an available selected focus", () => {
+    const ladder = {
+      clusters: [{ cluster_id: "cl-other", stem: "Other claim", status: "open", evidence_level: "L0", members: ["iter-other"] },
+        { cluster_id: "cl-focus", stem: "Focus claim", status: "open", evidence_level: "L0", members: ["iter-2026-09-15-007"] }],
+      counts: { open: 2, surfaced: 0, killed: 0 },
+      histogram: { L0: 2, L1: 0, L2: 0, L3: 0, L4: 0, L5: 0 },
+      agenda: [], next_owed: {},
+    };
+    const ops = { schema: "research-ops-status/v1", research_focus: selectedFocus() };
+    render(<MemoryRouter><Ladder initial={ladder} initialResearchOps={ops} initialIterations={[
+      { iteration_id: "iter-other", seed: { topic: "Other topic" }, hypothesis: { text: "Other question" } },
+      { iteration_id: "iter-2026-09-15-007", seed: { topic: "Focused topic" }, hypothesis: { text: "Focused question" } },
+    ]} /></MemoryRouter>);
+
+    expect(screen.getByTestId("research-canvas-context")).toHaveTextContent("Focused question");
+    expect(screen.getByTestId("research-canvas-family-select")).toHaveDisplayValue(/Focused topic/);
+  });
+
+  it("lets an exact URL iteration selection win over the selected focus", () => {
+    const ladder = {
+      clusters: [{ cluster_id: "cl-other", stem: "Other claim", status: "open", evidence_level: "L0", members: ["iter-other"] },
+        { cluster_id: "cl-focus", stem: "Focus claim", status: "open", evidence_level: "L0", members: ["iter-2026-09-15-007"] }],
+      counts: { open: 2, surfaced: 0, killed: 0 },
+      histogram: { L0: 2, L1: 0, L2: 0, L3: 0, L4: 0, L5: 0 },
+      agenda: [], next_owed: {},
+    };
+    const ops = { schema: "research-ops-status/v1", research_focus: selectedFocus() };
+    render(<MemoryRouter initialEntries={["/ladder?iteration=iter-other"]}><Ladder
+      initial={ladder}
+      initialResearchOps={ops}
+      initialIterations={[
+        { iteration_id: "iter-other", seed: { topic: "Other topic" }, hypothesis: { text: "Other question" } },
+        { iteration_id: "iter-2026-09-15-007", seed: { topic: "Focused topic" }, hypothesis: { text: "Focused question" } },
+      ]}
+    /></MemoryRouter>);
+
+    expect(screen.getByTestId("research-canvas-context")).toHaveTextContent("Other question");
+    expect(screen.getByTestId("research-canvas-family-select")).toHaveDisplayValue(/Other topic/);
   });
 });

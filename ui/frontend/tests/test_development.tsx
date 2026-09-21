@@ -175,6 +175,9 @@ describe("development route separates delivery, runtime and scientific records",
     expect(screen.getByText(/not revalidated experiment eligibility/)).toBeInTheDocument();
     expect(screen.getByText(/Deployed frontend commit is not reported/)).toBeInTheDocument();
     expect(screen.getByTestId("development-runtime")).toHaveTextContent("Running backend revision: loaded-backend-sha");
+    expect(screen.getByTestId("development-runtime")).toHaveTextContent("bounded research runner");
+    expect(screen.getByTestId("development-runtime")).toHaveTextContent("follows the current deployment contract");
+    expect(screen.getByTestId("development-runtime")).not.toHaveTextContent("separate Gemma runtime agent");
     expect(screen.getByText(/Latest Nara message in loaded timeline:/)).toHaveTextContent("2026-09-05T06:36:34Z");
     expect(screen.getByText(/Latest Nara message in loaded timeline:/)).not.toHaveTextContent("11:00:16");
     expect(screen.getByText(/Latest channel turn in loaded timeline:/)).toHaveTextContent("2026-09-05T07:00:00Z");

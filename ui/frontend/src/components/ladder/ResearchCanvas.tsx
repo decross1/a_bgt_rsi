@@ -289,11 +289,15 @@ export default function ResearchCanvas({
   model,
   nextOwed,
   researchScope = "active",
+  preferredIterationId = null,
   loadJourney,
 }: {
   model: ThesisModel;
   nextOwed: Record<string, string>;
   researchScope?: ResearchScope;
+  /** Source-bound default supplied by the route. A user's later chooser action
+   * remains local to this mounted canvas. */
+  preferredIterationId?: string | null;
   loadJourney?: (iterationId: string, scope: ResearchScope) => Promise<IterationJourneyResponse>;
 }) {
   const rootRef = useRef<HTMLElement>(null);
@@ -309,10 +313,13 @@ export default function ResearchCanvas({
       searchText: [label, family.id, family.basis, ...family.topicLabels].join(" ").toLowerCase(),
     };
   }), [model.families]);
-  const preferred = familyOptions[0];
-  // A null choice follows the first family in the latest source snapshot. This
-  // is a browser default, never the lab's durable research focus. An explicit
-  // user choice is kept only while that exact family key still exists.
+  const preferred = preferredIterationId === null
+    ? familyOptions[0]
+    : familyOptions.find((option) => option.family.records.some((record) =>
+      record.iterations.some((iteration) => iteration.id === preferredIterationId)));
+  // A null choice follows the route's source-bound default. An explicit user
+  // choice is kept only while that exact family key still exists. The route
+  // remounts this component when an explicit URL selection changes.
   const [chosenFamilyKey, setChosenFamilyKey] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [chosenClaim, setChosenClaim] = useState<{ familyId: string; key: string } | null>(null);
@@ -336,13 +343,24 @@ export default function ResearchCanvas({
     () => selectedFamily === undefined ? [] : researchEntriesForFamily(selectedFamily),
     [selectedFamily],
   );
-  const orderedEntries = useMemo(() => orderEntries(entries, researchScope), [entries, researchScope]);
+  const orderedEntries = useMemo(() => {
+    const ordered = orderEntries(entries, researchScope);
+    if (preferredIterationId === null) return ordered;
+    const index = ordered.findIndex((entry) => entry.iteration?.id === preferredIterationId);
+    return index <= 0
+      ? ordered
+      : [ordered[index], ...ordered.slice(0, index), ...ordered.slice(index + 1)];
+  }, [entries, preferredIterationId, researchScope]);
   const visibleEntries = useMemo(() => orderedEntries.slice(0, CLAIM_LIMIT), [orderedEntries]);
   const visibleContexts = useMemo(
     () => visibleEntries.map((entry) => researchContextForEntry(entry, nextOwed)),
     [visibleEntries, nextOwed],
   );
-  const activeContext = visibleContexts.find((context) => chosenClaim?.familyId === selectedFamily?.id && claimKey(context) === chosenClaim.key) ?? visibleContexts[0];
+  const activeContext = visibleContexts.find((context) => chosenClaim !== null && chosenClaim.familyId === selectedFamily?.id && claimKey(context) === chosenClaim.key)
+    ?? (preferredIterationId === null
+      ? undefined
+      : visibleContexts.find((context) => context.iterationId === preferredIterationId))
+    ?? visibleContexts[0];
   const activeEntry = activeContext === undefined
     ? undefined
     : visibleEntries.find((entry) => entry.record.key === activeContext.record.key && entry.iteration?.id === activeContext.iterationId);
@@ -447,11 +465,15 @@ export default function ResearchCanvas({
     }
   }, [mobileContext, displayedContext?.key]);
 
-  if (preferred === undefined) {
+  if (preferred === undefined || selectedFamilyOption === undefined || selectedFamily === undefined) {
     return (
       <section className="research-canvas" data-testid="research-canvas">
         <h2 style={{ margin: 0, color: "var(--fg)", fontSize: "var(--text-title-lg)" }}>Research canvas</h2>
-        <p style={{ ...META, marginTop: "var(--space-2)" }}>No thesis collections are available in the received sources.</p>
+        <p style={{ ...META, marginTop: "var(--space-2)" }} role="status">
+          {preferredIterationId === null
+            ? "No thesis collections are available in the received sources."
+            : `The requested iteration ${preferredIterationId} is not available in this research view.`}
+        </p>
       </section>
     );
   }
