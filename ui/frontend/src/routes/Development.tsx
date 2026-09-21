@@ -145,7 +145,7 @@ export default function Development() {
       </div>
       <div id="runtime-evidence" hidden={selected !== "runtime"}>
       <Card title="Nara runtime / channel" testId="development-runtime">
-        <p className="text-sm">Nara is the separate Gemma runtime agent. Codex engineering does not automatically post a Nara reply or dispatch a Qwen task.</p>
+        <p className="text-sm">Nara is the lab&apos;s bounded research runner. Its local-model route follows the current deployment contract; Codex engineering does not automatically post a Nara reply or dispatch research work.</p>
         {framedChannel ? <div className="my-3 space-y-2">
           <SourceTime label="Latest Nara message in loaded timeline" value={latest(channel.filter((r) => r.kind === "nara").map((r) => r.ts))} />
           <SourceTime label="Latest channel turn in loaded timeline" value={latest(channel.filter((r) => r.kind !== "event").map((r) => r.ts))} />

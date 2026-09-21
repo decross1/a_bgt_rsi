@@ -1,12 +1,12 @@
 // Existing Ladder: topic collections over unchanged individual research records.
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
 import EndpointMissingNote, {
   isVersionSkew404,
 } from "../components/EndpointMissingNote";
 import ResearchScopeBar from "../components/ResearchScopeBar";
-import { ResearchFocusCard, researchFocusFromStatus } from "../components/ResearchFocusCard";
+import { admitResearchFocus, ResearchFocusCard, researchFocusFromStatus } from "../components/ResearchFocusCard";
 import MiniMarkdown from "../components/MiniMarkdown";
 import KillsByRung from "../components/ladder/KillsByRung";
 import LadderBoard from "../components/ladder/LadderBoard";
@@ -30,6 +30,7 @@ import type { LadderCluster, LadderResponse } from "../types/schemas";
 import type { ResearchApplicationAgendaResponse } from "../types/researchApplicationAgenda";
 
 const LADDER_ENDPOINT = "/api/ladder";
+const ITERATION_ID = /^iter-[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 
 // The /ideas fallback body (the old routes/Ideas.tsx render, folded in).
 function IdeasFallback({ initial }: { initial?: string | null }) {
@@ -93,6 +94,7 @@ function receivedAt(at: number | null) {
 }
 
 export default function Ladder({ initial, initialIdeas, initialIterations, initialApplicationAgenda, initialResearchOps, pollMs = 30_000 }: Props) {
+  const location = useLocation();
   const researchScope = useResearchScope();
   const source = useLadderSources({ initial, initialIterations, pollMs, researchScope });
   const researchOpsPoll = usePolled("research_ops_status", getResearchOpsStatus, {
@@ -111,6 +113,24 @@ export default function Ladder({ initial, initialIdeas, initialIterations, initi
   const [pickedFamilyId, setPickedFamilyId] = useState<string | null>(null);
   const model = useMemo(() => buildLadderModel(data ?? null), [data]);
   const thesis = useMemo(() => buildThesisFamilies(model.clusters, source.iterations), [model.clusters, source.iterations]);
+  const focus = admitResearchFocus(researchFocusFromStatus(researchOps));
+  const selectionParams = new URLSearchParams(location.search);
+  const requestedIterationRaw = selectionParams.get("iteration");
+  const requestedIterationId = requestedIterationRaw !== null && ITERATION_ID.test(requestedIterationRaw)
+    ? requestedIterationRaw
+    : null;
+  const browseCampaign = requestedIterationRaw === null && selectionParams.get("browse") === "campaign";
+  const focusIterationId = focus.status === "selected" ? focus.sourceIterationId : null;
+  // An exact URL request is stronger than the durable focus. `browse=campaign`
+  // is an intentional opt-out from the focus default. With neither, a valid
+  // selected focus supplies the route default.
+  const preferredIterationId = requestedIterationRaw !== null
+    ? requestedIterationId
+    : browseCampaign ? null : focusIterationId;
+  const preferredAvailable = preferredIterationId === null || thesis.records.some((record) =>
+    record.iterations.some((iteration) => iteration.id === preferredIterationId));
+  const malformedUrlSelection = requestedIterationRaw !== null && requestedIterationId === null;
+  const unavailableSelection = malformedUrlSelection || !preferredAvailable;
   const recordKeys = useMemo(() => new Map(thesis.records.map((record) => [record.cluster, record.key])), [thesis]);
   // Every Board/Table row comes from the same model input, preserving its raw reference.
   const recordKey = (cluster: LadderCluster): string => recordKeys.get(cluster)!;
@@ -258,7 +278,51 @@ export default function Ladder({ initial, initialIdeas, initialIterations, initi
               : "Records remain individual until topic evidence is available."}
           </p>}
           {skew && <p role="status">The record endpoint is now unavailable. Showing last received records.</p>}
-          <div hidden={recordsOpen}><ResearchCanvas model={thesis} nextOwed={model.nextOwed} researchScope={researchScope} loadJourney={initial === undefined && !recordsOpen ? getIterationJourney : undefined} /></div>
+          <div hidden={recordsOpen}>
+            {unavailableSelection ? <section
+              className="mb-5 rounded border border-[var(--border-1)] bg-[var(--surface-1)] p-4"
+              data-testid="research-selection-boundary"
+              role="status"
+            >
+              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--group-research)]">Research continuity</p>
+              <h2 className="mt-1 text-lg font-semibold">
+                {malformedUrlSelection
+                  ? "Requested iteration is invalid"
+                  : requestedIterationRaw !== null
+                    ? "Requested iteration is outside this view"
+                    : "Selected focus is outside this campaign view"}
+              </h2>
+              <p className="mt-2 text-sm text-[var(--fg-muted)]">
+                {malformedUrlSelection
+                  ? "The iteration query did not match the source ID contract. No thesis was selected from it."
+                  : requestedIterationRaw !== null
+                    ? `Iteration ${requestedIterationId} is not present in the received ${researchScope === "active" ? "campaign" : "history"} snapshot. An unrelated thesis was not substituted.`
+                    : `The selected focus comes from source campaign ${focus.status === "selected" ? focus.sourceCampaignId : "unknown"}, and iteration ${focusIterationId ?? "unknown"} is not present in this campaign snapshot. An unrelated campaign thesis was not substituted.`}
+              </p>
+              <div className="mt-3 flex flex-wrap gap-3 text-sm">
+                {!malformedUrlSelection && preferredIterationId !== null && <Link
+                  className="text-[var(--accent)]"
+                  to={`/dossier/${encodeURIComponent(preferredIterationId)}?research_scope=all`}
+                >Open the source dossier →</Link>}
+                <Link className="text-[var(--accent)]" to={researchScopedHref("/ladder?browse=campaign", researchScope)}>
+                  Browse this campaign's theses →
+                </Link>
+              </div>
+            </section> : <>
+              {browseCampaign && focus.status === "selected" && <p
+                className="mb-3 text-sm text-[var(--fg-muted)]"
+                data-testid="research-focus-browse-boundary"
+              >Browsing this campaign's recorded theses by explicit request. The selected focus remains {focus.sourceIterationId} from source campaign {focus.sourceCampaignId}.</p>}
+              <ResearchCanvas
+                key={`${requestedIterationRaw !== null ? "url" : browseCampaign ? "browse" : focusIterationId === null ? "default" : "focus"}:${preferredIterationId ?? "none"}`}
+                model={thesis}
+                nextOwed={model.nextOwed}
+                researchScope={researchScope}
+                preferredIterationId={preferredIterationId}
+                loadJourney={initial === undefined && !recordsOpen ? getIterationJourney : undefined}
+              />
+            </>}
+          </div>
 
           <ResearchApplicationAgenda initial={initialApplicationAgenda === undefined && initial !== undefined ? null : initialApplicationAgenda} />
 
