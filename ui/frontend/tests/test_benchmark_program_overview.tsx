@@ -378,6 +378,120 @@ describe("BenchmarkProgramOverview", () => {
     expect(within(selector).getByRole("link", { name: /v1.1.0 · active/ })).toHaveAttribute("href", "/benchmarks?release=1.1.0");
   });
 
+  it("separates the verified current resident from the unchanged frozen reference", () => {
+    const current = program("frozen");
+    current.release = { ...current.release, version: "1.1.0" };
+    current.comparison = {
+      status: "baseline_available",
+      baseline: null,
+      arms: [],
+      history: [{
+        comparison_id: "stable-v1-1",
+        arm_id: "resident-stack",
+        label: "Gemma precise actor + Qwen xhigh critic",
+        role: "reference",
+        admission_status: "admitted",
+        observed_terminal_status: "complete",
+        results: [{ construct: "science_evidence", domain: "science_evidence", panel: "model_capability", successful_units: 1, planned_units: 1, metric: "objective_success", unit: "percent", value: 100 }],
+        policy: { routes: { gemma: { model: "gemma-4-26b-a4b" }, qwen: { model: "qwen3.8-27b-nvfp4-mtp" } } },
+      }],
+      matched_results: [],
+    };
+    render(<BenchmarkProgramOverview initial={current} initialServedModels={{
+      flash: {
+        url: "http://127.0.0.1:30080/v1",
+        model: "nvidia/Qwen3.8-Flash-Next-NVFP4",
+        error: null,
+        probed_at: new Date().toISOString(),
+        configured_model: "nvidia/Qwen3.8-Flash-Next-NVFP4",
+        deployment_role: "production_resident",
+        promotion_authorized: true,
+        models_endpoint_status: "available",
+        service_status: "online",
+        identity_status: "match",
+      },
+    }} />);
+
+    const banner = screen.getByTestId("benchmark-current-resident");
+    expect(banner).toHaveTextContent("nvidia/Qwen3.8-Flash-Next-NVFP4");
+    expect(banner).toHaveTextContent("verified online production resident");
+    expect(banner).toHaveTextContent("not yet admitted on v1.1");
+    expect(banner).toHaveTextContent("separate from the frozen historical reference");
+    expect(screen.getByRole("heading", { name: "Gemma precise actor + Qwen xhigh critic" })).toBeInTheDocument();
+  });
+
+  it("withholds the current-serving banner when live identity does not verify", () => {
+    const current = program("frozen");
+    current.release = { ...current.release, version: "1.1.0" };
+    render(<BenchmarkProgramOverview initial={current} initialServedModels={{
+      flash: {
+        url: "http://127.0.0.1:30080/v1",
+        model: "different-model",
+        error: null,
+        probed_at: new Date().toISOString(),
+        configured_model: "nvidia/Qwen3.8-Flash-Next-NVFP4",
+        deployment_role: "production_resident",
+        promotion_authorized: true,
+        models_endpoint_status: "available",
+        service_status: "online",
+        identity_status: "mismatch",
+      },
+    }} />);
+    expect(screen.queryByTestId("benchmark-current-resident")).toBeNull();
+  });
+
+  it("does not call retained serving data current after the inventory refresh fails", () => {
+    const current = program("frozen");
+    current.release = { ...current.release, version: "1.1.0" };
+    render(<BenchmarkProgramOverview
+      initial={current}
+      initialServedModelsRefreshFailed
+      initialServedModels={{
+        flash: {
+          url: "http://127.0.0.1:30080/v1",
+          model: "nvidia/Qwen3.8-Flash-Next-NVFP4",
+          error: null,
+          probed_at: new Date().toISOString(),
+          configured_model: "nvidia/Qwen3.8-Flash-Next-NVFP4",
+          deployment_role: "production_resident",
+          promotion_authorized: true,
+          models_endpoint_status: "available",
+          service_status: "online",
+          identity_status: "match",
+        },
+      }}
+    />);
+
+    expect(screen.queryByTestId("benchmark-current-resident")).toBeNull();
+    expect(screen.getByTestId("benchmark-current-resident-unavailable")).toHaveTextContent(
+      "retained payload is not presented as current online evidence",
+    );
+  });
+
+  it("does not call an old endpoint probe current after its freshness window", () => {
+    const current = program("frozen");
+    current.release = { ...current.release, version: "1.1.0" };
+    render(<BenchmarkProgramOverview initial={current} initialServedModels={{
+      flash: {
+        url: "http://127.0.0.1:30080/v1",
+        model: "nvidia/Qwen3.8-Flash-Next-NVFP4",
+        error: null,
+        probed_at: new Date(Date.now() - 90_001).toISOString(),
+        configured_model: "nvidia/Qwen3.8-Flash-Next-NVFP4",
+        deployment_role: "production_resident",
+        promotion_authorized: true,
+        models_endpoint_status: "available",
+        service_status: "online",
+        identity_status: "match",
+      },
+    }} />);
+
+    expect(screen.queryByTestId("benchmark-current-resident")).toBeNull();
+    expect(screen.getByTestId("benchmark-current-resident-unavailable")).toHaveTextContent(
+      "does not have a fresh, identity-matched endpoint probe",
+    );
+  });
+
   it("requests an exact release and rejects a mismatched response without fallback", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(program("frozen")), {
       status: 200,

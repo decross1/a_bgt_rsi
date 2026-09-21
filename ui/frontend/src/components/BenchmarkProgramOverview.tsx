@@ -4,6 +4,8 @@ import {
   BENCHMARK_PROGRAM_ENDPOINT,
   getBenchmarkProgram,
 } from "../api/benchmarkProgram";
+import { getServedModels, type ServedModel } from "../api/http";
+import { usePolled } from "../api/pollhub";
 import type {
   BenchmarkProgramLayer,
   BenchmarkProgramResponse,
@@ -113,6 +115,54 @@ function releaseOptions(value: unknown): ReleaseOptionView[] {
 
 function comparisonRows(value: unknown): Record<string, unknown>[] {
   return asRows(value);
+}
+
+type VerifiedProductionResident = ServedModel & {
+  configured_model: string;
+  model: string;
+  probed_at: string;
+};
+
+const CURRENT_SERVING_MAX_AGE_MS = 90_000;
+
+function verifiedProductionResident(
+  value: unknown,
+  refreshFailing: boolean,
+  nowMs = Date.now(),
+): VerifiedProductionResident | null {
+  if (refreshFailing) return null;
+  if (!isRecord(value)) return null;
+  const rows = Object.values(value).filter((row): row is VerifiedProductionResident =>
+    isRecord(row)
+    && row.deployment_role === "production_resident"
+    && row.promotion_authorized === true
+    && row.models_endpoint_status === "available"
+    && row.service_status === "online"
+    && row.identity_status === "match"
+    && typeof row.configured_model === "string"
+    && row.configured_model.trim() !== ""
+    && row.model === row.configured_model
+    && typeof row.probed_at === "string"
+    && Number.isFinite(Date.parse(row.probed_at))
+    && nowMs - Date.parse(row.probed_at) >= 0
+    && nowMs - Date.parse(row.probed_at) <= CURRENT_SERVING_MAX_AGE_MS);
+  return rows.length === 1 ? rows[0] : null;
+}
+
+function hasClaimedProductionResident(value: unknown): boolean {
+  return isRecord(value) && Object.values(value).some((row) =>
+    isRecord(row) && row.deployment_role === "production_resident");
+}
+
+function armUsesModelIdentifier(row: Record<string, unknown>, model: string): boolean {
+  const policy = isRecord(row.policy) ? row.policy : null;
+  const routes = policy !== null && isRecord(policy.routes) ? policy.routes : null;
+  if (routes === null) return false;
+  return Object.values(routes).some((route) => {
+    if (!isRecord(route)) return false;
+    const runtime = isRecord(route.runtime_identity) ? route.runtime_identity : null;
+    return route.model === model || runtime?.served_model === model;
+  });
 }
 
 function isPercentUnit(value: unknown): boolean {
@@ -401,9 +451,14 @@ function releasePresentation(status: string): { tone: "ok" | "warn" | "idle"; su
 export default function BenchmarkProgramOverview({
   initial,
   release: requestedRelease,
+  initialServedModels,
+  initialServedModelsRefreshFailed = false,
 }: {
   initial?: BenchmarkProgramResponse | null;
   release?: string | null;
+  initialServedModels?: Record<string, ServedModel> | null;
+  /** Fixture seam mirroring pollhub's stale-while-revalidate failure state. */
+  initialServedModelsRefreshFailed?: boolean;
 }) {
   const selectedRelease = typeof requestedRelease === "string" && requestedRelease.trim() !== ""
     ? requestedRelease.trim()
@@ -411,6 +466,16 @@ export default function BenchmarkProgramOverview({
   const [data, setData] = useState<BenchmarkProgramResponse | null>(initial ?? null);
   const [loaded, setLoaded] = useState(initial !== undefined);
   const [error, setError] = useState<string | null>(null);
+  const servedPoll = usePolled("served_models", getServedModels, {
+    enabled: initial === undefined && initialServedModels === undefined,
+    intervalMs: 30_000,
+    initialDelayMs: 100,
+    deadlineMs: 20_000,
+  });
+  const servedModels = initialServedModels === undefined ? servedPoll.data : initialServedModels;
+  const servedRefreshFailing = initialServedModels === undefined
+    ? servedPoll.failing
+    : initialServedModelsRefreshFailed;
 
   useEffect(() => {
     if (initial !== undefined) return;
@@ -536,6 +601,16 @@ export default function BenchmarkProgramOverview({
   const reviewPayloadPresent = data.measurement_review !== undefined && data.measurement_review !== null;
   const measurementReviewRequired = review !== null || data.comparison?.status === "measurement_review_required";
   const comparisonGaps = history.filter((row) => asRows(row.results).length === 0);
+  const currentResident = verifiedProductionResident(servedModels, servedRefreshFailing);
+  const servingContextUnavailable = currentResident === null
+    && hasClaimedProductionResident(servedModels);
+  const residentIdentifierAdmissionKnown = currentResident !== null
+    && data.release.version === "1.1.0"
+    && Array.isArray(data.comparison?.history);
+  const residentIdentifierAdmitted = currentResident !== null && history.some((row) =>
+    row.admission_status === "admitted"
+    && asRows(row.results).length > 0
+    && armUsesModelIdentifier(row, currentResident.configured_model));
 
   return <section className="benchmark-hero benchmark-program-overview" data-testid="benchmark-program" aria-labelledby="benchmark-program-heading">
     <header className="benchmark-program-head">
@@ -571,6 +646,34 @@ export default function BenchmarkProgramOverview({
       <p><strong>Next:</strong> {asText(data.progress?.next_action, "No next action reported")}</p>
       {blockers.map((blocker) => <p key={blocker}><strong>Boundary:</strong> {blocker}</p>)}
     </div>
+
+    {currentResident !== null && <aside
+      className="benchmark-evidence-note benchmark-current-resident"
+      aria-label="Current serving context"
+      data-testid="benchmark-current-resident"
+    >
+      <strong>Currently served</strong>
+      <span><code>{currentResident.configured_model}</code> is the verified online production resident. This live serving observation is separate from the frozen historical reference below.
+        {residentIdentifierAdmissionKnown
+          ? residentIdentifierAdmitted
+            ? " This model identifier appears in an admitted v1.1 arm; inspect its dated configuration and results below. This does not establish a match to the current weights or runtime."
+            : " This model identifier is not yet admitted on v1.1, so no v1.1 quality score or comparison is inferred."
+          : " Its admission status on the selected release is not established by the available projection."}
+      </span>
+    </aside>}
+
+    {servingContextUnavailable && <aside
+      className="benchmark-evidence-note benchmark-current-resident"
+      aria-label="Current serving context unavailable"
+      data-testid="benchmark-current-resident-unavailable"
+      role="status"
+    >
+      <strong>Serving context unavailable</strong>
+      <span>{servedRefreshFailing
+        ? "The endpoint inventory refresh failed. Its retained payload is not presented as current online evidence."
+        : "The production-resident claim does not have a fresh, identity-matched endpoint probe. No current online identity is inferred."}
+      </span>
+    </aside>}
 
     {review !== null && <MeasurementReviewNotice review={review} />}
     {reviewPayloadPresent && review === null && <aside className="benchmark-measurement-review" role="status">
