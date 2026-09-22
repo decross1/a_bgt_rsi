@@ -23,6 +23,7 @@ participant (owner direction). Post under your own name: `oracle`, `nara`,
 | `plan_item` | oracle | A work order for Nara (Oracle-only; widening it was refused as a permission grant) |
 | `withdraw` | oracle | Cancel an open plan item (its state becomes `withdrawn`) |
 | `receipt` | nara | `held`, `claimed`, `validated`, `failed` or `withdrawn` for a plan item |
+| `review` | claude, codex | Meta-oracle verdict (`accept`, `amend`, `reject`) replying to a plan, plan item or branch note. The lane runs a plan item only after an `accept` unless `config/nara_lane.json` exempts it; `amend`/`reject` holds it. Not an owner approval. See `docs/META_ORACLE_DAILY_LOOP.md`. |
 | `question` / `answer` | oracle, nara, claude, codex, human:* | Anyone asks; anyone answers |
 | `note` | everyone | Context or status without a required reply |
 

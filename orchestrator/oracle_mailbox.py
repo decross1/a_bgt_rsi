@@ -3,8 +3,9 @@
 Oracle sets the plan; Nara implements it and reports. One append-only JSONL
 log under a file lock; every row names its actor and kind. Attribution is
 honest but not authenticated (the D-067 lesson): the hash chain shows order
-and detects in-place edits; it does not prove identity. The mailbox never carries approvals; owner
-authority is D-082's standing mandate plus the owner's own channels.
+and detects in-place edits; it does not prove identity. The mailbox never carries owner approvals; owner
+authority is D-082's standing mandate plus the owner's own channels. A `review` is the meta-oracle's
+verdict (owner direction 2026-09-22): the lane's gate on plan items, not an owner approval.
 """
 from __future__ import annotations
 
@@ -26,10 +27,12 @@ MAX_ROW_BYTES = 16 * 1024
 # human:<id>); only Oracle issues plan items and only Nara posts receipts.
 AGENTS = {"oracle", "nara", "claude", "codex", "system"}
 CONVERSANTS = {"oracle", "nara", "claude", "codex"}
+REVIEWERS = {"claude", "codex"}  # frontier meta-oracle; veto or annotate only (D-061)
 KINDS = {
     "plan_item": {"oracle"},        # Oracle -> Nara work order
     "withdraw": {"oracle"},         # Oracle cancels an open plan item
     "receipt": {"nara"},            # Nara -> Oracle progress / outcome
+    "review": REVIEWERS,            # meta-oracle verdict on a plan, plan item or branch
     "question": CONVERSANTS,
     "answer": CONVERSANTS,
     "note": AGENTS,
@@ -38,6 +41,7 @@ HUMAN_KINDS = {"question", "answer", "note"}
 RECIPIENTS = {"oracle", "nara", "claude", "codex", "owner", "all"}
 RECEIPT_STATES = {"held", "claimed", "validated", "failed", "withdrawn"}
 TERMINAL = {"validated", "failed", "withdrawn"}
+VERDICTS = {"accept", "amend", "reject"}
 TASK_CLASSES = {"documentation", "tests", "tooling", "experiment_code", "lab_organization"}
 
 
@@ -121,7 +125,9 @@ def post(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | None 
         validate_plan_item(body)
     if kind == "receipt" and body.get("state") not in RECEIPT_STATES:
         raise MailboxError(f"receipt state must be one of {sorted(RECEIPT_STATES)}")
-    if kind in {"receipt", "withdraw", "answer"} and not in_reply_to:
+    if kind == "review" and body.get("verdict") not in VERDICTS:
+        raise MailboxError(f"review verdict must be one of {sorted(VERDICTS)}")
+    if kind in {"receipt", "withdraw", "answer", "review"} and not in_reply_to:
         raise MailboxError(f"{kind} must reply to a message")
     path.parent.mkdir(parents=True, exist_ok=True)
     with (path.parent / ".oracle_nara_mailbox.lock").open("a") as lock:
@@ -193,7 +199,8 @@ def main(argv: list[str] | None = None) -> int:
             rows = [r for r in read() if (not args.to or r["to"] in {args.to, "all"})
                     and (not args.kind or r["kind"] == args.kind)]  # an inbox includes broadcasts
             for r in rows[-args.last:]:
-                summary = r["body"].get("title") or r["body"].get("state") or r["body"].get("text", "")[:80]
+                summary = (r["body"].get("title") or r["body"].get("state") or r["body"].get("verdict")
+                           or r["body"].get("text", "")[:80])
                 print(json.dumps({"seq": r["seq"], "msg_id": r["msg_id"], "actor": r["actor"], "to": r["to"],
                                   "kind": r["kind"], "re": r.get("in_reply_to"), "summary": summary}))
         elif args.command == "fold":

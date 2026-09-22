@@ -12,6 +12,11 @@ pointer is read-only inside the sandbox and re-checked on the host, changes are
 computed from a stat walk (not git status), host reads and writes refuse
 symlinks, git runs with fsmonitor and hooks disabled, and a pass needs pytest's
 own JUnit report, not just exit code 0.
+
+Meta-oracle gate (owner direction 2026-09-22): unless config/nara_lane.json
+exempts it, an item waits, still open, for a `review` from the meta-oracle that
+replies to it. `accept` admits it; `amend` or `reject` holds it (Oracle withdraws
+and reposts). A missing or unreadable policy file requires review.
 """
 from __future__ import annotations
 
@@ -311,6 +316,23 @@ def implement(entry: dict, build=builder, sandbox=sandbox_run) -> dict:
         return {"state": "failed", "reason": f"{type(exc).__name__}: {exc}", "branch": branch, "base_sha": base_sha}
 
 
+def meta_verdict(rows: list[dict], item: dict) -> str:
+    """'accept', 'awaiting', or the latest non-accepting meta-oracle verdict on this item."""
+    try:
+        policy = json.loads((ROOT / "config/nara_lane.json").read_text())
+    except (OSError, ValueError):
+        policy = {}
+    policy = policy if isinstance(policy, dict) else {}
+    exempt = policy.get("review_optional_task_classes")
+    if policy.get("require_meta_review") is False or (
+            isinstance(exempt, list) and item["body"].get("task_class") in exempt):
+        return "accept"
+    verdicts = [r["body"]["verdict"] for r in rows if r.get("kind") == "review"  # rows are not schema-checked on read
+                and r.get("actor") in mailbox.REVIEWERS and r.get("in_reply_to") == item["msg_id"]
+                and isinstance(r.get("body"), dict) and r["body"].get("verdict") in mailbox.VERDICTS]
+    return verdicts[-1] if verdicts else "awaiting"
+
+
 def _paused() -> bool:
     return any((ROOT / pause).exists() for pause in PAUSES)
 
@@ -350,7 +372,8 @@ def run_queue(path: Path = mailbox.PATH, build=builder, sandbox=sandbox_run, rea
         except BlockingIOError:
             return []
         try:
-            entries = sorted(mailbox.fold(mailbox.read(path)).values(), key=lambda e: e["item"]["seq"])
+            rows = mailbox.read(path)
+            entries = sorted(mailbox.fold(rows).values(), key=lambda e: e["item"]["seq"])
         except mailbox.MailboxError as exc:
             log("mailbox", "failed", f"mailbox unreadable: {exc}", "readable mailbox")
             return []
@@ -367,6 +390,13 @@ def run_queue(path: Path = mailbox.PATH, build=builder, sandbox=sandbox_run, rea
                 reasons = admission(entry["item"])
             except Exception as exc:
                 reasons = [f"malformed plan item: {type(exc).__name__}: {exc}"]
+            if not reasons:
+                verdict = meta_verdict(rows, entry["item"])
+                if verdict == "awaiting":  # stays open; the review row wakes the lane again
+                    log(msg_id, "deferred", "awaiting meta-oracle review", "accepting review")
+                    continue
+                if verdict != "accept":
+                    reasons = [f"meta-oracle verdict: {verdict}; withdraw and repost"]
             if reasons:
                 posted.append(_receipt(path, msg_id, {"state": "held", "reasons": reasons}))
                 log(msg_id, "held", "; ".join(reasons), "admissible plan item")

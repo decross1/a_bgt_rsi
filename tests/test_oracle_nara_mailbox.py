@@ -85,6 +85,8 @@ def repo(tmp_path, monkeypatch):
     (root / "tools").mkdir(parents=True)
     (root / "tools/__init__.py").write_text("")
     (root / "run_state").mkdir()
+    (root / "config").mkdir()
+    (root / "config/nara_lane.json").write_text('{"require_meta_review": false}')  # gate tested separately
     for cmd in (["init", "-q"], ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"]):
         subprocess.run(["git", *cmd], cwd=root, check=True)
     monkeypatch.setattr(lane, "ROOT", root)
@@ -118,6 +120,54 @@ def test_lane_validates_red_first_item_on_its_own_branch(repo):
     main = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo, capture_output=True, text=True)
     assert not (repo / "tools/slug.py").exists() and main.stdout.strip() in {"master", "main"}  # never merged
     assert lane.run_queue(path, build=_good_builder, sandbox=_fake_sandbox, ready=lambda: True) == []
+
+
+def test_review_kind_rules(tmp_path):
+    path = tmp_path / "mb.jsonl"
+    item = mailbox.post("oracle", "plan_item", _plan(), to="nara", path=path)
+    for actor in ("oracle", "nara", "human:derrick"):
+        with pytest.raises(mailbox.MailboxError, match="may not post"):
+            mailbox.post(actor, "review", {"verdict": "accept"}, to="nara", in_reply_to=item["msg_id"], path=path)
+    with pytest.raises(mailbox.MailboxError, match="verdict"):
+        mailbox.post("claude", "review", {"verdict": "fine"}, to="nara", in_reply_to=item["msg_id"], path=path)
+    with pytest.raises(mailbox.MailboxError, match="must reply"):
+        mailbox.post("claude", "review", {"verdict": "accept"}, to="nara", path=path)
+    mailbox.post("claude", "review", {"verdict": "accept"}, to="nara", in_reply_to=item["msg_id"], path=path)
+    assert mailbox.fold(mailbox.read(path))[item["msg_id"]]["state"] == "open"  # a review is not a receipt
+
+
+def test_lane_waits_for_the_meta_oracle_and_honors_its_verdict(repo):
+    path = repo / "run_state/mb.jsonl"
+    policy = repo / "config/nara_lane.json"
+    policy.write_text('{"require_meta_review": true}')
+    run = lambda: lane.run_queue(path, build=_good_builder, sandbox=_fake_sandbox, ready=lambda: True)
+    item = mailbox.post("oracle", "plan_item", _plan(), to="nara", path=path)
+    assert run() == [] and mailbox.fold(mailbox.read(path))[item["msg_id"]]["state"] == "open"
+    mailbox.post("oracle", "note", {"text": "reviewing myself"}, to="nara", path=path)  # only reviewers count
+    assert run() == []
+    mailbox.post("claude", "review", {"verdict": "accept"}, to="nara", in_reply_to=item["msg_id"], path=path)
+    assert [r["body"]["state"] for r in run()] == ["claimed", "validated"]
+    for verdict in ("amend", "reject"):
+        other = mailbox.post("oracle", "plan_item", _plan(title=verdict), to="nara", path=path)
+        mailbox.post("codex", "review", {"verdict": verdict}, to="nara", in_reply_to=other["msg_id"], path=path)
+        posted = run()
+        assert posted[0]["body"]["state"] == "held" and verdict in posted[0]["body"]["reasons"][0]
+    for broken in ("not json", "[]", ""):  # an unreadable policy requires review
+        policy.write_text(broken)
+        waiting = mailbox.post("oracle", "plan_item", _plan(title=f"policy {broken!r}"), to="nara", path=path)
+        assert run() == [] and mailbox.fold(mailbox.read(path))[waiting["msg_id"]]["state"] == "open"
+        mailbox.post("oracle", "withdraw", {}, to="nara", in_reply_to=waiting["msg_id"], path=path)
+    policy.unlink()
+    assert lane.meta_verdict([], {"msg_id": "x", "body": _plan()}) == "awaiting"
+    policy.write_text('{"require_meta_review": true, "review_optional_task_classes": ["tooling"]}')
+    assert lane.meta_verdict([], {"msg_id": "x", "body": _plan()}) == "accept"
+    assert lane.meta_verdict([], {"msg_id": "x", "body": _plan(task_class="tests")}) == "awaiting"
+    policy.write_text('{"require_meta_review": "false"}')  # only a literal false disables the gate
+    assert lane.meta_verdict([], {"msg_id": "x", "body": _plan()}) == "awaiting"
+    forged = [{"kind": "review", "actor": "claude", "in_reply_to": "x", "body": {}},  # appended by hand, unchecked
+              {"kind": "review", "actor": "claude", "in_reply_to": "x", "body": "accept"},
+              {"kind": "review", "actor": "oracle", "in_reply_to": "x", "body": {"verdict": "accept"}}]
+    assert lane.meta_verdict(forged, {"msg_id": "x", "body": _plan()}) == "awaiting"
 
 
 def test_lane_fails_scope_escape_and_test_tampering(repo):
