@@ -316,24 +316,22 @@ def _closure_schema(repo_root: Path) -> dict[str, Any]:
     return _strict_json(data, where="campaign closure schema")
 
 
-def _read_activation(path: Path) -> bytes:
-    """Read the fixed pointer path with a hard byte bound and no redirects."""
+def _read_activation(path: Path, what: str = "campaign activation pointer") -> bytes:
+    """Read a fixed runtime path with a hard byte bound and no redirects."""
     try:
         if path.is_symlink():
-            raise CampaignError("campaign activation pointer is redirected")
+            raise CampaignError(f"{what} is redirected")
         stat = path.stat()
         if not path.is_file() or stat.st_size > MAX_MANIFEST_BYTES:
-            raise CampaignError("campaign activation pointer is not a bounded file")
+            raise CampaignError(f"{what} is not a bounded file")
         with path.open("rb") as handle:
             data = handle.read(MAX_MANIFEST_BYTES + 1)
     except CampaignError:
         raise
     except OSError as exc:
-        raise CampaignError(
-            "campaign activation pointer cannot be read safely"
-        ) from exc
+        raise CampaignError(f"{what} cannot be read safely") from exc
     if len(data) > MAX_MANIFEST_BYTES:
-        raise CampaignError("campaign activation pointer exceeds its read bound")
+        raise CampaignError(f"{what} exceeds its read bound")
     return data
 
 
@@ -408,13 +406,22 @@ def load_active_campaign(
         "run_state/research_campaign_closures/"
         f"{campaign['campaign_id']}.json"
     )
-    closure_path = repo_root / closure_relative
+    # Like the activation pointer, the canonical root honors the module
+    # default, so tests can isolate live closure receipts.
+    closure_path = (
+        DEFAULT_CLOSURE_DIR / f"{campaign['campaign_id']}.json"
+        if repo_root == REPO_ROOT
+        else repo_root / closure_relative
+    )
     if os.path.lexists(closure_path):
-        _closure_path, closure_bytes = _read_regular(
-            repo_root,
-            closure_relative,
-            limit=MAX_MANIFEST_BYTES,
-        )
+        if closure_path == repo_root / closure_relative:
+            _closure_path, closure_bytes = _read_regular(
+                repo_root,
+                closure_relative,
+                limit=MAX_MANIFEST_BYTES,
+            )
+        else:
+            closure_bytes = _read_activation(closure_path, "campaign closure receipt")
         closure = _strict_json(closure_bytes, where="campaign closure receipt")
         closure_validator = jsonschema.Draft202012Validator(
             _closure_schema(repo_root),

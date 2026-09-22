@@ -55,8 +55,29 @@ def test_readiness_requires_exact_live_model_and_reserve(tmp_path, monkeypatch):
     Response.model = 'gemma-4-26b-a4b'
     assert not resident.check_ready(tmp_path)
     Response.model = resident.MODEL
-    monkeypatch.setattr(resident, 'mem_available_gib', lambda: 19.9)
+    # 2026-09-21 owner floor: an SSH session at 15 GiB available stays ready.
+    monkeypatch.setattr(resident, 'mem_available_gib', lambda: 15)
+    assert resident.check_ready(tmp_path)
+    monkeypatch.setattr(resident, 'mem_available_gib', lambda: 9.9)
     assert not resident.check_ready(tmp_path)
+
+
+def test_pinned_bundle_enforces_owner_reserve():
+    import hashlib
+    import pytest
+    if not resident.BUNDLE.exists():
+        pytest.skip('host-specific serving bundle is absent')
+    raw = resident.BUNDLE.read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == resident.BUNDLE_SHA
+    text = raw.decode()
+    import re
+    floor = float(re.search(r'\nHOST_FLOOR_GIB = ([0-9.]+)\n', text).group(1))
+    guard = float(re.search(r'"--mem-available-floor-gib", "([0-9.]+)",', text).group(1))
+    config = json.loads((resident.ROOT / 'config/model_deployment.json').read_text())
+    assert resident.HOST_RESERVE_GIB == floor == config['host_reserve_gib'] == 10
+    # The guard is a backstop below the monitor, inside guard.py's [4, 16] range.
+    assert 4.0 <= guard < floor and guard / 2 >= 4.0
+    assert f'record.get("mem_available_floor_gib") != {guard}' in text
 
 
 def test_nara_flash_admission_does_not_apply_legacy_30g_floor(tmp_path, monkeypatch):
@@ -78,6 +99,8 @@ def _service_bundle(tmp_path, monkeypatch, *, startup_failure=False):
     monkeypatch.setattr(resident, 'selected', lambda: True)
     monkeypatch.setattr(resident, 'wait_docker', lambda stop: None)
     monkeypatch.setattr(resident, 'mem_available_gib', lambda: 120)
+    monkeypatch.setattr(resident, 'host_memory_kib',
+                        lambda: {'MemFree': 118 * 1024**2, 'MemAvailable': 118 * 1024**2, 'Cached': 1024**2})
     monkeypatch.setattr(resident.signal, 'signal', lambda *args: None)
     class Ops:
         def run(self, argv, **kwargs): events.append(tuple(argv))
@@ -117,6 +140,7 @@ def _service_bundle(tmp_path, monkeypatch, *, startup_failure=False):
         q=SimpleNamespace(HostOps=Ops, NARA_SERVICE='nara-daemon.service',
                           RESIDENTS=[], _inspect_container=lambda *args: None),
         PREFLIGHT_FLOOR_GIB=104, STARTUP_DEADLINE_S=1800, IMAGE='image',
+        MODEL_ROOT=tmp_path / 'model', CACHE=tmp_path / 'bundle/runtime/cache',
         launch_guard=launch, wait_launch_record=launch_record,
         capture_candidate_allocator_environment=lambda *args: None,
         GuardStopper=Stopper, RuntimeMonitor=Monitor, wait_ready=ready,
@@ -145,3 +169,114 @@ def test_prebind_failure_cleans_guard_and_latches_same_boot(tmp_path, monkeypatc
     before = list(events)
     assert resident.run() == 78
     assert events == before
+
+
+def test_handoff_state_skips_previous_helper_cleanup(tmp_path, monkeypatch):
+    events = _service_bundle(tmp_path, monkeypatch)
+    bundle = resident.load_bundle()
+    cleaned = []
+    bundle.finalize_owned_fallback = lambda output, *args: cleaned.append(output.name) or {}
+    resident.STATE.parent.mkdir(parents=True)
+    old = tmp_path / 'bundle/runtime/resident-old'
+    resident.STATE.write_text(json.dumps({'phase': 'stopped', 'launch_attempted': True,
+                                          'prior_artifact_dir': str(old)}))
+    assert resident.run() == 0
+    state = json.loads(resident.STATE.read_text())
+    assert cleaned == [Path(state['artifact_dir']).name] and 'resident-old' not in cleaned
+    assert state['bundle_sha256'] == resident.BUNDLE_SHA
+    assert state['host_reserve_gib'] == resident.HOST_RESERVE_GIB
+    assert 'launch' in events
+
+
+def test_helper_mismatch_requires_handoff(tmp_path, monkeypatch):
+    events = _service_bundle(tmp_path, monkeypatch)
+    resident.STATE.parent.mkdir(parents=True)
+    old = tmp_path / 'bundle/runtime/resident-old'
+    resident.STATE.write_text(json.dumps({'phase': 'stopped', 'artifact_dir': str(old),
+                                          'bundle_sha256': 'a' * 64}))
+    assert resident.run() == 1
+    state = json.loads(resident.STATE.read_text())
+    assert 'helper handoff required' in state['error'] and 'launch' not in events
+    assert not state.get('launch_attempted')  # a refused handoff does not arm the latch
+    resident.STATE.write_text(json.dumps({'phase': 'stopped', 'artifact_dir': str(old),
+                                          'bundle_sha256': 'a' * 64}))
+    import pytest
+    with pytest.raises(RuntimeError, match='helper handoff required'):
+        resident.cleanup()
+
+
+def test_prelaunch_free_memory_gate_refuses_without_arming_latch(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    events = _service_bundle(tmp_path, monkeypatch)
+    ticks = [datetime(2026, 9, 21, 16, 0, tzinfo=timezone.utc)]
+
+    class Clock:  # distinct per-run artifact directory names
+        @staticmethod
+        def now(tz=None):
+            ticks[0] += timedelta(seconds=1)
+            return ticks[0]
+    monkeypatch.setattr(resident, 'datetime', Clock)
+    monkeypatch.setattr(resident, 'PRELAUNCH_WAIT_S', 0)
+    monkeypatch.setattr(resident, 'host_memory_kib',
+                        lambda: {'MemFree': 77 * 1024**2, 'MemAvailable': 118 * 1024**2, 'Cached': 38 * 1024**2})
+    assert resident.run() == 1
+    state = json.loads(resident.STATE.read_text())
+    assert 'prelaunch MemFree below' in state['error'] and 'launch' not in events
+    assert not state.get('launch_attempted') and state['prelaunch']['meminfo_kib']['MemFree'] == 77 * 1024**2
+    monkeypatch.setattr(resident, 'host_memory_kib',
+                        lambda: {'MemFree': 118 * 1024**2, 'MemAvailable': 118 * 1024**2, 'Cached': 1024**2})
+    resident.STATE.write_text(json.dumps({**state, 'pid': 2**22 + 1}))  # the refused supervisor exited
+    assert resident.run() == 0  # a refused launch leaves the next start admitted
+    assert 'launch' in events
+
+
+def test_evict_model_page_cache_drops_only_large_regular_files(tmp_path, monkeypatch):
+    big = tmp_path / 'model/model-00001-of-00010.safetensors'
+    big.parent.mkdir()
+    with big.open('wb') as handle:
+        handle.truncate(64 * 1024**2)  # sparse; size is what matters
+    (tmp_path / 'model/config.json').write_text('{}')
+    (tmp_path / 'model/link.safetensors').symlink_to(big)
+    calls = []
+    monkeypatch.setattr(resident.os, 'posix_fadvise', lambda fd, off, length, advice: calls.append(advice))
+    assert resident.evict_model_page_cache((tmp_path / 'model', tmp_path / 'absent')) == 1
+    assert calls == [resident.os.POSIX_FADV_DONTNEED]
+
+
+def test_prelaunch_gate_waits_for_free_memory_then_launches(tmp_path, monkeypatch):
+    events = _service_bundle(tmp_path, monkeypatch)
+    readings = iter([60, 60, 110])  # e.g. unrelated host cache until the next cache drop
+    monkeypatch.setattr(resident, 'host_memory_kib',
+                        lambda: {'MemFree': next(readings) * 1024**2, 'MemAvailable': 118 * 1024**2, 'Cached': 1})
+    waits = []
+    monkeypatch.setattr(resident.threading.Event, 'wait', lambda self, timeout=None: waits.append(timeout) or self.is_set())
+    assert resident.run() == 0
+    state = json.loads(resident.STATE.read_text())
+    assert state['prelaunch']['waits'] == 2 and waits[:2] == [30, 30] and 'launch' in events
+
+
+def test_load_evictor_runs_during_startup_and_stops_at_readiness(tmp_path, monkeypatch):
+    events = _service_bundle(tmp_path, monkeypatch)
+    seen = []
+    monkeypatch.setattr(resident, 'evict_model_page_cache', lambda roots: seen.append(tuple(roots)) or 0)
+    monkeypatch.setattr(resident.LoadEvictor, '__init__',
+                        lambda self, root, interval=0.01: _init_evictor(self, root, interval))
+    assert resident.run() == 0
+    state = json.loads(resident.STATE.read_text())
+    assert state['load_eviction']['errors'] == [] and not any(
+        t.name == 'load-evictor' and t.is_alive() for t in __import__('threading').enumerate())
+    prelaunch = [roots for roots in seen if len(roots) == 2]
+    during_load = [roots for roots in seen if len(roots) == 1]
+    assert prelaunch == [(tmp_path / 'model', tmp_path / 'bundle/runtime/cache')]
+    assert all(roots == (tmp_path / 'model',) for roots in during_load)  # never the PLE cache
+    assert 'launch' in events
+
+
+def _init_evictor(self, root, interval):
+    import threading
+    self.root, self.interval = root, interval
+    self.done = threading.Event()
+    self.passes = 0
+    self.errors = []
+    self.thread = threading.Thread(target=self._loop, name='load-evictor', daemon=True)
+

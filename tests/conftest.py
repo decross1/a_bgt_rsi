@@ -168,3 +168,32 @@ def _no_live_artifacts(tmp_path, monkeypatch):
     from agent_wrapper import upgrade_lease
     monkeypatch.setattr(upgrade_lease, "LOCK_PATH", tmp_path / "inference.lock")
     monkeypatch.delenv("WEEKLY_UPGRADE_GPU_LEASE_FD", raising=False)
+    # Research campaign/focus state (2026-09-21): the canonical checkout has
+    # LIVE git-ignored run_state/active_research_campaign.json and
+    # active_research_focus.json, so ~70 tests passed in clean worktrees and
+    # failed only there (campaign seed gating, focus_pending holds). Default
+    # to NO active campaign; tests that activate one (_activate(...) or their
+    # own DEFAULT_ACTIVATION_PATH patch) win inside their own scope, and the
+    # daemon's wake watch follows the same tmp pointer.
+    from orchestrator import nara_daemon, research_campaign, research_focus
+    campaign_pointer = tmp_path / "active_research_campaign.json"
+    monkeypatch.setattr(research_campaign, "DEFAULT_ACTIVATION_PATH",
+                        campaign_pointer)
+    monkeypatch.setattr(nara_daemon, "CAMPAIGN_PATH", campaign_pointer)
+    monkeypatch.delenv("NARA_RESEARCH_CAMPAIGN", raising=False)
+    # project_focus(root) reads run_state/active_research_focus.json and
+    # run_state/research_focus/ RELATIVE to the root it is handed (callers
+    # pass the live repo root); POINTER/DIRECTORY are containment-checked
+    # relative paths, so remap the live root to tmp (= no focus). Tests that
+    # pass their own root are untouched; tests that patch project_focus win.
+    live_root = research_campaign.REPO_ROOT.resolve()
+    project_focus = research_focus.project_focus
+    monkeypatch.setattr(research_focus, "project_focus", lambda root: project_focus(
+        tmp_path if Path(root).resolve() == live_root else root))
+    # nara_daemon._loud_read logs WARN lines here (e.g. via _agenda()).
+    monkeypatch.setattr(nara_daemon, "DAEMON_LOG_PATH",
+                        tmp_path / "nara-daemon.log")
+    # Live closure receipts (e.g. the 2026-09-15 closure of the default test
+    # campaign) are read through DEFAULT_CLOSURE_DIR on the canonical root.
+    monkeypatch.setattr(research_campaign, "DEFAULT_CLOSURE_DIR",
+                        tmp_path / "research_campaign_closures")

@@ -1,0 +1,9 @@
+[Unit]
+Description=Wake Nara's lane when the Oracle-Nara mailbox changes (D-082)
+
+[Path]
+PathChanged=/home/decross1/projects/a_bgt_rsi/run_state/oracle_nara_mailbox.jsonl
+Unit=nara-lane.service
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=Fallback pass for Nara's lane (items deferred while Flash was not ready)
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=30min
+Unit=nara-lane.service
+
+[Install]
+WantedBy=timers.target

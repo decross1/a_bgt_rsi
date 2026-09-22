@@ -505,3 +505,14 @@ def test_public_schema_cannot_be_extended_with_response_content(tmp_path):
     (output / "run.json").write_bytes(diagnostic._canonical(result) + b"\n")
     with pytest.raises(diagnostic.FlashPayoffError, match="run shape differs"):
         diagnostic.validate(plan_path, output)
+
+
+def test_preregistered_binding_fails_closed_on_lowered_resident_reserve():
+    # Recorded 20 GiB evidence stays valid; the 2026-09-21 10 GiB deployment
+    # differs from the preregistered runtime until the owner amends the study.
+    diagnostic._validate_runtime_binding(_binding())
+    lowered = _binding()
+    lowered["runtime"]["host_reserve_gib"] = 10
+    with pytest.raises(diagnostic.FlashPayoffError, match="runtime image/profile binding is malformed"):
+        diagnostic._validate_runtime_binding(lowered)
+

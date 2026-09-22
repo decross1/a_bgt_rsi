@@ -73,7 +73,7 @@ fi
 # shellcheck source=../experiments/exp008_qat_eval/preflight_mem.sh
 if "$PYTHON" -m orchestrator.flash_resident selected; then
   if ! "$PYTHON" -m orchestrator.flash_resident check-ready; then
-    log "REFUSE: selected Flash resident is not ready or lacks its 20 GiB reserve"
+    log "REFUSE: selected Flash resident is not ready or lacks its 10 GiB reserve"
     exit 0
   fi
 else

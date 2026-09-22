@@ -146,10 +146,10 @@ def load_model_deployment(
     _require_exact(value, "backend", FLASH_BACKEND)
     _require_exact(value, "model", FLASH_MODEL)
     _require_exact(value, "base_url", FLASH_BASE_URL)
-    _require_exact(value, "context_length", 32768)
+    _require_exact(value, "context_length", 262144)
     _require_exact(value, "max_running_requests", 1)
     _require_exact(value, "production_authorized", True)
-    _require_exact(value, "host_reserve_gib", 20)
+    _require_exact(value, "host_reserve_gib", 10)
     _require_exact(value, "automated_benchmarks_enabled", False)
     selected_at = _required_text(value, "selected_at")
     model_revision = _hex(value, "model_revision", 40)
@@ -165,12 +165,12 @@ def load_model_deployment(
         backend=FLASH_BACKEND,
         model=FLASH_MODEL,
         base_url=FLASH_BASE_URL,
-        context_length=32768,
+        context_length=262144,
         max_running_requests=1,
         model_revision=model_revision,
         image_id=image_id,
         profile_sha256=profile_sha256,
-        host_reserve_gib=20,
+        host_reserve_gib=10,
         selected_at=selected_at,
         config_sha256=hashlib.sha256(raw_bytes).hexdigest(),
     )

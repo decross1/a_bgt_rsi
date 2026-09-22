@@ -11,12 +11,12 @@ in [the results report](FLASH_PERSONAL_RESULTS_20260918.md).
 | Exact request model | `nvidia/Qwen3.8-Flash-Next-NVFP4` |
 | Checkpoint revision | `fc694b54fb0174e0913e6adf86691ef85a4ead47` |
 | Runtime | SGLang image `sha256:2ee545cf877ae8497c123637e061b6e6313c624e30018f975969b1d554e27f56` |
-| Capacity | 32,768 total tokens; one running request |
+| Capacity | 262,144 total tokens (since 2026-09-22; was 32,768); one running request |
 | Precision | NVFP4 weights, FP32 recurrent state, BF16 KV |
 | Speculation | Native NEXTN, 3 steps / 4 draft tokens |
 | PLE | File-backed on NVMe, 4 GiB resident cache |
 | Allocator | `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` |
-| Resource limits | 112 GiB container, zero container swap, 20 GiB host reserve |
+| Resource limits | 112 GiB container cgroup (CPU-side charges only), zero container swap, 10 GiB host reserve (8 GiB guard backstop) |
 
 The service deliberately depends on the reviewed, hash-verified local bundle
 at `a_bgt_rsi_v2_artifacts/2026-09-18/flash-personal-recovery/sglang-fallback-prep`
@@ -136,3 +136,115 @@ maintenance archives the exact fault state and verifies removal with the old
 helper before one supervised start with the repaired helper. This exception
 is recorded with the fault-state and new-helper hashes; it does not enable
 automatic retries after arbitrary faults or clear the pending reboot follow-up.
+
+## 2026-09-21 reserve stop and 10 GiB floor
+
+At 02:59 UTC the monitor stopped Flash with `physical_reserve_breached`. A VS Code
+Remote-SSH login had pushed `MemAvailable` from 23.5 to 19.8 GiB (3.7 GiB)
+within two minutes. There was no OOM, no container swap and no driver fault.
+At the owner's request,
+Claude archived the fault state, cleared the same-boot latch and started the
+unchanged v6 helper once. Flash was ready at 04:21 UTC.
+
+The owner then lowered the host reserve to 10 GiB (see the
+[topology policy amendment](MODEL_TOPOLOGY_POLICY.md)). Helper v7 changes only
+`HOST_FLOOR_GIB` (20 to 10), the guard's `--mem-available-floor-gib` backstop
+(16 to 8) and the matching launch-record check (16.0 to 8.0). The guard stops
+the container after five consecutive one-second samples below 8 GiB or any
+sample below 4 GiB, and exits with code 8; the supervisor records that as
+`guard_returncode`. GPU allocations come from unified memory and are not
+charged to the container cgroup, so the host floor, not the 112 GiB limit,
+bounds them. v6 remains frozen for rollback. The
+supervisor pins v7 by hash, and `check-ready` uses the same 10 GiB floor.
+
+Changing helper versions needs a handoff. Each helper re-validates the previous
+run's launch record, including its exact guard floor, at startup and in the
+stop-post cleanup. So stop the old service while the old pin is still in
+place. Confirm the clean stop, then archive the state file. Move its
+`artifact_dir` to `prior_artifact_dir` before pinning and starting the new
+helper. A rollback to v6 is the mirror image. It must also restore
+`HOST_RESERVE_GIB`, the exact `host_reserve_gib` check in
+`agent_wrapper/deployment.py` and the value in `config/model_deployment.json`.
+Restart any long-running process that imported the old deployment validator,
+such as the Nara daemon. The supervisor restarts Nara after readiness. Update
+`test_pinned_bundle_enforces_owner_reserve` with the pin. The supervisor now
+records `bundle_sha256` in its state and refuses to start or clean up across a
+helper change until this handoff is done. The 2026-09-21 cutover receipt and
+archived v6 state are under `flash-personal-recovery/reserve-10gib-cutover-20260921/`.
+
+The v6 stop and the handoff were clean. The first v7 cold start (14:10 UTC)
+was stopped at 14:22 by the guard after four kernel `NV_ERR_NO_MEMORY` lines.
+An earlier version of this section called that a reboot-class driver fault.
+The investigation below shows it was a guard false positive.
+
+**Investigation (2026-09-21, evidence in `v7-false-positive-restart-20260921/`).**
+
+- The line `... returned from _memdescAllocInternal(pMemDesc) @ mem_desc.c:1359`
+  is an `NV_CHECK_OK` log in the 580.142 driver. On GB10 the driver first tries
+  physically contiguous 64 KiB big pages and, when that fails, retries with
+  4 KiB pages (logged only at info level). A failure that reaches CUDA would add
+  a second error line from `system_mem.c`. This host has 203 of the 1359 lines
+  across two boots and no `system_mem.c` line.
+- In none of the eight episodes with these lines did an engine fail. The 14:10
+  engine finished the draft load, captured its CUDA graphs, printed "The server
+  is fired up and ready to roll!" at 14:23:13 and answered its health request.
+  The guard's stop is SIGTERM plus a 120 s Docker timeout; SGLang ignores
+  SIGTERM while loading and was killed at 14:24:08.
+- Page cache matters at one moment: the main-weight load reserves about
+  84 GiB at "Load weight begin". On 2026-09-19 those loads logged the lines when
+  MemFree was below about 100 GiB there (page cache 38-73 GiB). Today's 14:21
+  lines came from the draft-model load and are not explained by page cache;
+  the 12.7 GiB cached at 14:10 was an unrelated host read.
+
+The supervisor now evicts the clean page cache of the checkpoint and PLE files
+with unprivileged `posix_fadvise(DONTNEED)` before launch and records meminfo
+and buddyinfo in the state's `prelaunch` field. It then requires at least
+100 GiB `MemFree`, re-evicting every 30 s for up to 35 minutes so a
+half-hourly host cache drop can clear unrelated cache. If that fails it
+refuses without arming the latch. The first version gated on `Cached` at or
+below 4 GiB; review showed that would have refused the 14:10 start, whose main
+load passed with 102.6 GiB free, and left Flash down because the unit has
+`Restart=no`. On an owner request the latch was cleared and Flash started once
+at 19:04 with the first version; it was ready at 19:17 with no kernel lines.
+No reboot was needed.
+
+Helper v7 still stops Flash on any kernel `NV_ERR_NO_MEMORY` line. One of nine
+SGLang draft-stage loads has been stopped that way. Making the exact
+`mem_desc.c:1359` line non-fatal before readiness would avoid that, but it is a
+host-safety trade-off: public GB10 reports show the same line during model load
+shortly before compaction livelocks and hard resets, and this host was under
+memory pressure at 14:21 (PSI rising, no free blocks at order 9 or above, swap
+in use). Only the engine's survival was observed, not the host's safety. The
+choice is the owner's; the hard stop stays until then.
+
+Only on an explicit owner request for that specific stop, and only after a clean
+reserve stop with no NVIDIA fault in the boot, the manual recovery is: copy `run_state/flash_resident.json` and the breach-window evidence into a
+dated folder under `flash-personal-recovery/`, write a receipt with the state
+hash, set the state's `phase` to `stopped`, start the service once, and verify
+with `check-ready`. The restart must use the same helper pin as the stopped
+run, or the handoff above applies. Each use gets its own receipt. This is not
+an automatic or agent-initiated retry, and the same-boot latch stays in force.
+Cold load takes about 12.5 minutes. A driver `NV_ERR_NO_MEMORY` fault is
+different and still calls for an owner-chosen reboot.
+
+## 2026-09-22 context evaluation and 262K cutover
+
+At the owner's request the context tiers were evaluated with
+`bench/flash_context_eval` (driver, probes, tests). Each tier stops the
+resident, runs one candidate under the same guard and floors, probes it and
+restores the resident. The 64K tier never started: the pinned container
+runtime admits only 32,768 or 262,144. The first 262K attempt loaded and served
+but the kernel guard stopped it on driver big-page retry lines logged while the
+checkpoint filled page cache. The supervisor and the eval now run `LoadEvictor`,
+which evicts the read-once checkpoint's page cache every 3 s until readiness
+(never the PLE cache); with it the 262K load logged no such line and passed.
+
+Helper v8 (`sglang_session_s3_v8.py`, sha `606d05f2...`) is v7 serving
+`nextn-262k-c1-s3.json`. The cutover stopped v7 cleanly, archived the state
+under `flash-personal-recovery/context-262k-cutover-20260922/`, and switched
+together the v8 pin, the deployment's `context_length` and `profile_sha256`,
+the exact validator in `agent_wrapper/deployment.py`, and the supervisor's
+profile check. A rollback reverses those edits with the helper handoff above;
+the pre-cutover files are archived next to the receipt. Measured results are in
+the topology policy's context amendment.
+

@@ -24,7 +24,7 @@ New contributors and agent sessions should begin with
 | Layer | Configuration |
 | --- | --- |
 | Hardware | NVIDIA DGX Spark, GB10, 128 GB unified memory |
-| Local generator, skeptic and builder | NVIDIA Qwen3.8-Flash-Next NVFP4 on `:30080`, 32K context, one running request; shared weights across roles |
+| Local generator, skeptic and builder | NVIDIA Qwen3.8-Flash-Next NVFP4 on `:30080`, 262K context (since 2026-09-22), one running request; shared weights across roles |
 | Rollback options | Stopped Gemma 4 and Qwen3.8-27B containers |
 | Serving | Pinned SGLang NEXTN3 bundle, managed by `flash-resident.service`; live status is authoritative |
 | Research scheduler | user service `nara-daemon.service`, with hourly cron as a gated backstop |

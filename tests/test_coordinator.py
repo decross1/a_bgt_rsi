@@ -348,6 +348,9 @@ def test_over_budget_plan_rejected(monkeypatch, state_files):
         {"action": "run_loop_iteration", "args": {"topic": "b"}},
     ]
     monkeypatch.setattr(coord, "call_sync", _mock_call_sync_returning(over))
+    # Daily pacing allows only the 3-unit floor just after 00:00 UTC, which
+    # refused this budget-4 cycle before the validator ran (clock-dependent).
+    monkeypatch.setattr(coord, "_budget_allowance", lambda: coord.DAILY_BUDGET_CAP)
 
     called = []
     handlers = {"run_loop_iteration": lambda **k: called.append("run")}

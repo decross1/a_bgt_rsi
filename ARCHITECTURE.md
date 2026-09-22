@@ -92,7 +92,9 @@ prefer status checks and targeted recovery; see
 One DGX Spark supplies a GB10 Grace Blackwell system with 128 GB unified memory.
 CPU and GPU allocations share that physical pool. The memory guard reads
 `MemAvailable` and preserves a 30 GiB operating-system margin; it does not infer
-free GPU memory from `nvidia-smi`.
+free GPU memory from `nvidia-smi`. That margin applies to loading legacy or
+candidate models. The running Flash resident enforces its owner-set 10 GiB
+floor (see `docs/MODEL_TOPOLOGY_POLICY.md`).
 
 CUDA 13.0 and `vllm/vllm-openai:v0.21.0` are the deployed baseline. A newer
 runtime may be evaluated in an isolated challenger lane, but deployment requires
@@ -297,6 +299,8 @@ baseline, not a trend.
 - Use `run_state/pause_frontier` to stop frontier work and
   `run_state/pause_weekly_upgrade` to stop only the weekly upgrade controller.
 - Preserve the 30 GiB unified-memory margin. Do not lower it to make a model fit.
+  The running Flash resident's steady-state floor is a separate owner setting,
+  10 GiB since 2026-09-21 (see `docs/MODEL_TOPOLOGY_POLICY.md`).
 - `ui/scripts/ui-services.sh ensure` starts only missing UI services. Its
   `start` command deliberately stops and restarts all UI processes.
 - The watchdog starts only existing `vllm-gemma4` and `vllm-qwen` containers;

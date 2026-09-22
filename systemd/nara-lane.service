@@ -1,0 +1,9 @@
+[Unit]
+Description=Nara implementor lane: process Oracle plan items from the mailbox (D-082)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/decross1/projects/a_bgt_rsi
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/home/decross1/projects/a_bgt_rsi/.venv-chroma/bin/python -m orchestrator.nara_lane run
+TimeoutStartSec=5400

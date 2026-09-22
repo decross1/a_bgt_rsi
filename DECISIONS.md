@@ -3865,3 +3865,71 @@ and evidence record is [LOOP_V2.md](LOOP_V2.md), with
 unchanged. This maintenance decision does not promote a model/runtime, relax
 research gates, convert local CPU controls into validated findings, or authorize
 paid frontier API calls. The weekly Spark cap remains 120 minutes.
+
+## D-082 — Oracle ⇄ Nara roles and mailbox; Flash serves 262K (owner direction, 2026-09-22)
+
+**Authority.** Derrick's direct instructions in the primary Claude session on
+2026-09-22, quoted verbatim below. Recorded by Claude (`claude-code-main`); this
+entry does not impersonate the owner and is not a human-confirmed Oracle charter
+change (that remains the owner's in `oracle_system`).
+
+> set a goal for bringing up the model with the best possible context length,
+> then once that is done, I want to set up a mailbox between the oracle and nara.
+> We are going to increase the dynamic between these two agents/systems. I want
+> nara to be the implemententor and person running the lab actual. That means
+> spawning up agents, developing tools, whatever to implement and achieve a plan
+> set out by the oracle. So the oracle can manage some elements on the page, and
+> nara can too. Both can do development, but nara focuses on lab development,
+> coding for experiments, killing, organizing lab documents and ledgers, etc. And
+> the oracle can fix the lab itself, the ui, the capabilities of nara, and improve
+> it's own memory to understand the long term purpose ofthe lab and human's goals
+> to better at improving their ability as an assistant
+
+> i am approving the max content length that we can do inside the headroom
+
+**Decision 1 — context (executed).** Flash serves 262,144 tokens through frozen
+helper v8 with the startup page-cache evictor; see `docs/MODEL_TOPOLOGY_POLICY.md`
+(context amendment) and `docs/FLASH_RESIDENT.md`. The 10 GiB reserve and every
+other guard are unchanged.
+
+**Decision 2 — roles.** Oracle sets the plan and develops the lab itself, the UI,
+Nara's capabilities and its own long-term memory. Nara runs the lab and implements
+Oracle's plan: lab development, experiment code, tools, spawning build agents,
+killing and organizing lab items, documents and ledgers.
+
+**Decision 3 — mailbox (phase 1 built).** `orchestrator/oracle_mailbox.py` is a
+two-way, append-only, hash-chained log (`run_state/oracle_nara_mailbox.jsonl`).
+Oracle posts `plan_item`, `withdraw`, `question`, `answer`; Nara posts `receipt`,
+`question`, `answer`. Attribution is honest but unauthenticated (the D-067 lesson);
+the mailbox never carries approvals.
+
+**Decision 4 — Nara's implementor lane (built, NOT armed).** `orchestrator/nara_lane.py`
+admits plan items against a fixed path fence (docs/, tests/, tools/, bench/,
+experiments/, workers/, notes/ minus fence files, preregistrations and campaign
+manifests), writes Oracle's red-first test into a fresh worktree from HEAD, lets a
+local-Flash builder edit only allowed paths, runs tests in a network-less
+bubblewrap sandbox, checks diff scope and test bytes, commits on `nara/<id>` and
+posts a receipt. It never merges or pushes; Oracle's integrator reviews and merges
+through the existing verification gate. Kill switches: `run_state/pause_coordinator`
+and `run_state/pause_nara_lane`. [Update 2026-09-22 16:40 UTC: after the owner ran
+the tests, three bugs were fixed (sandbox mount order, git cwd bound at import time,
+builder calls not persisted); lane tests 8/8 and the full suite pass, and one real
+item was validated end to end in a throwaway clone. The service units are in
+`systemd/nara-lane.{service,path,timer}` but not installed: the auto-mode permission
+classifier blocked installing them ("Create Unsafe Agents"). The owner installed and
+enabled `nara-lane.path` and `nara-lane.timer` at 16:48 UTC; the first pass found an
+empty mailbox and exited cleanly. At the owner's request the mailbox became the
+shared coordination state for all participants: claude, codex and human:<id> may post
+notes, questions and answers; plan items stay Oracle-only. Build-out plan:
+`docs/ORACLE_NARA_BUILDOUT_PLAN.md`.] Protocol: `docs/ORACLE_NARA_MAILBOX.md`.
+
+**Unchanged.** `research_focus.select_focus` stays operator-only; human, research,
+publication, credential and service gates stand; builders run on local pinned
+weights (D-061); append-only ledgers; mandatory logging.
+
+**Open (from the 2026-09-22 design review,** `notes/research/2026-09-22-oracle-nara-mailbox/`**).**
+Oracle-side protocol and charter amendment in `oracle_system`; Pi mailbox rebind
+and processing block; the Oracle planner's 20 GiB floor and 32K context sizing;
+Pi context metadata for 262K; UI page ownership (work cards and accomplishments
+projected from receipts); forgeable same-uid attribution; lane scheduling
+(path/timer unit) after arming.
