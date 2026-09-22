@@ -169,7 +169,9 @@ Restart any long-running process that imported the old deployment validator,
 such as the Nara daemon. The supervisor restarts Nara after readiness. Update
 `test_pinned_bundle_enforces_owner_reserve` with the pin. The supervisor now
 records `bundle_sha256` in its state and refuses to start or clean up across a
-helper change until this handoff is done. The 2026-09-21 cutover receipt and
+helper change until this handoff is done. It checks before the new run writes
+its state, so a retry refuses too. A record with an `artifact_dir` but no
+`bundle_sha256` (v6 or v7) counts as a different helper. The 2026-09-21 cutover receipt and
 archived v6 state are under `flash-personal-recovery/reserve-10gib-cutover-20260921/`.
 
 The v6 stop and the handoff were clean. The first v7 cold start (14:10 UTC)
@@ -238,6 +240,12 @@ but the kernel guard stopped it on driver big-page retry lines logged while the
 checkpoint filled page cache. The supervisor and the eval now run `LoadEvictor`,
 which evicts the read-once checkpoint's page cache every 3 s until readiness
 (never the PLE cache); with it the 262K load logged no such line and passed.
+After the first attempt's guard stop the eval restored the 32K resident, as the
+investigation above classifies those retry lines as a false positive. The driver
+now makes that explicit: it restores the resident only when the boot's kernel
+log since the eval began has no `NV_ERR` line from `system_mem.c` (a failure
+that reached CUDA) and can be read. Otherwise it withholds the restore and
+records why, for an owner-chosen reboot.
 
 Helper v8 (`sglang_session_s3_v8.py`, sha `606d05f2...`) is v7 serving
 `nextn-262k-c1-s3.json`. The cutover stopped v7 cleanly, archived the state

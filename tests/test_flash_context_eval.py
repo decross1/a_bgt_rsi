@@ -108,6 +108,7 @@ def test_escalation_stops_at_first_failure_and_resident_is_restored(tmp_path, mo
     monkeypatch.setattr(driver.resident, "STATE", tmp_path / "state.json")
     (tmp_path / "state.json").write_text(json.dumps({"phase": "stopped"}))
     monkeypatch.setattr(driver, "RUN_LOG", tmp_path / "run.jsonl")
+    monkeypatch.setattr(driver, "driver_fault_since", lambda started_at: None)
     monkeypatch.setattr(driver, "run_tier", lambda helper, context, stop: tiers.append(context) or
                         {"context": context, "passed": context == 65536})
     assert driver.main(["--out", str(tmp_path / "out"), "--take-resident-offline"]) == 0
@@ -115,6 +116,34 @@ def test_escalation_stops_at_first_failure_and_resident_is_restored(tmp_path, mo
     assert ("stop", "flash-resident.service") in calls and ("start", "flash-resident.service") in calls
     report = json.loads((tmp_path / "out/report.json").read_text())
     assert report["largest_passing_context"] == 65536 and report["resident_restored"]
+
+
+def test_driver_fault_withholds_the_resident_restore(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(driver, "load_helper", lambda: SimpleNamespace(resource_lease=lambda root: _Lease()))
+    monkeypatch.setattr(driver.resident, "check_ready", lambda root=None: True)
+    monkeypatch.setattr(driver, "systemctl", lambda *args, timeout=60: calls.append(args) or "")
+    monkeypatch.setattr(driver.resident, "STATE", tmp_path / "state.json")
+    (tmp_path / "state.json").write_text(json.dumps({"phase": "stopped"}))
+    monkeypatch.setattr(driver, "RUN_LOG", tmp_path / "run.jsonl")
+    monkeypatch.setattr(driver, "run_tier", lambda helper, context, stop: {"context": context, "passed": False})
+    monkeypatch.setattr(driver, "driver_fault_since", lambda started_at: "NVRM: ... @ system_mem.c:1234")
+    assert driver.main(["--out", str(tmp_path / "out"), "--take-resident-offline", "--tiers", "262144"]) == 1
+    assert ("start", "flash-resident.service") not in calls
+    report = json.loads((tmp_path / "out/report.json").read_text())
+    assert not report["resident_restored"] and "reboot" in report["restore_withheld"]
+
+
+def test_driver_fault_ignores_big_page_retry_lines(monkeypatch):
+    retry = ("2026-09-22T08:05:00+00:00 spark kernel: NVRM: nvCheckOkFailedNoLog: Check failed: Out of memory "
+             "[NV_ERR_NO_MEMORY] (0x00000051) returned from _memdescAllocInternal(pMemDesc) @ mem_desc.c:1359")
+    fault = retry.replace("mem_desc.c:1359", "system_mem.c:420")
+    for stdout, expected in (([retry], None), ([retry, fault], fault)):
+        monkeypatch.setattr(driver.subprocess, "run", lambda *a, **k: SimpleNamespace(
+            returncode=0, stdout="\n".join(stdout), stderr=""))
+        assert driver.driver_fault_since("2026-09-22T08:00:00+00:00") == expected
+    monkeypatch.setattr(driver.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=1, stdout="", stderr="denied"))
+    assert driver.driver_fault_since("2026-09-22T08:00:00+00:00").startswith("kernel log unreadable")
 
 
 def test_refuses_without_explicit_downtime_flag_or_pinned_helper(tmp_path):
@@ -133,3 +162,9 @@ def test_refuses_without_explicit_downtime_flag_or_pinned_helper(tmp_path):
 class _Lease:
     def __enter__(self): return self
     def __exit__(self, *_): return False
+
+
+def test_calibration_without_prompt_tokens_fails_the_tier(monkeypatch):
+    monkeypatch.setattr(driver.probes, "stream_chat", lambda prompt, max_tokens: {"status": 200, "text": ""})
+    out = driver.run_probes(262144, (8000,), driver._NoMonitor())
+    assert out["failures"] and not out["needles"]

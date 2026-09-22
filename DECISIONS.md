@@ -3933,3 +3933,31 @@ and processing block; the Oracle planner's 20 GiB floor and 32K context sizing;
 Pi context metadata for 262K; UI page ownership (work cards and accomplishments
 projected from receipts); forgeable same-uid attribution; lane scheduling
 (path/timer unit) after arming.
+
+**Correction and lane security fix (appended 2026-09-22, 17:50 UTC).** This
+supersedes the "built, NOT armed" heading of Decision 4 and its "not installed"
+clause. The owner installed and enabled the lane units at 16:48 UTC, so the lane
+was armed from then, and "lane scheduling after arming" under Open is done. An
+independent review of commit `16212e7` found a blocking sandbox escape through the
+lane's host-side steps. Sandboxed code could replace an allowed path with a
+symlink that the lane's next host write followed. It could also rewrite the
+worktree's `.git` pointer so that the lane's host `git status` ran a planted
+`core.fsmonitor` command. No plan item had been posted, so no model-written code
+ever ran. Claude created `run_state/pause_nara_lane` at 17:10 UTC and changed the
+lane:
+
+- the `.git` pointer is read-only inside the sandbox and re-checked on the host;
+- changes come from a stat walk, not `git status`;
+- host reads and writes refuse symlinks and non-regular files;
+- git runs with fsmonitor and hooks disabled and adds only named paths;
+- a pass needs pytest's JUnit report with the acceptance test passing;
+- a malformed item is held instead of jamming the queue;
+- pauses are checked before each item;
+- test and builder timeouts are bounded by the item's wall-clock budget;
+- receipts carry `base_sha` and are trimmed to the row limit;
+- the lane may not edit its own tests.
+
+Real-bubblewrap regression tests cover both escape routes. The same follow-up
+tightened the resident's helper-handoff check and gated the context eval's
+resident restore on the kernel log (`docs/FLASH_RESIDENT.md`). The pause stays
+until the owner removes it.

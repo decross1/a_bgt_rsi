@@ -2,8 +2,8 @@
 
 Oracle sets the plan; Nara implements it and reports. One append-only JSONL
 log under a file lock; every row names its actor and kind. Attribution is
-honest but not authenticated (the D-067 lesson): the hash chain proves order
-and integrity, not identity. The mailbox never carries approvals; owner
+honest but not authenticated (the D-067 lesson): the hash chain shows order
+and detects in-place edits; it does not prove identity. The mailbox never carries approvals; owner
 authority is D-082's standing mandate plus the owner's own channels.
 """
 from __future__ import annotations
@@ -67,21 +67,36 @@ def validate_plan_item(body: dict) -> None:
     acceptance = body["acceptance"]
     if not isinstance(acceptance, dict) or not {"test_path", "test_content", "test_argv"} <= set(acceptance):
         raise MailboxError("acceptance needs test_path, test_content and test_argv")
-    if not isinstance(acceptance["test_argv"], list) or not acceptance["test_argv"]:
-        raise MailboxError("acceptance.test_argv must be a non-empty argv list")
+    if not isinstance(acceptance["test_path"], str) or not isinstance(acceptance["test_content"], str):
+        raise MailboxError("acceptance.test_path and test_content must be strings")
+    argv = acceptance["test_argv"]
+    if not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv):
+        raise MailboxError("acceptance.test_argv must be a non-empty list of strings")
+    budget = body.get("budget", {})
+    if not isinstance(budget, dict) or not all(
+            type(budget.get(k, 1)) is int and budget.get(k, 1) > 0 for k in ("attempts", "wall_clock_minutes")):
+        raise MailboxError("budget.attempts and budget.wall_clock_minutes must be positive integers")
+    if not isinstance(body["title"], str) or not isinstance(body["objective"], str):
+        raise MailboxError("title and objective must be strings")
     if len(body["objective"]) > 4000 or len(body["title"]) > 200:
         raise MailboxError("title <= 200 and objective <= 4000 characters")
 
 
 def read(path: Path = PATH) -> list[dict]:
-    """All rows, with the hash chain verified; a break raises."""
+    """All rows, with the hash chain verified; a break raises. The chain detects edits in place;
+    it cannot detect a truncated tail or a chain re-hashed from the edit onward."""
     if not path.exists():
         return []
     rows, prev = [], None
     for number, line in enumerate(path.read_text().splitlines(), 1):
         if not line.strip():
             continue
-        row = json.loads(line)
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise MailboxError(f"mailbox line {number} is not JSON: {exc}") from None
+        if not isinstance(row, dict):
+            raise MailboxError(f"mailbox line {number} is not an object")
         claimed = row.get("row_sha256")
         check = dict(row)
         check.pop("row_sha256", None)

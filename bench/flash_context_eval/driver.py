@@ -1,9 +1,13 @@
 """Supervised Flash context-capacity eval: 64K -> 131,072 -> 262,144.
 
 Owner request 2026-09-22: find the largest context that fits inside the
-10 GiB host reserve. One pass stops the 32K resident, runs each tier once
+10 GiB host reserve. One pass stops the resident, runs each tier once
 under the same memory, swap, PSI and driver guard (monitor 10 GiB, guard
 8 GiB), stops escalating at the first failed tier, and restores the resident.
+A guard stop on the driver's big-page retry lines (mem_desc.c:1359, a false
+positive per docs/FLASH_RESIDENT.md) still restores it; a driver fault that
+reached CUDA (a system_mem.c NV_ERR line) or an unreadable kernel log withholds
+the restore for an owner-chosen reboot.
 It measures capacity, latency and synthetic recall only; it changes no
 deployment, client limit or benchmark manifest.
 """
@@ -40,9 +44,9 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def log(task: str, status: str, actual: str, expected: str) -> None:
+def log(task: str, status: str, actual: str, expected: str, duration_ms: int = 0) -> None:
     row = dict(timestamp=now(), task_id=f"flash-context-eval:{task}", agent="claude-code-main",
-               status=status, observable_actual=actual, observable_expected=expected, duration_ms=0)
+               status=status, observable_actual=actual, observable_expected=expected, duration_ms=duration_ms)
     with RUN_LOG.open("a") as handle:
         handle.write(json.dumps(row) + "\n")
 
@@ -78,7 +82,8 @@ def run_probes(context: int, sizes: tuple[int, ...], monitor) -> dict:
 
     calibrate = request("calibrate", " ".join(probes.filler(random.Random(0), 2000)), 1)
     if not calibrate.get("prompt_tokens"):
-        return out  # recorded as a failure; the tier does not pass
+        out["failures"].append({"calibrate_prompt_tokens": "missing; no probes ran"})  # the tier cannot pass
+        return out
     ratio = out["tokens_per_word"] = calibrate["prompt_tokens"] / 2000
 
     for size in sizes:
@@ -207,6 +212,22 @@ def systemctl(*args: str, timeout: float = 60) -> str:
     return done.stdout.strip()
 
 
+def driver_fault_since(started_at: str) -> str | None:
+    """A kernel fault since the eval began (an NV_ERR that reached CUDA, or an Xid), or why the log
+    could not be read. The driver's big-page retry lines at mem_desc.c:1359 are not faults."""
+    since = datetime.fromisoformat(started_at).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    try:
+        done = subprocess.run(["journalctl", "-k", "-b", "--no-pager", "-o", "short-iso", "--since", since],
+                              capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"kernel log unreadable: {exc}"
+    if done.returncode != 0:
+        return f"kernel log unreadable: {done.stderr.strip()[:300]}"
+    faults = [line for line in done.stdout.splitlines()
+              if ("NV_ERR" in line and "system_mem.c" in line) or "NVRM: Xid" in line]
+    return faults[0][:400] if faults else None
+
+
 def wait_resident(timeout: float) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -223,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--tiers", default="65536,131072,262144")
     parser.add_argument("--take-resident-offline", action="store_true",
-                        help="required: the eval stops the 32K resident, then restores it")
+                        help="required: the eval stops the resident, then restores it")
     parser.add_argument("--baseline-live", action="store_true",
                         help="probe the served resident in place (no service changes)")
     args = parser.parse_args(argv)
@@ -246,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("refusing: pass --take-resident-offline")
     helper = load_helper()
     if not resident.check_ready():
-        raise SystemExit("refusing: the 32K resident is not ready before the eval")
+        raise SystemExit("refusing: the resident is not ready before the eval")
     args.out.mkdir(parents=True, exist_ok=False)
     stop = threading.Event()
     for number in (signal.SIGINT, signal.SIGTERM):
@@ -263,16 +284,23 @@ def main(argv: list[str] | None = None) -> int:
             for context in tiers:
                 if stop.is_set():
                     break
+                started = time.monotonic()
                 tier = run_tier(helper, context, stop)
                 report["tiers"].append(tier)
                 (args.out / "report.json").write_text(json.dumps(report, indent=2) + "\n")
                 log(f"tier-{context}", "completed" if tier["passed"] else "failed",
-                    json.dumps({k: tier.get(k) for k in ("passed", "error", "ready_s")}), "tier passes")
+                    json.dumps({k: tier.get(k) for k in ("passed", "error", "ready_s")}), "tier passes",
+                    duration_ms=int((time.monotonic() - started) * 1000))
                 if not tier["passed"]:
                     break
     finally:
-        systemctl("start", "flash-resident.service")
-        report["resident_restored"] = wait_resident(1800)
+        report["driver_fault"] = driver_fault_since(report["started_at"])
+        if report["driver_fault"] is None:
+            systemctl("start", "flash-resident.service")
+            report["resident_restored"] = wait_resident(1800)
+        else:
+            report["resident_restored"] = False
+            report["restore_withheld"] = "driver fault or unreadable kernel log; owner-chosen reboot first"
         report["finished_at"] = now()
         passed = [t["context"] for t in report["tiers"] if t["passed"]]
         report["largest_passing_context"] = max(passed) if passed else None

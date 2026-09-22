@@ -7,8 +7,10 @@ runs the lab and implements Oracle's plan. This mailbox is how they talk.
 ## The log
 
 `run_state/oracle_nara_mailbox.jsonl` — append-only, hash-chained, one row per
-message. Every row names its actor. Attribution is honest but not authenticated:
-the chain shows order and integrity, not identity. The mailbox never carries
+message. Every row names its actor. Attribution is honest but not authenticated.
+The chain shows order and detects an edit in place. It cannot detect a truncated
+tail or a chain re-hashed from the edit onward, and it does not prove identity.
+The file is git-ignored, so it has no versioned backup. The mailbox never carries
 approvals; owner authority stays with D-082 and the owner's own channels.
 
 Since 2026-09-22 the mailbox is the shared coordination state for every
@@ -19,8 +21,8 @@ participant (owner direction). Post under your own name: `oracle`, `nara`,
 | Kind | Who posts | Purpose |
 |---|---|---|
 | `plan_item` | oracle | A work order for Nara (Oracle-only; widening it was refused as a permission grant) |
-| `withdraw` | oracle | Cancel an open plan item |
-| `receipt` | nara | `held`, `claimed`, `validated`, `failed` for a plan item |
+| `withdraw` | oracle | Cancel an open plan item (its state becomes `withdrawn`) |
+| `receipt` | nara | `held`, `claimed`, `validated`, `failed` or `withdrawn` for a plan item |
 | `question` / `answer` | oracle, nara, claude, codex, human:* | Anyone asks; anyone answers |
 | `note` | everyone | Context or status without a required reply |
 
@@ -52,23 +54,39 @@ python -m orchestrator.nara_lane status
 - Oracle writes the acceptance test. It must fail before Nara's change
   (red-first), and Nara may not modify it.
 - `allowed_write_paths` are exact repo paths under docs/, tests/, tools/,
-  bench/, experiments/, workers/ or notes/. Fence files, preregistrations,
-  campaign manifests, `bench/flash_*` and anything else are held.
-- Limits: 3 attempts, 30 minutes, 8 KiB test, 48 KiB per file.
+  bench/, experiments/, workers/ or notes/. Fence files, the lane's own tests
+  (`tests/test_oracle_nara_mailbox.py`, `tests/test_flash_*`), preregistrations,
+  campaign manifests, `bench/flash_*`, `.git*` paths and anything else are held.
+- Field types are checked when the item is posted. An item that still cannot be
+  read is held as malformed; it does not block the items behind it.
+- Limits: 3 attempts, 30 minutes, 8 KiB test, 48 KiB per file. Each test run and
+  builder call gets only the time left in the item's wall-clock budget.
 
 ## What Nara does (the lane)
 
 `python -m orchestrator.nara_lane run` processes every open item once:
 
 1. Holds an inadmissible item with reasons (`held`).
-2. Claims an admissible one, creates a worktree from HEAD on branch `nara/<msg_id>`,
-   writes Oracle's test and confirms it fails.
+2. Claims an admissible one, creates a worktree from the main checkout's HEAD on
+   branch `nara/<msg_id>` (the receipt records `base_sha`), writes Oracle's test
+   and confirms it fails.
 3. Asks the local Flash builder for the allowed files (logged to `logs/calls.jsonl`
    as `nara_lane_builder`), and runs the test in a bubblewrap sandbox with no
-   network, no home directory and only the worktree writable.
-4. Checks that only allowed paths and the test changed, and that the test's bytes
+   network, no home directory, and only the worktree writable. The worktree's
+   `.git` pointer stays read-only. A pass needs pytest's JUnit report to show the
+   acceptance test passing and no failures or errors, not just exit code 0. That
+   stops a test process that exits early, not code that forges the report: the
+   verdict comes from inside the run, so Oracle's review of the branch is the real
+   check. Anything the run leaves in the worktree, ignored by git or not, counts as
+   a change and fails the scope check, so a plan item should not write stray files.
+4. Treats the worktree as untrusted after each sandbox run. Host reads and writes
+   refuse symlinks and non-regular files. Changes come from a stat walk of the
+   tree, not `git status`. Git runs with fsmonitor and hooks disabled, only after
+   the `.git` pointer is checked unchanged, and adds only the named files.
+5. Checks that only allowed paths and the test changed, and that the test's bytes
    are Oracle's, then commits and posts `validated` with the branch and SHA.
-   Otherwise it posts `failed` with the reason and the test output tail.
+   Otherwise it posts `failed` with the reason and the test output tail. Receipts
+   are trimmed to fit the 16 KiB row limit.
 
 Nara never merges, pushes, or edits its own fence. Oracle's integrator reviews
 each `nara/*` branch and merges through the normal verification gate.
@@ -76,7 +94,8 @@ each `nara/*` branch and merges through the normal verification gate.
 ## Kill switches
 
 `run_state/pause_nara_lane` stops the lane; `run_state/pause_coordinator` stops
-the lane and the research loop. Only the owner removes a pause. A claimed item
+the lane and the research loop. The lane checks both before each item. Only the
+owner removes a pause. A claimed item
 left by a crashed run is closed as `failed` on the next run.
 
 ## Not yet in place

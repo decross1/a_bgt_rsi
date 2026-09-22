@@ -31,7 +31,7 @@ MODEL = 'nvidia/Qwen3.8-Flash-Next-NVFP4'
 STATE = ROOT / 'run_state/flash_resident.json'
 BOOT = Path('/proc/sys/kernel/random/boot_id')
 # Owner lowered the steady-state host reserve from 20 to 10 GiB on 2026-09-21
-# so interactive SSH sessions do not stop Flash. Must equal v7 HOST_FLOOR_GIB.
+# so interactive SSH sessions do not stop Flash. Must equal the pinned v8 HOST_FLOOR_GIB.
 HOST_RESERVE_GIB = 10
 # The main-weight load reserves ~84 GiB at once. On 2026-09-19 it logged driver
 # big-page NV_ERR_NO_MEMORY lines whenever MemFree was below ~100 GiB at that
@@ -217,6 +217,11 @@ def run() -> int:
                 and previous.get('launch_attempted')):
             print('Flash fault is latched for this boot; owner reboot follow-up remains pending.', flush=True)
             return 78
+        # Checked before this run's state overwrites the record, so a retry still refuses. A record
+        # without bundle_sha256 predates v8's pin and also needs the handoff.
+        if previous.get('artifact_dir') and previous.get('bundle_sha256') != BUNDLE_SHA:
+            print('helper handoff required: previous run used a different pinned helper', flush=True)
+            return 1
     stop = threading.Event()
     for number in (signal.SIGINT, signal.SIGTERM):
         signal.signal(number, lambda *_: stop.set())
@@ -249,8 +254,6 @@ def run() -> int:
         lease_open = True
         raise_if_stopped(stop)
         if previous.get('artifact_dir'):
-            if previous.get('bundle_sha256', BUNDLE_SHA) != BUNDLE_SHA:
-                raise RuntimeError('helper handoff required: previous run used a different pinned helper')
             if previous.get('boot_id') == boot_id:
                 try:
                     ticks = int(Path(f'/proc/{int(previous["pid"])}/stat').read_text().rsplit(')', 1)[1].split()[19])
@@ -466,7 +469,7 @@ def cleanup() -> int:
             pass
     if state.get('artifact_dir') is None:
         return 0
-    if state.get('bundle_sha256', BUNDLE_SHA) != BUNDLE_SHA:
+    if state.get('bundle_sha256') != BUNDLE_SHA:
         raise RuntimeError('helper handoff required: stopped run used a different pinned helper')
     output = Path(state['artifact_dir'])
     if output.parent != PREP / 'runtime' or not output.name.startswith('resident-') or output.is_symlink():

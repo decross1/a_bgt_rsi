@@ -194,13 +194,15 @@ def test_helper_mismatch_requires_handoff(tmp_path, monkeypatch):
     old = tmp_path / 'bundle/runtime/resident-old'
     resident.STATE.write_text(json.dumps({'phase': 'stopped', 'artifact_dir': str(old),
                                           'bundle_sha256': 'a' * 64}))
+    record = resident.STATE.read_text()
     assert resident.run() == 1
-    state = json.loads(resident.STATE.read_text())
-    assert 'helper handoff required' in state['error'] and 'launch' not in events
-    assert not state.get('launch_attempted')  # a refused handoff does not arm the latch
-    resident.STATE.write_text(json.dumps({'phase': 'stopped', 'artifact_dir': str(old),
-                                          'bundle_sha256': 'a' * 64}))
+    assert resident.run() == 1  # the old record is kept, so a retry refuses too
+    assert resident.STATE.read_text() == record and events == []  # no lease, no launch, no latch
     import pytest
+    with pytest.raises(RuntimeError, match='helper handoff required'):
+        resident.cleanup()
+    resident.STATE.write_text(json.dumps({'phase': 'stopped', 'artifact_dir': str(old)}))  # pre-v8 record
+    assert resident.run() == 1 and events == []
     with pytest.raises(RuntimeError, match='helper handoff required'):
         resident.cleanup()
 
@@ -250,6 +252,7 @@ def test_prelaunch_gate_waits_for_free_memory_then_launches(tmp_path, monkeypatc
                         lambda: {'MemFree': next(readings) * 1024**2, 'MemAvailable': 118 * 1024**2, 'Cached': 1})
     waits = []
     monkeypatch.setattr(resident.threading.Event, 'wait', lambda self, timeout=None: waits.append(timeout) or self.is_set())
+    monkeypatch.setattr(resident.LoadEvictor, 'start', lambda self: None)  # its wait is patched too; don't spin
     assert resident.run() == 0
     state = json.loads(resident.STATE.read_text())
     assert state['prelaunch']['waits'] == 2 and waits[:2] == [30, 30] and 'launch' in events
@@ -261,14 +264,24 @@ def test_load_evictor_runs_during_startup_and_stops_at_readiness(tmp_path, monke
     monkeypatch.setattr(resident, 'evict_model_page_cache', lambda roots: seen.append(tuple(roots)) or 0)
     monkeypatch.setattr(resident.LoadEvictor, '__init__',
                         lambda self, root, interval=0.01: _init_evictor(self, root, interval))
+    bundle = resident.load_bundle()
+    stop_at_ready = bundle.wait_ready
+
+    def ready_after_one_pass(output, monitor, deadline, stop):  # the model "loads" until one pass is seen
+        for _ in range(500):
+            if any(len(roots) == 1 for roots in seen):
+                break
+            __import__('time').sleep(0.01)
+        stop_at_ready(output, monitor, deadline, stop)
+    bundle.wait_ready = ready_after_one_pass
     assert resident.run() == 0
     state = json.loads(resident.STATE.read_text())
-    assert state['load_eviction']['errors'] == [] and not any(
-        t.name == 'load-evictor' and t.is_alive() for t in __import__('threading').enumerate())
+    assert state['load_eviction']['errors'] == [] and state['load_eviction']['passes'] >= 1
+    assert not any(t.name == 'load-evictor' and t.is_alive() for t in __import__('threading').enumerate())
     prelaunch = [roots for roots in seen if len(roots) == 2]
     during_load = [roots for roots in seen if len(roots) == 1]
     assert prelaunch == [(tmp_path / 'model', tmp_path / 'bundle/runtime/cache')]
-    assert all(roots == (tmp_path / 'model',) for roots in during_load)  # never the PLE cache
+    assert during_load and all(roots == (tmp_path / 'model',) for roots in during_load)  # never the PLE cache
     assert 'launch' in events
 
 
