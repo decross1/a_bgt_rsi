@@ -3961,3 +3961,64 @@ Real-bubblewrap regression tests cover both escape routes. The same follow-up
 tightened the resident's helper-handoff check and gated the context eval's
 resident restore on the kernel log (`docs/FLASH_RESIDENT.md`). The pause stays
 until the owner removes it.
+
+## D-084 — Owner authority narrows to live trading; theses pass a T/S/A validation ladder (owner direction, 2026-09-22)
+
+**Authority.** Derrick's direct instructions in the primary Claude session on
+2026-09-22, quoted verbatim below. Recorded by Claude (`claude-code-main`, acting
+as meta-oracle); this entry does not impersonate the owner.
+
+> The only thing today that should never happen without me are things that
+> implement live trading (we are far off from this place today)
+
+> you can show me the analysis but mostly yes - this should be the proposed
+> decision. But to be clear this still needs all of the proper upstream vetting,
+> works and upheld in a simulated game a theorectical experiment that upholds the
+> thesis/hypothesis - we have openspiel for this (but nara/oracle/you can help
+> design any experiment that can validate the thesis/hypothesis). Then it should
+> go into a simulated applied game. Either with agents, or some other medium that
+> we can actually test it outside of just theory, the semi-synthetic layer. And
+> then finally a proposal for the applied layer, how to test it either paper trade
+> or other wise in one of the 3 proposed markets.
+
+> ratify it, wire the goals into oracle, and commit
+
+**Decision 1 — the owner-required gate is live trading.** Anything that places a
+real order, connects a funded account or implements a live-trading path needs the
+owner's explicit approval. Everything else (focus selection, study registration,
+research gates, merges, timers) may proceed once it has passed its reviews: Oracle's
+plan, the meta-oracle's review, the tests, and the ladder in Decision 2. This
+supersedes D-082's "`research_focus.select_focus` stays operator-only" and the human
+gates on registration and research progress. It keeps D-061 (frontier models review
+and never generate research content or findings), L5 as the owner's verdict (the top
+rung, not a gate on progress), the pause files as kill switches, and the Polymarket
+live-trading guardrail. CLAUDE.md inviolate rule 3 is to be reconciled with this
+entry in the documentation pass (goal G6.4).
+
+**Decision 2 — the validation ladder.** A thesis advances only through: **T**, a
+game-theoretic model tested in simulation (OpenSpiel, installed in `.venv-chroma`),
+whose preregistered decision rule upholds the hypothesis; **S**, a semi-synthetic
+applied game (agents on local Flash or another measurable medium) with a
+preregistered outcome; **A**, a written proposal to test it in one of the three
+candidate markets (options preferred, prediction markets, crypto only if justified;
+`docs/v2/APPLICATION_RESEARCH_AGENDA.md`) by paper trading or another no-capital
+method, with a data-readiness audit. Paper trials may run; going live is the
+owner's gate. Each stage needs a preregistered design, an independent review and
+retained results, including negative ones; results are never re-run toward a better
+outcome.
+
+**Decision 3 — pursue until killed, then regenerate.** A kill is a recorded
+disposition (failed at T, S or A under its decision rule, or closed for low expected
+value) with its reason and reopening conditions, retained as negative knowledge.
+A kill immediately triggers successor generation without waiting for the owner.
+
+**Decision 4 — the goal plan.** `docs/v2/ALIGNMENT_AND_GOALS.md` (audit, target
+lifecycle and goals G0–G7) is the plan Oracle's daily plans work toward. Every plan
+item cites a goal ID, and the meta-oracle checks it. The first bottleneck is G0:
+research has been gated on `focus_pending` since 2026-09-20 06:00 UTC because the
+focus model has no terminal state and nothing reads the disposition artifact. The
+payoff-assistance line is to be closed (owner answer "B", mailbox seq 45) once G0.1
+provides a way to close a focus.
+
+**Reserved number.** D-083 stays reserved for the writer and ownership matrix
+(`docs/ORACLE_NARA_BUILDOUT_PLAN.md` A5).

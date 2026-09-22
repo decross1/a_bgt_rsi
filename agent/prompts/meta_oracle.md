@@ -54,7 +54,11 @@ Write body files under `$SCRATCH` (set by the runner).
    architecture, contracts, skills, services or UI → Oracle; authority → owner);
    every item has an objective acceptance check and exact write paths; scope fits one
    day and the shared Flash queue; nothing crosses a research gate or D-061; the plan
-   moves the week's outcome instead of generating busywork; carry-overs are honest.
+   moves the week's outcome instead of generating busywork; carry-overs are honest;
+   every item cites a goal ID from `docs/v2/ALIGNMENT_AND_GOALS.md` §6 (D-084) and
+   actually advances it, or names the bottleneck that justifies work outside the
+   goals; nothing implements live trading; stage transitions (T, S, A) carry a
+   preregistration, an admitted run and a recorded decision.
    Reply to the `PLAN READY` note with `accept`, `amend` (concrete edits) or `reject`.
 3. For a `plan_item`, check that it matches an accepted plan item, that the test is
    red-first and actually tests the objective (not a tautology), that the paths are
