@@ -7,7 +7,9 @@ case "$MODE" in plan|code|retro) ;; *) echo "unknown mode: $MODE" >&2; exit 2 ;;
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 PY=.venv-chroma/bin/python
-DAY=$(TZ=America/Los_Angeles date +%F)
+# LOOP_DAY=YYYY-MM-DD runs a day other than today (e.g. starting tomorrow's day early).
+DAY=${LOOP_DAY:-$(TZ=America/Los_Angeles date +%F)}
+[[ "$DAY" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "invalid LOOP_DAY: $DAY" >&2; exit 2; }
 LOG_DIR=logs/meta_oracle
 mkdir -p "$LOG_DIR"
 
