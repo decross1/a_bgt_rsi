@@ -295,3 +295,72 @@ def test_focus_holds_discovery_before_registration_or_model_call(
     assert report["state"]["research_focus"] == view
     assert report["plan"] == report["executed"] == []
     assert receipts == [report]
+
+
+def close(root, sha, **kw):
+    args = dict(disposition="killed", reason="Closed for low expected decision value.",
+                reopening_conditions=["A market with observable payoff assistance appears."],
+                evidence_refs=["RESEARCH_DECISION_SYNTHESIS.md", "mailbox claude-2c0947b0108f911e"],
+                closed_by="oracle", authority="D-084 + meta review claude-x",
+                expected_receipt_sha256=sha)
+    args.update(kw)
+    return focus.close_focus(root, **args)
+
+
+def test_closing_releases_the_hold_and_keeps_both_receipts(source):
+    root, _ = source
+    selected = choose(root)
+    receipt = root / focus.DIRECTORY / (selected["receipt_sha256"] + ".json")
+    original = receipt.read_bytes()
+    closed = close(root, selected["receipt_sha256"])
+    assert closed["status"] == "none" and "intake_policy" not in closed  # the coordinator's hold lifts
+    last = closed["last_closure"]
+    assert last["disposition"] == "killed" and last["focus_id"] == "focus-payoff-support"
+    assert last["focus_receipt_sha256"] == selected["receipt_sha256"]
+    assert last["execution_authorized"] is False
+    assert not (root / focus.POINTER).exists() and receipt.read_bytes() == original
+    closure = root / focus.CLOSURES / (last["closure_sha256"] + ".json")
+    assert hashlib.sha256(closure.read_bytes()).hexdigest() == last["closure_sha256"]
+    successor = choose(root)  # regeneration: a new focus needs no previous digest
+    assert successor["status"] == "selected"
+    assert "last_closure" not in successor
+
+
+def test_closing_requires_the_reviewed_focus_and_valid_fields(source):
+    root, _ = source
+    with pytest.raises(focus.FocusError, match="no valid selected focus"):
+        close(root, "0" * 64)
+    selected = choose(root)
+    sha = selected["receipt_sha256"]
+    with pytest.raises(focus.FocusError, match="changed since review"):
+        close(root, "0" * 64)
+    with pytest.raises(focus.FocusError, match="disposition"):
+        close(root, sha, disposition="paused")
+    with pytest.raises(focus.FocusError, match="reopening"):
+        close(root, sha, reopening_conditions=[])
+    with pytest.raises(focus.FocusError, match="evidence"):
+        close(root, sha, evidence_refs=[])
+    with pytest.raises(focus.FocusError, match="authority"):
+        close(root, sha, authority=" ")
+    assert focus.project_focus(root)["status"] == "selected"  # nothing half-closed
+    assert close(root, sha, disposition="graduated", reopening_conditions=[])["last_closure"][
+        "disposition"] == "graduated"
+
+
+def test_retry_after_a_crash_does_not_duplicate_the_closure(source):
+    root, _ = source
+    selected = choose(root)
+    pointer = (root / focus.POINTER).read_bytes()
+    close(root, selected["receipt_sha256"])
+    (root / focus.POINTER).write_bytes(pointer)  # as if the unlink never happened
+    assert close(root, selected["receipt_sha256"])["status"] == "none"
+    assert len(list((root / focus.CLOSURES).glob("*.json"))) == 1
+
+
+def test_a_tampered_closure_is_reported_not_hidden(source):
+    root, _ = source
+    selected = choose(root)
+    last = close(root, selected["receipt_sha256"])["last_closure"]
+    path = root / focus.CLOSURES / (last["closure_sha256"] + ".json")
+    path.write_bytes(path.read_bytes().replace(b"killed", b"graduated"))
+    assert focus.project_focus(root)["last_closure"]["status"] == "source_invalid"

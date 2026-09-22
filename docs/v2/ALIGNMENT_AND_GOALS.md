@@ -127,7 +127,7 @@ Nara builds or runs) and a done-when check.
 | ID | Goal | Lane | Done when |
 |---|---|---|---|
 | **G0** | **Unblock research** | | |
-| G0.1 | Terminal focus states (`killed`, `graduated`) and a close-focus function with reason and reopening conditions; update every consumer (coordinator, research_ops_status, loop_health, UI bridge) | O | Tests cover each transition; closing a focus releases the intake hold |
+| G0.1 | **Done 2026-09-22 (meta-oracle, owner request).** Terminal focus states (`killed`, `graduated`) and a close-focus function with reason and reopening conditions; update every consumer (coordinator, research_ops_status, loop_health, UI bridge) | O | Tests cover each transition; closing a focus releases the intake hold |
 | G0.2 | A focus-selection CLI callable by Oracle after a meta review (per §4.1), writing the receipt by compare-and-swap | O | CLI plus tests; no hand-written receipts afterwards |
 | G0.3 | Close the payoff-assistance line: final `THESIS_DISPOSITION` (closed for low expected value, reopening conditions) written on local weights | N | Focus `killed` by receipt; research cycles resume |
 | G0.4 | The daemon stops counting a gated queue as work; the coordinator's `dry_run=True` log line is fixed (`coordinator.py:2078`) | O | No empty 30-minute cycles; log matches the run mode |

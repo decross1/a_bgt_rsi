@@ -53,3 +53,26 @@ def test_focus_preserves_structured_promotion_eligibility(monkeypatch, tmp_path)
     assert result["status"] == "planned"
     assert result["state"]["topic_suggestions"] == []
     assert [step["name"] for step in result["plan"]] == ["promote_findings"]
+
+
+def test_a_closed_focus_releases_discovery(monkeypatch, tmp_path):
+    monkeypatch.setattr(research_focus, "project_focus", lambda _root: {
+        "status": "none", "execution_authorized": False,
+        "last_closure": {"disposition": "killed", "focus_id": "old"}})
+    monkeypatch.setattr(coordinator, "assess_state", lambda **_kw: {
+        "topic_suggestions": [], "gaps": [], "vote_ready_iteration_ids": []})
+    planned = []
+    monkeypatch.setattr(coordinator, "plan",
+                        lambda state, **_kw: planned.append(state) or [{"action": "noop", "args": {}}])
+    monkeypatch.setattr(coordinator.coordinator_cycle_log, "write_coordinator_cycle", lambda *_a: None)
+    campaign = {"campaign_id": "daily", "_manifest_sha256": "a" * 64,
+                "topic_policy": {"mode": "registered_exploratory"}, "_repo_root": tmp_path,
+                "campaign_actions": {"admitted": ["run_loop_iteration", "noop"], "deferred": []}}
+    result = coordinator._coordinator_cycle(
+        run_id="focus-closed", budget=6, dry_run=True, execute_handlers=None,
+        backend=None, model=None, loop_memory_path=tmp_path / "loop.jsonl",
+        surfaced_path=tmp_path / "surfaced.jsonl", feedback_path=tmp_path / "feedback.jsonl",
+        active_run_path=tmp_path / "active.json", campaign=campaign)
+    assert planned  # dry run: the planner runs instead of recording a focus hold
+    assert result["status"] not in {"focus_pending", "focus_invalid"}
+    assert result.get("replenishment") is None

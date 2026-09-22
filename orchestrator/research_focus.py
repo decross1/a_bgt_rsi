@@ -4,6 +4,11 @@ A focus is an immutable operator selection receipt plus an atomic pointer. It
 can stop discovery churn, but cannot register an experiment or earn a rung.
 Historical seeds retain their source quality and campaign instead of appearing
 as new-campaign findings. No model, network, or scientific-ledger writes here.
+
+A focus ends through an immutable closure receipt (D-084): `killed` or
+`graduated`, with its reason, reopening conditions, evidence and authority. The
+closure is written first and the pointer removed second, so a closed focus reads
+as "none" (the intake hold lifts) while both receipts stay as negative knowledge.
 """
 
 from __future__ import annotations
@@ -14,6 +19,7 @@ import json
 import os
 import re
 import stat
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -24,6 +30,9 @@ DIRECTORY = "run_state/research_focus"
 SHA = re.compile(r"[0-9a-f]{64}\Z")
 IDENTITY = re.compile(r"[a-z0-9][a-z0-9-]{2,95}\Z")
 STAGES = {"needs_clean_refinement", "blocked"}
+CLOSURE_SCHEMA = "research-focus-closure/v1"
+CLOSURES = f"{DIRECTORY}/closures"
+DISPOSITIONS = {"killed", "graduated"}  # terminal focus states (D-084)
 FIELDS = {
     "schema_version",
     "focus_id",
@@ -246,7 +255,14 @@ def project_focus(repo_root: Path) -> dict:
     try:
         raw = _read(root, POINTER, 4096)
     except FileNotFoundError:
-        return {"status": "none", "execution_authorized": False}
+        none = {"status": "none", "execution_authorized": False}
+        try:
+            closures = _closures(root)
+        except (OSError, ValueError) as exc:
+            return {**none, "last_closure": {"status": "source_invalid", "reason": str(exc)[:240]}}
+        if closures:
+            none["last_closure"] = max(closures, key=lambda c: c["closed_at"])
+        return none
     except (OSError, ValueError, RuntimeError) as exc:
         return {
             "status": "source_invalid",
@@ -391,3 +407,123 @@ def select_focus(
         _fsync_directory(directory)
         _fsync_directory((root / POINTER).parent)
         return project_focus(root)
+
+
+def _closures(root: Path) -> list[dict]:
+    """Every closure receipt, each verified against its content address."""
+    directory = root / CLOSURES
+    if not directory.is_dir():
+        return []
+    found = []
+    for path in sorted(directory.glob("*.json")):
+        raw = _read(root, f"{CLOSURES}/{path.name}", 16384)
+        if hashlib.sha256(raw).hexdigest() != path.stem:
+            raise FocusError("focus closure hash differs")
+        closure = _object(raw)
+        if closure.get("schema_version") != CLOSURE_SCHEMA:
+            raise FocusError("unsupported focus closure")
+        found.append({**closure, "closure_sha256": path.stem})
+    return found
+
+
+def _strings(value, maximum_items: int, maximum_length: int, *, required: bool) -> bool:
+    return (isinstance(value, list) and len(value) <= maximum_items and (bool(value) or not required)
+            and all(isinstance(v, str) and v.strip() and len(v) <= maximum_length for v in value))
+
+
+def close_focus(
+    repo_root: Path,
+    *,
+    disposition: str,
+    reason: str,
+    reopening_conditions: list[str],
+    evidence_refs: list[str],
+    closed_by: str,
+    authority: str,
+    expected_receipt_sha256: str,
+) -> dict:
+    """End the selected focus by compare-and-swap (D-084); returns the new projection."""
+    if disposition not in DISPOSITIONS:
+        raise FocusError(f"disposition must be one of {sorted(DISPOSITIONS)}")
+    for name, value, maximum in (("reason", reason, 1800), ("closed_by", closed_by, 120),
+                                 ("authority", authority, 400)):
+        if not isinstance(value, str) or not value.strip() or len(value) > maximum:
+            raise FocusError(f"invalid {name}")
+    if not _strings(reopening_conditions, 12, 600, required=disposition == "killed"):
+        raise FocusError("a killed focus needs reopening conditions (at most 12)")
+    if not _strings(evidence_refs, 20, 400, required=True):
+        raise FocusError("a closure needs evidence references (at most 20)")
+    root = Path(repo_root).resolve()
+    directory = root / CLOSURES
+    directory.mkdir(parents=True, exist_ok=True)
+    if directory.resolve() != directory or not directory.is_dir():
+        raise FocusError("redirected focus closure directory")
+    fd = os.open(root / DIRECTORY / ".selection.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        current = project_focus(root)
+        if current["status"] != "selected":
+            raise FocusError("no valid selected focus to close")
+        if current["receipt_sha256"] != expected_receipt_sha256:
+            raise FocusError("focus changed since review")
+        # A retry after a crash between the two writes finishes the removal instead of
+        # recording a second closure for the same focus.
+        if not any(c.get("focus_receipt_sha256") == expected_receipt_sha256 for c in _closures(root)):
+            closure = {
+                "schema_version": CLOSURE_SCHEMA,
+                "focus_id": current["focus_id"],
+                "focus_receipt_sha256": expected_receipt_sha256,
+                "title": current["title"],
+                "disposition": disposition,
+                "reason": reason,
+                "reopening_conditions": reopening_conditions,
+                "evidence_refs": evidence_refs,
+                "closed_at": datetime.now(timezone.utc).isoformat(),
+                "closed_by": closed_by,
+                "authority": authority,
+                "execution_authorized": False,
+            }
+            raw = canonical(closure) + b"\n"
+            with (directory / f"{hashlib.sha256(raw).hexdigest()}.json").open("xb") as stream:
+                stream.write(raw)
+                stream.flush()
+                os.fsync(stream.fileno())
+            _fsync_directory(directory)
+        os.unlink(root / POINTER)
+        _fsync_directory((root / POINTER).parent)
+        return project_focus(root)
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Research focus status and closure (D-084).")
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("status")
+    close = sub.add_parser("close")
+    close.add_argument("--disposition", required=True, choices=sorted(DISPOSITIONS))
+    close.add_argument("--reason", required=True)
+    close.add_argument("--reopen", action="append", default=[], help="a reopening condition (repeatable)")
+    close.add_argument("--evidence", action="append", default=[], help="an evidence reference (repeatable)")
+    close.add_argument("--closed-by", required=True)
+    close.add_argument("--authority", required=True, help="decision and review, e.g. D-084 + review msg_id")
+    close.add_argument("--expected-receipt", required=True, help="sha256 of the focus being closed")
+    args = parser.parse_args(argv)
+    root = Path(__file__).resolve().parents[1]
+    try:
+        if args.command == "status":
+            result = project_focus(root)
+        else:
+            result = close_focus(root, disposition=args.disposition, reason=args.reason,
+                                 reopening_conditions=args.reopen, evidence_refs=args.evidence,
+                                 closed_by=args.closed_by, authority=args.authority,
+                                 expected_receipt_sha256=args.expected_receipt)
+    except FocusError as exc:
+        print(f"research_focus: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
