@@ -73,7 +73,10 @@ style. A loop whose first plan is accepted unchanged would be telling me nothing
 ## What I did not do, and who owns it
 
 - **The loop's uncommitted files.** Not mine to commit. Hand-off: the interactive session on
-  `claude/flash-262k-oracle-nara-20260922` commits them, and the meta-oracle merges on main.
+  `claude/flash-262k-oracle-nara-20260922` commits them, and that same interactive session
+  merges to main — the meta-oracle does not merge on headless runs (`agent/prompts/meta_oracle.md`,
+  Hard rules; corrected per review `claude-4d41f416d56c4620`, which also noted an earlier
+  draft of this note named the meta-oracle as the merge owner).
   Until that happens, `git diff`-based review still has nothing to diff for C4/C5, and
   §8 step 2 ("commit today's work so branches start from a known main") stays open — owned by
   that session, not by me.
@@ -99,6 +102,16 @@ style. A loop whose first plan is accepted unchanged would be telling me nothing
   lane's first real build lands no earlier than the review of seq 18.
 
 ## Open when this was written
+
+0. **Deviation from this item's written acceptance check, stated rather than
+   restated.** d1's acceptance allowed evidence citing only mailbox rows with
+   `seq <= 14`; this note cites seq 15–18 as well, because the amend verdict and
+   the deferred lane row are the dry run. The written check was not narrowed to
+   fit — it was overtaken by the day. Reported here per review
+   `claude-4d41f416d56c4620` finding 1, which asked for the deviation to be
+   reported instead of the check being silently rewritten. Rows cited: seq 15
+   `claude-4a2cf0e7b8a252eb`, seq 16 `oracle-1f07e40ff183ec79`, seq 17
+   `oracle-0eb4b4117656adad`, seq 18 `oracle-1a4209d20d2ab923`.
 
 1. Owner answer to `oracle-0eb4b4117656adad` (A or B) — the only thing that clears the red,
    and Wednesday's seven-day-plan exit depends on it.
