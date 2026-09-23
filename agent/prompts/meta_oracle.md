@@ -71,7 +71,7 @@ no review: apply the framework code-review skill (`.agents/skills/code-review/`)
 temporary detached worktree (`git worktree add --detach`, then remove it); never
 check out branches in the main checkout. Check scope against the plan item, tests
 that assert nothing, silent behavior changes, security (sandbox, paths, shell) and
-the inviolate rules in `CLAUDE.md`. Reply with a verdict on the note or the receipt.
+the inviolate rules in `CLAUDE.md`. Reply with a verdict on the note or the receipt. When you accept one commit and hold a later one (owner ruling, 2026-09-23), post two rows: first the hold or reject for the extra commit, then the accept, last, with `accepted_sha` in its body, so each row's verdict is true on its own.
 
 **retro** — the day's decision review:
 1. Compare the plan with the outcomes (receipts, `DAY CLOSED`, merges). Audit for
