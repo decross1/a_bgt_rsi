@@ -65,7 +65,8 @@ def test_actor_and_shape_rules(tmp_path):
     mailbox.post("oracle", "answer", {"text": "v2"}, to="nara", in_reply_to=question["msg_id"], path=path)
 
 
-def test_admission_fence():
+def test_admission_fence(monkeypatch):
+    _stub_the_precheck_gate(monkeypatch)
     assert lane.admission({"actor": "oracle", "body": _plan()}) == []
     bad = _plan(allowed_write_paths=["orchestrator/nara_lane.py", "tests/conftest.py", "docs/../CLAUDE.md",
                                      "experiments/x/PREREGISTRATION.md", "tools/*.py", "bench/flash_x.py"])
@@ -92,7 +93,15 @@ def repo(tmp_path, monkeypatch):
     monkeypatch.setattr(lane, "ROOT", root)
     monkeypatch.setattr(lane, "WORKTREES", tmp_path / "wt")
     monkeypatch.setattr(lane, "RUN_LOG", tmp_path / "run.jsonl")
+    _stub_the_precheck_gate(monkeypatch)
     return root
+
+
+def _stub_the_precheck_gate(monkeypatch) -> None:
+    """Switch off the precheck-receipt gate (plan 2026-09-23 d1), which is tested
+    in tests/test_nara_lane_precheck.py. These lane tests predate it and post
+    plan items without receipts; every other admission rule still runs."""
+    monkeypatch.setattr(lane, "_prechecked", lambda _acceptance: True)
 
 
 def _fake_sandbox(worktree, argv, timeout=0):
@@ -188,6 +197,22 @@ def test_lane_fails_scope_escape_and_test_tampering(repo):
 
     receipt = lane.run_queue(path, build=tamper, sandbox=_fake_sandbox, ready=lambda: True)[-1]["body"]
     assert receipt["state"] == "failed" and "modified" in receipt["reason"], second
+
+
+def test_a_held_item_is_terminal_and_does_not_occupy_the_lane(repo, monkeypatch):
+    """The run_queue contract the precheck gate depends on (plan 2026-09-23 d1):
+    one pass handles every open item, a held item is terminal in the fold (so it
+    is never re-examined), and a held sibling does not block the next item."""
+    _stub_the_precheck_gate(monkeypatch)
+    path = repo / "run_state/mb.jsonl"
+    blocked = mailbox.post("oracle", "plan_item", _plan(allowed_write_paths=["orchestrator/secret.py"]),
+                           to="nara", path=path)
+    good = mailbox.post("oracle", "plan_item", _plan(), to="nara", path=path)
+    states = [(r["in_reply_to"], r["body"]["state"]) for r in
+              lane.run_queue(path, build=_good_builder, sandbox=_fake_sandbox, ready=lambda: True)]
+    assert states == [(blocked["msg_id"], "held"), (good["msg_id"], "claimed"), (good["msg_id"], "validated")]
+    assert mailbox.fold(mailbox.read(path))[blocked["msg_id"]]["state"] == "held"  # terminal: not re-examined
+    assert lane.run_queue(path, build=_good_builder, sandbox=_fake_sandbox, ready=lambda: True) == []
 
 
 def test_lane_holds_inadmissible_and_requires_red_first(repo):
