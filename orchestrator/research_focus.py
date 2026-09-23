@@ -1,7 +1,9 @@
 """Source-bound research priority, separate from study or execution authority.
 
-A focus is an immutable operator selection receipt plus an atomic pointer. It
-can stop discovery churn, but cannot register an experiment or earn a rung.
+A focus is an immutable selection receipt plus an atomic pointer. It
+can stop discovery churn, but cannot register an experiment or earn a rung. Selection
+authority is D-084 section 4.1: Oracle selects after a meta review, by CLI, not by a
+hand-written receipt.
 Historical seeds retain their source quality and campaign instead of appearing
 as new-campaign findings. No model, network, or scientific-ledger writes here.
 
@@ -13,6 +15,7 @@ as "none" (the intake hold lifts) while both receipts stay as negative knowledge
 
 from __future__ import annotations
 
+import argparse
 import fcntl
 import hashlib
 import json
@@ -23,6 +26,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from orchestrator import oracle_mailbox
 
 SCHEMA = "research-focus/v1"
 POINTER = "run_state/active_research_focus.json"
@@ -349,7 +354,15 @@ def select_focus(
     intake_policy: str = "focus_before_new_topics",
     expected_previous_sha256: str | None = None,
 ) -> dict:
-    """Explicit operator action with compare-and-swap; never called by a model."""
+    """Explicit selection under compare-and-swap, D-084 section 4.1.
+
+    D-084 section 4.1 replaced the earlier operator-only rule: a selection is made
+    by Oracle after a meta review (the G0.2 row), which is why the `select` CLI
+    requires --selected-by, --authority (a meta-review msg_id) and an explicit
+    receipt expectation, and why this function refuses a stale digest. It never
+    authorizes execution, and it refuses to overwrite a live focus: succession is
+    close_focus, generate, then select (see the lifecycle in D-084 section 5).
+    """
     root = Path(repo_root).resolve()
     state_directory = root / "run_state"
     state_directory.mkdir(exist_ok=True)
@@ -367,7 +380,7 @@ def select_focus(
         if current["status"] == "source_invalid":
             raise FocusError("repair invalid focus explicitly before replacing it")
         if current.get("receipt_sha256") != expected_previous_sha256:
-            raise FocusError("focus changed since operator review")
+            raise FocusError("focus changed since the reviewed digest")
         _row, campaign, raw_line, ordinal = _source(root, iteration_id)
         receipt = {
             "schema_version": SCHEMA,
@@ -494,10 +507,10 @@ def close_focus(
         return project_focus(root)
 
 
-def main(argv: list[str] | None = None) -> int:
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Research focus status and closure (D-084).")
+def build_parser() -> argparse.ArgumentParser:
+    """The CLI, split out so a test can parse against a temp repo (main() resolves
+    its repo as this package's parent, so it can only ever touch the live one)."""
+    parser = argparse.ArgumentParser(description="Research focus status, closure and selection (D-084).")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("status")
     close = sub.add_parser("close")
@@ -508,16 +521,93 @@ def main(argv: list[str] | None = None) -> int:
     close.add_argument("--closed-by", required=True)
     close.add_argument("--authority", required=True, help="decision and review, e.g. D-084 + review msg_id")
     close.add_argument("--expected-receipt", required=True, help="sha256 of the focus being closed")
-    args = parser.parse_args(argv)
+    select = sub.add_parser("select")
+    select.add_argument("--iteration-id", required=True)
+    select.add_argument("--focus-id", required=True)
+    select.add_argument("--title", required=True)
+    select.add_argument("--reason", required=True)
+    select.add_argument("--next-action", required=True)
+    select.add_argument("--next-gate-json", required=True, help="the next gate as a JSON object")
+    select.add_argument("--blocker", action="append", default=[], help="a blocker (repeatable)")
+    select.add_argument("--stage", default="needs_clean_refinement")
+    select.add_argument("--selected-by", required=True, help="who is selecting, e.g. oracle")
+    select.add_argument("--authority", required=True,
+                        help="a meta-oracle review msg_id accepting this selection (D-084 4.1)")
+    # Exactly one of these is required: a compare-and-swap digest of the focus being
+    # replaced, or an explicit declaration that there is none to replace.
+    receipt_group = select.add_mutually_exclusive_group(required=True)
+    receipt_group.add_argument("--expected-receipt", help="sha256 of the focus being replaced")
+    receipt_group.add_argument("--allow-empty-previous", action="store_true", default=False,
+                               help="declare a first selection, after a kill or with no prior focus")
+    return parser
+
+
+def _authority_row(root: Path, authority: str) -> dict:
+    """Resolve --authority against this repo's mailbox: it must be a `review` from a
+    reviewer with verdict=accept. A bare string is not enough - the flag exists to
+    keep the meta review in the path (D-084 4.1), so it is checked, not just required."""
+    try:
+        rows = oracle_mailbox.read(root / "run_state/oracle_nara_mailbox.jsonl")
+    except (oracle_mailbox.MailboxError, OSError) as exc:
+        raise FocusError(f"authority cannot be read from the mailbox: {exc}") from None
+    match = [r for r in rows if r.get("msg_id") == authority]
+    if not match:
+        raise FocusError(f"authority {authority!r} is an unknown mailbox msg_id in this repo")
+    row = match[-1]
+    if row.get("actor") not in oracle_mailbox.REVIEWERS:
+        raise FocusError("authority must be posted by a reviewer "
+                         f"({sorted(oracle_mailbox.REVIEWERS)}), not {row.get('actor')!r}")
+    if row.get("kind") != "review":
+        raise FocusError(f"authority must be a review row, not kind={row.get('kind')!r}")
+    verdict = row.get("body", {}).get("verdict") if isinstance(row.get("body"), dict) else None
+    if verdict != "accept":
+        raise FocusError(f"authority review verdict must be accept, not {verdict!r}")
+    return row
+
+
+def run_select(root: Path, args: argparse.Namespace) -> dict:
+    """The `select` subcommand: resolve the authority, then select_focus() under CAS."""
+    expected = None if args.allow_empty_previous else args.expected_receipt
+    row = _authority_row(root, args.authority)
+    try:
+        next_gate = json.loads(args.next_gate_json)
+    except ValueError as exc:
+        raise FocusError(f"--next-gate-json is not JSON: {exc}") from None
+    if not isinstance(next_gate, dict) or not next_gate:
+        raise FocusError("--next-gate-json must be a non-empty JSON object")
+    current = project_focus(root)
+    if current["status"] != "none":
+        # A focus is ended by close_focus, which writes a disposition and its reopening
+        # conditions; switching by overwrite would skip that record. There is no override:
+        # --force is not defined on this subcommand, so an overwrite attempt dies at argparse.
+        raise FocusError(f"a focus is already selected ({current.get('focus_id', 'unknown')}); "
+                         "close it first - succession is close, generate, then select")
+    selected = select_focus(
+        root, iteration_id=args.iteration_id, focus_id=args.focus_id, title=args.title,
+        reason=args.reason, selected_by=args.selected_by, next_action=args.next_action,
+        next_gate=next_gate, blockers=list(args.blocker), stage=args.stage,
+        expected_previous_sha256=expected)
+    selected["authority"] = f"meta review {row['msg_id']} ({row['ts']})"
+    return selected
+
+
+def run(args: argparse.Namespace, root: Path) -> dict:
+    """Dispatch one parsed command against an explicit repo root."""
+    if args.command == "status":
+        return project_focus(root)
+    if args.command == "close":
+        return close_focus(root, disposition=args.disposition, reason=args.reason,
+                            reopening_conditions=args.reopen, evidence_refs=args.evidence,
+                            closed_by=args.closed_by, authority=args.authority,
+                            expected_receipt_sha256=args.expected_receipt)
+    return run_select(root, args)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
     root = Path(__file__).resolve().parents[1]
     try:
-        if args.command == "status":
-            result = project_focus(root)
-        else:
-            result = close_focus(root, disposition=args.disposition, reason=args.reason,
-                                 reopening_conditions=args.reopen, evidence_refs=args.evidence,
-                                 closed_by=args.closed_by, authority=args.authority,
-                                 expected_receipt_sha256=args.expected_receipt)
+        result = run(args, root)
     except FocusError as exc:
         print(f"research_focus: {exc}", file=sys.stderr)
         return 2
