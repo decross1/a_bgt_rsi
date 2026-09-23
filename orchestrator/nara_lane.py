@@ -17,6 +17,19 @@ Meta-oracle gate (owner direction 2026-09-22): unless config/nara_lane.json
 exempts it, an item waits, still open, for a `review` from the meta-oracle that
 replies to it. `accept` admits it; `amend` or `reject` holds it (Oracle withdraws
 and reposts). A missing or unreadable policy file requires review.
+
+Precheck gate (2026-09-22 retro fix TOOL, plan item d1): an author's claim that
+an acceptance test discriminates was asserted without being run twice, and the
+cost was three postings, two withdrawals and six lane holds. `precheck()` runs
+the claim instead: in the sandbox with no implementation (it must be red) and
+again with an author-supplied known-good stub (it must be green), then writes a
+receipt named for sha256(test_content) under run_state/precheck_receipts/. An
+item whose test has no matching green receipt is held by admission(). The gate
+is deliberately not in oracle_mailbox.post() - the mailbox is a generic channel
+and its own tests post plan items without receipts - so it can only be enforced
+at the lane, which means a hold costs a withdraw-and-repost (a `held` receipt is
+terminal in the fold, as an `amend` verdict already found). The receipt is a
+discipline, not authentication: the actor who writes the test writes the receipt.
 """
 from __future__ import annotations
 
@@ -28,6 +41,7 @@ import os
 import re
 import shutil
 import stat
+import sys
 import subprocess
 import tempfile
 import time
@@ -92,7 +106,164 @@ def admission(item: dict) -> list[str]:
     budget = body.get("budget") or {}
     if budget.get("attempts", 1) > MAX_ATTEMPTS or budget.get("wall_clock_minutes", 1) > MAX_WALL_MINUTES:
         reasons.append(f"budget exceeds {MAX_ATTEMPTS} attempts / {MAX_WALL_MINUTES} minutes")
+    if not reasons and not _prechecked(item):  # last, so it never masks an earlier reason
+        sha = test_sha256(acceptance["test_content"])
+        reasons.append(f"no green precheck receipt for sha256(test_content) {sha}: run "
+                       "`python -m orchestrator.nara_lane precheck --test-path P --test-file F --stub S`; "
+                       f"the receipt would be {receipt_path(sha)}")
     return reasons
+
+
+def test_sha256(test_content: str) -> str:
+    return hashlib.sha256(test_content.encode()).hexdigest()
+
+
+def _receipt_dir(root: Path | None = None) -> Path:
+    """Where precheck receipts live, resolved at call time: they are written to
+    run_state/ at runtime, never inside a precheck or Nara worktree. A test that
+    redirects lane ROOT gets receipts under the redirected ROOT."""
+    return (Path(root) if root is not None else Path(ROOT)) / "run_state/precheck_receipts"
+
+
+def receipt_path(sha: str, *, root: Path | None = None) -> Path:
+    """The receipt for one exact acceptance-test content, named for its sha256."""
+    return _receipt_dir(root) / f"{sha}.json"
+
+
+def _prechecked(item: dict) -> bool:
+    """True when a green precheck receipt covers this exact test content."""
+    acceptance = item["body"]["acceptance"]
+    directory = _receipt_dir()
+    path = directory / f"{test_sha256(acceptance['test_content'])}.json"
+    if path.is_symlink() or not path.is_file():
+        return False
+    try:
+        body = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return False
+    return (isinstance(body, dict) and body.get("state") == "green"
+            and body.get("test_sha256") == test_sha256(acceptance["test_content"]) == path.stem)
+
+
+class PrecheckError(RuntimeError):
+    pass
+
+
+def precheck(test_path: str, test_content: str, test_argv: list[str], *,
+             stubs: list[dict[str, str]] | None = None, sandbox=None,
+             timeout: float = TEST_TIMEOUT_S) -> dict:
+    """Run an acceptance test's discrimination claim in the sandbox before posting it.
+
+    Draws a fixture worktree from main, writes the test, and runs it with no
+    implementation (must be red) and once per supplied stub (a green stub makes
+    the item prechecked). Reports each run's output so a non-discriminating test
+    is diagnosable, and writes run_state/precheck_receipts/<sha256>.json only on
+    a green run. The stub is a fixture for this check only: it is never copied
+    into Nara's worktree, which is created fresh by implement().
+
+    Two things would otherwise let a green receipt record a claim that was never
+    shown, so they are refused here (review claude-c0a841a1831ad8a6): a stub may
+    not write the acceptance test - it would overwrite the test whose sha the
+    receipt names, so the passing run would not be the posted test - and every
+    stub runs on a worktree reset to main including tracked modifications, so a
+    stub never passes on a previous stub's leftover edit.
+
+    Raises PrecheckError on an inadmissible test (checked by admission(), not
+    reimplemented here), a stub that writes the acceptance test, or a test that is
+    not red-first.
+    """
+    sandbox = sandbox or sandbox_run
+    # Structural checks first, on the test alone: an oversized or malformed test is
+    # refused before any fixture is drawn, so refusal leaves no worktree behind.
+    if len(test_content.encode()) > MAX_TEST_BYTES:
+        raise PrecheckError(f"acceptance test exceeds {MAX_TEST_BYTES // 1024} KiB")
+    if not (_path_ok(test_path) and re.search(r"(^|/)test_[^/]+\.py$", test_path)):
+        raise PrecheckError(f"acceptance test must be a test_*.py inside the lane fence: {test_path}")
+    named = [a for a in test_argv if isinstance(a, str) and re.search(r"(^|/)test_[^/]+\.py", a)]
+    if list(test_argv)[:3] != ["python", "-m", "pytest"] or named != [test_path]:
+        raise PrecheckError("test_argv must be python -m pytest ... <test_path> and name no other test file")
+    for stub in stubs or []:
+        if test_path in stub:
+            raise PrecheckError(f"stub may not write the acceptance test: {test_path}")
+    # Everything the stubs would write then goes through the lane's own fence.
+    item = {"actor": "oracle", "msg_id": "precheck", "body": {
+        "title": "precheck", "objective": "", "task_class": "tooling",
+        "allowed_write_paths": sorted({p for stub in (stubs or []) for p in stub}),
+        "acceptance": {"test_path": test_path, "test_content": test_content, "test_argv": list(test_argv)}}}
+    reasons = admission_without_receipt(item)
+    if reasons:
+        raise PrecheckError("; ".join(reasons))
+    sha = test_sha256(test_content)
+    base = _git("rev-parse", "main").strip()
+    fixture_root = tempfile.mkdtemp(prefix=f"precheck-{sha[:16]}-", dir=str(_precheck_root()))
+    fixture = Path(fixture_root) / "wt"
+    try:
+        _git("worktree", "add", "--detach", str(fixture), base)
+    except subprocess.CalledProcessError as exc:
+        _git("worktree", "prune")
+        detail = (exc.stderr or "").strip() if isinstance(exc.stderr, str) else ""
+        raise PrecheckError(f"cannot draw a precheck fixture worktree: {detail[:400]}") from exc
+    runs: list[dict] = []
+    try:
+        _write(fixture, test_path, test_content)
+        rc, output = sandbox(fixture, list(test_argv), timeout=timeout)
+        red = {"stub": None, "passed": rc == 0, "output": output[-3000:]}
+        runs.append(red)
+        if rc == 0:
+            raise PrecheckError("acceptance test is not red-first: it passes with no implementation\n"
+                                + output[-1500:])
+        green = None
+        for stub in stubs or []:
+            _reset_fixture(fixture)
+            for path, content in stub.items():
+                _write(fixture, path, content)
+            _write(fixture, test_path, test_content)  # last: a stub can never replace the test
+            rc, output = sandbox(fixture, list(test_argv), timeout=timeout)
+            runs.append({"stub": sorted(stub), "passed": rc == 0, "output": output[-3000:]})
+            if rc == 0:
+                green = {"stub": sorted(stub), "passed": True, "output": output[-3000:]}
+                break
+        report = {"test_sha256": sha, "test_path": test_path, "base_sha": base, "fixture": str(fixture),
+                  "red_run": red, "green_run": green, "green_receipt": None, "runs": runs}
+        if green is not None:
+            path = receipt_path(sha)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({
+                "schema": "nara-lane-precheck/v1", "test_sha256": sha, "test_path": test_path,
+                "state": "green", "stub_paths": green["stub"], "base_sha": base,
+                "prechecked_at": datetime.now(timezone.utc).isoformat(),
+                "note": "a discipline, not authentication: the test author writes this receipt"},
+                indent=2) + "\n")
+            report["green_receipt"] = str(path)
+        return report
+    finally:
+        if fixture.exists():
+            _git("worktree", "remove", "--force", str(fixture))
+        _git("worktree", "prune")
+        shutil.rmtree(fixture_root, ignore_errors=True)  # this run's own fixture root only
+
+
+def _precheck_root() -> Path:
+    """Where precheck fixture roots are created and thrown away: beside the repo,
+    never inside it, resolved from lane ROOT at call time so a test that redirects
+    ROOT cannot draw from - or clean up - a real repository. Each run gets its own
+    tempfile directory under here (never this shared directory itself), so two
+    prechecks cannot delete each other's fixtures."""
+    root = Path(ROOT).parent / "precheck-worktrees"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _reset_fixture(worktree: Path) -> None:
+    """Put the fixture back to exactly `main`, so each stub is checked alone.
+
+    Both halves are needed: `reset --hard` reverts edits to tracked files (clean
+    does not, so a later stub would otherwise pass on an earlier stub's leftover),
+    and `clean -qfdx` removes untracked ones, including the acceptance test, which
+    precheck rewrites after the stub so a stub can never stand in for it.
+    """
+    _git("reset", "-q", "--hard", "HEAD", cwd=worktree)
+    _git("clean", "-qfdx", cwd=worktree)
 
 
 def _junit_verdict(report: Path, test_path: str) -> tuple[bool, str]:
@@ -333,6 +504,11 @@ def meta_verdict(rows: list[dict], item: dict) -> str:
     return verdicts[-1] if verdicts else "awaiting"
 
 
+def _lane_lock_path() -> Path:
+    """The single-writer lock, under run_state/, resolved at call time with ROOT."""
+    return Path(ROOT) / "run_state/.nara_lane.lock"
+
+
 def _paused() -> bool:
     return any((ROOT / pause).exists() for pause in PAUSES)
 
@@ -358,14 +534,15 @@ def _receipt(path: Path, msg_id: str, body: dict) -> dict:
                             to="oracle", in_reply_to=msg_id, path=path)
 
 
-def run_queue(path: Path = mailbox.PATH, build=builder, sandbox=sandbox_run, ready=None) -> list[dict]:
+def run_queue(path: Path | None = None, build=builder, sandbox=sandbox_run, ready=None) -> list[dict]:
     """Process every open item once; returns the receipts posted."""
     if _paused():
         return []
+    path = mailbox.PATH if path is None else path  # resolved at call time, like _git's ROOT
     if ready is None:
         from orchestrator.flash_resident import check_ready as ready
     posted = []
-    lock_path = ROOT / "run_state/.nara_lane.lock"
+    lock_path = _lane_lock_path()
     with lock_path.open("a") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -414,15 +591,41 @@ def run_queue(path: Path = mailbox.PATH, build=builder, sandbox=sandbox_run, rea
     return posted
 
 
+def admission_without_receipt(item: dict) -> list[str]:
+    """admission() minus the precheck-receipt rule, for the precheck entry point
+    itself, whose test has no receipt by definition (it is what makes one)."""
+    reasons = admission(item)
+    return [r for r in reasons if "precheck receipt" not in r]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["run", "status"])
+    parser.add_argument("command", choices=["run", "status", "precheck"])
+    parser.add_argument("--test-path", help="precheck: where the acceptance test lives in the worktree")
+    parser.add_argument("--test-file", type=Path, help="precheck: file holding the acceptance test content")
+    parser.add_argument("--stub", action="append", default=[], type=Path,
+                        help="precheck: a JSON file mapping repo path -> known-good content (repeatable)")
+    parser.add_argument("--argv", help="precheck: JSON list, the test command (default: python -m pytest -q TEST)")
     args = parser.parse_args(argv)
     if args.command == "status":
         view = {k: {"title": v["item"]["body"]["title"], "state": v["state"]}
                 for k, v in mailbox.fold(mailbox.read()).items()}
         print(json.dumps(view, indent=2))
         return 0
+    if args.command == "precheck":
+        if not (args.test_path and args.test_file):
+            parser.error("precheck needs --test-path and --test-file")
+        argv_list = json.loads(args.argv) if args.argv else ["python", "-m", "pytest", "-q", args.test_path]
+        stubs = [json.loads(path.read_text()) for path in args.stub]
+        try:
+            report = precheck(args.test_path, args.test_file.read_text(), argv_list, stubs=stubs)
+        except (PrecheckError, LaneError) as exc:
+            print(f"precheck: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps({k: report[k] for k in
+                          ("test_sha256", "test_path", "base_sha", "red_run", "green_run", "green_receipt")},
+                         indent=2))
+        return 0 if report["green_run"] else 1
     for receipt in run_queue():
         print(json.dumps({"re": receipt["in_reply_to"], "state": receipt["body"]["state"],
                           "reason": receipt["body"].get("reason") or receipt["body"].get("reasons")}))
