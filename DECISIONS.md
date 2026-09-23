@@ -4072,3 +4072,23 @@ permanently: every paper is embedded and stored, and while a thesis is active ea
 paper is scored for relevance and linked to it when related (goal G1.2).
 Unrelated single-paper hypotheses stop being the default cycle output once G1.2
 lands.
+
+## D-087 — Thesis conviction scores, a kill threshold, and a calibration benchmark (owner direction, 2026-09-23)
+
+**Authority.** Derrick, in the same planning session, verbatim:
+
+> We should have a score or conviction that this will lead to a dead end, or if
+> the question becomes uninteresting. We can kill it. We can try to use this as an
+> oracle/nara benchmark on how to best refine and update the lab.
+
+**Decision.** Every active thesis carries conviction forecasts: the probability of
+passing T, S and A, the probability of a dead end, and an interest score, each
+with its reasons. They are recorded when the thesis is selected and re-forecast
+after every stage result or anomaly note, append-only, in
+`run_state/thesis_convictions.jsonl`. A thesis may be killed when its dead-end
+probability crosses the threshold (initially 0.8) or its interest score falls to
+the floor, once the meta-oracle's review agrees; the kill records the forecasts
+that justified it. When outcomes resolve, each forecaster (Nara, Oracle, and the
+meta-oracle as a comparison) is scored for calibration (Brier score and
+reliability). That score is a standing benchmark of how well each agent judges
+and refines the research, and it feeds the trust ramp (docs/META_ORACLE_DAILY_LOOP.md §6).

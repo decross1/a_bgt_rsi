@@ -50,6 +50,7 @@ spread information in a game) is welcome but must stay testable at T.
 | Falsifier | The result that kills it at T |
 | **Anomaly map** | For each plausible *unexpected* outcome at T or S: what it would suggest (a different mechanism, a related effect in the literature, a boundary condition) and the follow-up hypothesis it would lead to |
 | Cost | Rough Flash hours and build effort for T and S |
+| **Conviction (D-087)** | Probabilities of passing T, S and A; probability of a dead end; interest score 0–10; one line of reasons for each. These are the first entries in the calibration record |
 
 ## How candidates are judged
 
@@ -86,6 +87,24 @@ safeguards:
 The meta-oracle reviews every anomaly note and branch for HARKing
 (hypothesising after the results are known) and for reuse of confirmatory
 data.
+
+## Conviction, kills and the calibration benchmark (D-087)
+
+Each active thesis keeps a running forecast in `run_state/thesis_convictions.jsonl`,
+append-only, one row per forecast: `{thesis, forecaster (nara|oracle|claude), at,
+p_pass_T, p_pass_S, p_pass_A, p_dead_end, interest_0_10, reasons, trigger}`. The
+trigger is selection, a stage result, an anomaly note or a new related paper.
+Forecasts are re-made after every trigger. Earlier rows are never edited.
+
+- **Kill rule.** When the latest forecasts put `p_dead_end` at 0.8 or above, or
+  interest at 2 or below, the thesis is proposed for a kill; the meta-oracle's
+  review confirms or rejects it. A kill records the forecasts that justified it
+  and its reopening conditions.
+- **Benchmark.** When a stage resolves (pass or fail) or a thesis ends, earlier
+  forecasts are scored (Brier score, reliability) per forecaster. Over time this
+  measures how well Nara and Oracle judge research compared with the meta-oracle.
+  The scores feed the trust ramp and show which parts of the lab's
+  judgment to improve.
 
 ## Literature scouting (always on)
 
