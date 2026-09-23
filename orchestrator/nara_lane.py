@@ -161,10 +161,31 @@ def precheck(test_path: str, test_content: str, test_argv: list[str], *,
     a green run. The stub is a fixture for this check only: it is never copied
     into Nara's worktree, which is created fresh by implement().
 
+    Two things would otherwise let a green receipt record a claim that was never
+    shown, so they are refused here (review claude-c0a841a1831ad8a6): a stub may
+    not write the acceptance test - it would overwrite the test whose sha the
+    receipt names, so the passing run would not be the posted test - and every
+    stub runs on a worktree reset to main including tracked modifications, so a
+    stub never passes on a previous stub's leftover edit.
+
     Raises PrecheckError on an inadmissible test (checked by admission(), not
-    reimplemented here) or a test that is not red-first.
+    reimplemented here), a stub that writes the acceptance test, or a test that is
+    not red-first.
     """
     sandbox = sandbox or sandbox_run
+    # Structural checks first, on the test alone: an oversized or malformed test is
+    # refused before any fixture is drawn, so refusal leaves no worktree behind.
+    if len(test_content.encode()) > MAX_TEST_BYTES:
+        raise PrecheckError(f"acceptance test exceeds {MAX_TEST_BYTES // 1024} KiB")
+    if not (_path_ok(test_path) and re.search(r"(^|/)test_[^/]+\.py$", test_path)):
+        raise PrecheckError(f"acceptance test must be a test_*.py inside the lane fence: {test_path}")
+    named = [a for a in test_argv if isinstance(a, str) and re.search(r"(^|/)test_[^/]+\.py", a)]
+    if list(test_argv)[:3] != ["python", "-m", "pytest"] or named != [test_path]:
+        raise PrecheckError("test_argv must be python -m pytest ... <test_path> and name no other test file")
+    for stub in stubs or []:
+        if test_path in stub:
+            raise PrecheckError(f"stub may not write the acceptance test: {test_path}")
+    # Everything the stubs would write then goes through the lane's own fence.
     item = {"actor": "oracle", "msg_id": "precheck", "body": {
         "title": "precheck", "objective": "", "task_class": "tooling",
         "allowed_write_paths": sorted({p for stub in (stubs or []) for p in stub}),
@@ -174,10 +195,8 @@ def precheck(test_path: str, test_content: str, test_argv: list[str], *,
         raise PrecheckError("; ".join(reasons))
     sha = test_sha256(test_content)
     base = _git("rev-parse", "main").strip()
-    fixture_root = _precheck_root()
-    fixture = fixture_root / sha[:16]
-    shutil.rmtree(fixture, ignore_errors=True)
-    fixture_root.mkdir(parents=True, exist_ok=True)
+    fixture_root = tempfile.mkdtemp(prefix=f"precheck-{sha[:16]}-", dir=str(_precheck_root()))
+    fixture = Path(fixture_root) / "wt"
     try:
         _git("worktree", "add", "--detach", str(fixture), base)
     except subprocess.CalledProcessError as exc:
@@ -196,9 +215,9 @@ def precheck(test_path: str, test_content: str, test_argv: list[str], *,
         green = None
         for stub in stubs or []:
             _reset_fixture(fixture)
-            _write(fixture, test_path, test_content)  # git clean removes the untracked test too
             for path, content in stub.items():
                 _write(fixture, path, content)
+            _write(fixture, test_path, test_content)  # last: a stub can never replace the test
             rc, output = sandbox(fixture, list(test_argv), timeout=timeout)
             runs.append({"stub": sorted(stub), "passed": rc == 0, "output": output[-3000:]})
             if rc == 0:
@@ -220,30 +239,31 @@ def precheck(test_path: str, test_content: str, test_argv: list[str], *,
     finally:
         if fixture.exists():
             _git("worktree", "remove", "--force", str(fixture))
-        shutil.rmtree(fixture, ignore_errors=True)
         _git("worktree", "prune")
-        shutil.rmtree(fixture_root, ignore_errors=True)  # the per-run fixture root
+        shutil.rmtree(fixture_root, ignore_errors=True)  # this run's own fixture root only
 
 
 def _precheck_root() -> Path:
-    """Where precheck fixture worktrees are drawn from and thrown away: beside the
-    repo, never inside it, and resolved from lane ROOT at call time, so a test that
-    redirects ROOT cannot draw from - or clean up - a real repository."""
-    return Path(ROOT).parent / "precheck-worktrees"
+    """Where precheck fixture roots are created and thrown away: beside the repo,
+    never inside it, resolved from lane ROOT at call time so a test that redirects
+    ROOT cannot draw from - or clean up - a real repository. Each run gets its own
+    tempfile directory under here (never this shared directory itself), so two
+    prechecks cannot delete each other's fixtures."""
+    root = Path(ROOT).parent / "precheck-worktrees"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
 
 
 def _reset_fixture(worktree: Path) -> None:
-    """Drop the previous stub's writes so each stub is checked against a clean tree.
+    """Put the fixture back to exactly `main`, so each stub is checked alone.
 
-    `git clean` alone is not enough here: the acceptance test is untracked, so it
-    would be removed with the stub. Put the tree back to clean, then restore it.
+    Both halves are needed: `reset --hard` reverts edits to tracked files (clean
+    does not, so a later stub would otherwise pass on an earlier stub's leftover),
+    and `clean -qfdx` removes untracked ones, including the acceptance test, which
+    precheck rewrites after the stub so a stub can never stand in for it.
     """
+    _git("reset", "-q", "--hard", "HEAD", cwd=worktree)
     _git("clean", "-qfdx", cwd=worktree)
-    _git("checkout", "--detach", "-q", "HEAD", cwd=worktree)
-    _write(worktree, "__precheck_probe__", "x")
-    if _read(worktree, "__precheck_probe__") is None:  # did clean really clean?
-        raise LaneError(f"precheck fixture worktree will not reset: {worktree}")
-    (worktree / "__precheck_probe__").unlink()
 
 
 def _junit_verdict(report: Path, test_path: str) -> tuple[bool, str]:

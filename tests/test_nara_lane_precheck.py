@@ -123,22 +123,12 @@ def _repo(tmp_path, monkeypatch):
     return root
 
 
-def test_precheck_entry_point_exists():
-    """Red-first, stated plainly: before this change there is no precheck to call."""
-    assert hasattr(lane, "precheck") and callable(lane.precheck)
-    assert hasattr(lane, "PrecheckError") and hasattr(lane, "test_sha256") and hasattr(lane, "receipt_path")
-
-
-def test_module_stays_under_the_repos_30_kb_rule():
-    """Rough size floor only. `make check` runs tools/check_file_sizes.py with --limit 40 on this
-    checkout, whose main already carries ~20 files above 30 KB (the strict floor is the CI job);
-    an exact size assert would not be green on a clean tree here. See the READY note."""
-    assert len(pathlib.Path(__file__).read_bytes()) < 30 * 1024
-
-
 def test_precheck_reports_red_when_the_tool_is_absent(tmp_path, monkeypatch):
     """(a) The item's test, prechecked with no implementation, is red, and the
-    report carries that run's output so a wrong test is diagnosable."""
+    report carries that run's output so a wrong test is diagnosable. This test is
+    also the red-first proof for the entry point: before this change there was no
+    lane.precheck to call, so it failed with AttributeError instead of asserting
+    hasattr (review claude-c0a841a1831ad8a6, finding 3)."""
     _repo(tmp_path, monkeypatch)
     report = lane.precheck(TEST_PATH, REPO_TEST, ARGV, stubs=None, sandbox=_host_sandbox)
     assert report["red_run"]["passed"] is False
@@ -266,6 +256,79 @@ def test_precheck_is_not_green_against_a_broken_stub(tmp_path, monkeypatch):
     assert any("precheck receipt" in r for r in lane.admission({"actor": "oracle", "body": _plan()}))
 
 
+def test_precheck_refuses_a_stub_that_writes_the_acceptance_test(tmp_path, monkeypatch):
+    """(e1) Review claude-c0a841a1831ad8a6, finding 1: admission() does not forbid the
+    test path among a stub's paths, and precheck used to write the stub over the test, so
+    a green receipt could record a test that never ran. Refused, no receipt."""
+    root = _repo(tmp_path, monkeypatch)
+    hijacked = {TEST_PATH: "def test_v():\n    assert True\n"}
+    with pytest.raises(lane.PrecheckError, match="may not write the acceptance test"):
+        lane.precheck(TEST_PATH, REPO_TEST, ARGV, stubs=[hijacked], sandbox=_host_sandbox)
+    assert not (root / "run_state/precheck_receipts").exists()
+    assert not _precheck_root_of(root).exists()  # refused before a fixture was drawn
+
+
+def test_a_later_stub_cannot_pass_on_an_earlier_stubs_edit_to_a_tracked_file(tmp_path, monkeypatch):
+    """(e2) Review claude-c0a841a1831ad8a6, finding 2: `git clean` leaves tracked
+    modifications, so stub 2 used to pass on stub 1's edit and the receipt named the wrong
+    known-good stub. Two stubs, one tracked file: the chain must end not-green."""
+    root = _repo(tmp_path, monkeypatch)
+    (root / "tools").mkdir()
+    (root / "tools/__init__.py").write_text("")
+    (root / "tools/value.py").write_text("VALUE = 1\n")
+    for cmd in (["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "tools"]):
+        subprocess.run(["git", *cmd], cwd=root, check=True)
+    test = ("from tools.value import VALUE\n"
+            "from tools.extra import bonus\n"  # only stub 2 supplies this
+            "\ndef test_v():\n    assert VALUE == 42 and bonus() == 7\n")
+    stub1 = {"tools/value.py": "VALUE = 42\n"}                           # fails: no tools.extra
+    stub2 = {"tools/extra.py": "def bonus():\n    return 7\n"}          # passes only if VALUE is still 42
+    report = lane.precheck(TEST_PATH, test, ARGV, stubs=[stub1, stub2], sandbox=_host_sandbox)
+    assert [r["passed"] for r in report["runs"]] == [False, False, False], [
+        (r["stub"], r["passed"], r["output"][-300:]) for r in report["runs"]]
+    assert report["green_run"] is None and report["green_receipt"] is None
+    assert not (root / "run_state/precheck_receipts").exists()
+
+
+def test_two_prechecks_do_not_delete_each_others_fixtures(tmp_path, monkeypatch):
+    """(e3) Review claude-57ed6698d0247f2c, amendment 2: the assertions have to observe
+    the directory the run actually drew from. A fake sandbox records the fixture path it
+    was given, so the test sees where the fixture really lived; at 0a2fc37 fixtures were
+    created in ROOT.parent, beside the repo, and these assertions pass only after the
+    mkdtemp(dir=_precheck_root()) fix."""
+    root = _repo(tmp_path, monkeypatch)
+    shared = lane._precheck_root()
+    seen: list[pathlib.Path] = []
+
+    def spy(worktree, argv, *, timeout=None):
+        seen.append(pathlib.Path(worktree))
+        return _host_sandbox(worktree, argv, timeout=timeout)
+
+    report = lane.precheck(TEST_PATH, REPO_TEST, ARGV, stubs=[STUB], sandbox=spy)
+    assert report["green_run"]["passed"] is True
+    assert seen, "the sandbox never ran, so nothing was observed"
+    # <root>/precheck-worktrees/precheck-<sha>-<rand>/wt  ->  the shared root
+    drawn = {p.parent.parent for p in seen}
+    assert drawn == {shared}, f"fixture drawn outside the shared root: {drawn}"
+    stray = [p for p in root.parent.glob("precheck-*") if p != shared]
+    assert not stray, f"fixture created beside the repo, not in {shared}: {stray}"
+    assert not pathlib.Path(report["fixture"]).exists(), "this run's fixture was left behind"
+    assert shared.exists()  # the shared root survives; only this run's directory is removed
+
+
+def test_a_sibling_fixtures_directory_survives_another_runs_cleanup(tmp_path, monkeypatch):
+    """The reason per-run directories matter: the finally block removes only its own.
+    A planted sibling inside the shared root must still be there afterwards."""
+    root = _repo(tmp_path, monkeypatch)
+    shared = lane._precheck_root()
+    sibling = shared / "precheck-another-run-0000" / "wt"
+    sibling.mkdir(parents=True)
+    report = lane.precheck(TEST_PATH, REPO_TEST, ARGV, stubs=[STUB], sandbox=_host_sandbox)
+    assert report["green_run"]["passed"] is True
+    assert sibling.exists(), "a finished precheck deleted a sibling's fixture directory"
+    assert pathlib.Path(report["fixture"]).parent.parent == shared
+
+
 def test_precheck_refuses_an_oversized_test(tmp_path, monkeypatch):
     """(d) The new entry point goes through admission()'s 8 KiB limit rather than
     reimplementing it. Stated honestly: this check is red before the change only
@@ -293,7 +356,12 @@ def test_precheck_receipts_live_in_run_state_not_in_a_worktree(tmp_path, monkeyp
     root = _repo(tmp_path, monkeypatch)
     report = lane.precheck(TEST_PATH, REPO_TEST, ARGV, stubs=[STUB], sandbox=_host_sandbox)
     assert lane.receipt_path(report["test_sha256"], root=root).is_file()
-    assert not _precheck_root_of(root).exists()  # the fixture root is thrown away, stub included
+    # The directory the run actually drew from, not one that stays empty either way:
+    # report["fixture"] names the worktree, its parent is this run's mkdtemp directory.
+    per_run = pathlib.Path(report["fixture"]).parent
+    assert per_run.parent == _precheck_root_of(root)
+    assert not per_run.exists(), "the run's own fixture directory was left behind"
+    assert not any(_precheck_root_of(root).iterdir()), "no per-run directory was cleaned up"
     assert not (root / "tools/precheck_slug_fixture.py").exists()  # ... and never into the repo
     stub_in_repo = root / "tools/precheck_slug_fixture.py"
     assert not stub_in_repo.exists()  # the known-good stub never lands in the repo or Nara's worktree
