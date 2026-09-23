@@ -608,7 +608,7 @@ def run_iteration(
     _prev_run_id = get_run_id()
     set_run_id(iteration_id)
     active_run.write_active_run(
-        iteration_id, "loop_v0", f"LOOP_V0 iteration {iteration_id}",
+        iteration_id, "loop_v0", f"Research cycle iteration {iteration_id}",
         model=be.default_model,
     )
     start_event = {
