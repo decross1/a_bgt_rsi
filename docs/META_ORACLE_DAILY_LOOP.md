@@ -67,13 +67,13 @@ the research block keeps the first uninterrupted slot, as in the seven-day plan.
  "carry_over": [{"item": "yesterday id", "disposition": "done|continue|drop", "why": "…"}],
  "week_alignment": "which seven-day outcome today moves",
  "items": [{"id": "d1", "owner": "nara|oracle|owner", "lane": "nara_dev|nara_run|oracle_dev|owner_decision",
-            "goal": "G0.1", "repo": "a_bgt_rsi|oracle_system", "title": "…", "why_today": "…",
+            "goal": "G0.1", "repo": "a_bgt_rsi|oracle_system", "title": "…", "summary": "≤90 plain characters for the owner", "why_today": "…",
             "allowed_write_paths": ["…"], "acceptance": "objective check",
             "depends_on": [], "flash_minutes": 10}],
  "not_doing": [{"what": "…", "why": "…"}]}
 ```
 
-Every item cites a goal ID from `docs/v2/ALIGNMENT_AND_GOALS.md` §6 (D-084).
+Every item has a plain-language `summary` (at most 90 characters; the dashboard shows it). Every item cites a goal ID from `docs/v2/ALIGNMENT_AND_GOALS.md` §6 (D-084).
 Every state claim needs evidence. An item without an objective acceptance check is
 itself a review finding. At most 5 items a day in Stage 0.
 
