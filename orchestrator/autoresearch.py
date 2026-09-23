@@ -2,7 +2,7 @@
 """autoresearch driver — SINGLE-SHOT, HUMAN-TRIGGERED orchestration.
 
 One invocation composes the existing pieces into exactly ONE experiment →
-ONE bridged LOOP_V0 iteration:
+ONE bridged v2 research-cycle (loop_v0 engine) iteration:
 
     resolve experiment → (optionally run it) → build experiment_outcome
     → (optionally replicate) → (optionally) one run_iteration → return payload
@@ -21,7 +21,7 @@ It reuses, and does NOT reimplement, the existing modules:
     has_analyze / has_loop_bridge / results_summary) by filesystem inspection
     and does NOT import the experiment module; this driver loads the
     experiment's loop_bridge itself when has_loop_bridge is True.
-  - orchestrator.nara.run_iteration            — the LOOP_V0 chain (live only).
+  - orchestrator.nara.run_iteration            — the v2 research cycle's chain (live only).
   - <experiment>/loop_bridge.build_experiment_outcome — when the experiment
     ships a loop_bridge; otherwise a minimal experiment_outcome dict is
     constructed from the experiment's summary.json
@@ -181,7 +181,7 @@ def run_autoresearch(
     """Run ONE autoresearch pass — SINGLE-SHOT, HUMAN-TRIGGERED.
 
     Composes existing pieces into a single experiment → single bridged
-    LOOP_V0 iteration and returns. There is NO loop and NO scheduling: this
+    v2 research-cycle iteration and returns. There is NO loop and NO scheduling: this
     honors the CLAUDE.md no-continuous-orchestrator guardrail. One call = one
     experiment + (at most) one bridged iteration. To iterate again, a human
     invokes this again.
@@ -270,7 +270,7 @@ def run_autoresearch(
 
 
 def _topic_seed(outcome: dict, comparison: dict | None) -> str:
-    """Seed sentence for the LOOP_V0 chain, derived from the bridged outcome.
+    """Seed sentence for the v2 research cycle's chain, derived from the bridged outcome.
 
     Kept minimal and self-contained: a one-sentence hypothesis carrying the
     experiment id, metric, and value. (The richer per-experiment seeds live
@@ -286,7 +286,7 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         description=(
             "SINGLE-SHOT, human-triggered autoresearch driver. One invocation "
-            "= one experiment + one bridged LOOP_V0 iteration. Honors the "
+            "= one experiment + one bridged v2 research-cycle iteration. Honors the "
             "no-continuous-orchestrator guardrail (no loop/scheduler)."
         )
     )
@@ -302,7 +302,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--replicate", action="store_true", default=False,
                    help="also build the cross-rung replication comparison")
     p.add_argument("--live", action="store_true", default=False,
-                   help="run the LOOP_V0 iteration (needs env -u MOCK_LLM + a "
+                   help="run the v2 research-cycle iteration (needs env -u MOCK_LLM + a "
                         "live backend). Default: dry-run, no model call.")
     args = p.parse_args(argv)
 

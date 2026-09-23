@@ -630,7 +630,7 @@ Gemma/Qwen services and Nara. SGLang v5 remains the preferred unchanged bundle
 for one clean-host recovery experiment; final selection remains conditional on
 actual readiness and a completed client/Now verification.
 
-See [personal session instructions](FLASH_PERSONAL_RESEARCH.md) for the client,
+See [personal session instructions](../archive/docs-2026-09/FLASH_PERSONAL_RESEARCH.md) for the client,
 explicit reasoning controls, session limits, and exact-ID rollback. Endpoint
 availability must be taken from that handover receipt rather than this evidence
 report. The session controllers pause the autonomous lab while Flash owns

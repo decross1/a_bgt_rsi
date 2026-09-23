@@ -8,13 +8,124 @@
 > **Update 2026-05-26.** The Track A/B/C/D parallel-execution framework
 > and the three-tier autonomy machinery (`autonomous` / `soft_gate` /
 > `hard_gate`) were retired (see [`DECISIONS.md`](DECISIONS.md) D-030).
-> Their entries below are preserved as historical reference because
-> they appear in the run log, prior journal entries, and decision
-> records. Links to the canonical defining documents now point under
-> [`archive/`](archive/). Do not treat these as active terminology —
+> Their entries are preserved under "Archived terms" below as historical
+> reference because they appear in the run log, prior journal entries, and
+> decision records. Links to the canonical defining documents now point
+> under [`archive/`](archive/). Do not treat those as active terminology —
 > the active operating model is documented in [`CLAUDE.md`](CLAUDE.md).
+>
+> **Update 2026-09-23.** Current terms are collected in the section below,
+> first. They describe the deployed v2 system: the Flash resident model and
+> the Oracle / Nara / meta-oracle actor model (D-082, D-084..D-087).
 
 ---
+
+## Current terms
+
+**Flash** — The deployed resident local model, `nvidia/Qwen3.8-Flash-Next-NVFP4`
+served on SGLang at `127.0.0.1:30080`, managed by `flash-resident.service`.
+Serves generator, critic, and builder roles from one shared checkpoint (the
+owner ended the two-concurrently-resident-model requirement on 2026-09-15).
+See [`docs/FLASH_RESIDENT.md`](docs/FLASH_RESIDENT.md),
+[`docs/MODEL_TOPOLOGY_POLICY.md`](docs/MODEL_TOPOLOGY_POLICY.md),
+[`ARCHITECTURE.md`](ARCHITECTURE.md) §3.1. The prior Gemma/Qwen vLLM pair
+(`:8000`/`:8001`) stopped 2026-09-19 and is a rollback only — see
+[`ARCHITECTURE.md`](ARCHITECTURE.md) §3.1a.
+
+**Oracle** — The actor (running on Flash) that plans the day and develops
+architecture, UI, contracts, and its own system. See `DECISIONS.md` D-082,
+D-086; [`docs/META_ORACLE_DAILY_LOOP.md`](docs/META_ORACLE_DAILY_LOOP.md).
+
+**Nara** — The actor that runs research continuously (`nara-daemon` plus an
+hourly cron backstop; no daily cap, D-085) and builds lab tools through the
+lane. Nara *runs* the v2 research cycle (hypothesize → retrieve literature →
+novelty → critic → journal); that engine is historically named `loop_v0` in
+code (module/function/env-var names, e.g. `orchestrator/nara.py`,
+`LOOP_V0_CALLS_LOG`) but is the current production engine, not a deprecated
+one. See [`ARCHITECTURE.md`](ARCHITECTURE.md) §2.1, §4.
+
+**lane** — The Nara-lane build path: `orchestrator/nara_lane.py` runs Nara's
+own code changes inside a bwrap sandbox and lands them on `nara/<id>`
+branches for review. The review gate is `config/nara_lane.json`. See
+`DECISIONS.md` D-082.
+
+**mailbox** — The lab mailbox, `run_state/oracle_nara_mailbox.jsonl`, the
+coordination channel between Oracle and Nara. See
+[`docs/ORACLE_NARA_MAILBOX.md`](docs/ORACLE_NARA_MAILBOX.md).
+
+**meta-oracle** — The actor (Claude Opus 5.5; `tools/meta_oracle_run.sh`)
+that reviews every plan, plan item, and branch, and merges accepted work.
+See `DECISIONS.md` D-087, [`docs/META_ORACLE_DAILY_LOOP.md`](docs/META_ORACLE_DAILY_LOOP.md).
+
+**campaign** — A registered research campaign/question identity that a v2
+research cycle's iterations, findings, and the `/benchmarks` funnel link to
+exactly. Fresh-campaign identity must survive topic selection, execution,
+and reporting; legacy records stay separate. See [`ARCHITECTURE.md`](ARCHITECTURE.md)
+§9–§10, `CLAUDE.md` "V2 maintenance and evidence".
+
+**focus** — The active campaign's research-focus hold: the direction a
+research cycle stays on during a topic-selection and refinement pass,
+per `DECISIONS.md` D-086. See [`docs/v2/THESIS_BRIEF_2026-09-23.md`](docs/v2/THESIS_BRIEF_2026-09-23.md).
+
+**L0–L5** — The evidence-ladder rungs a research claim climbs, cumulative:
+L0 asserted hypothesis; L1 literature-consistent + novel + critique survived;
+L2 sound synthetic experiment (min. trial count); L3 replication /
+cross-tier evidence; L4 independent adversarial review survived (automatic
+qualification, not a publication claim); L5 explicit human `valid` verdict.
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) §4.2,
+[`workers/evidence_ladder.py`](workers/evidence_ladder.py).
+
+**T / S / A** — The thesis-maturity gates a thesis passes through in order
+(D-084): **T** (theory, OpenSpiel), then **S** (semi-synthetic), then **A**
+(applied proposal, paper trade). Distinct from the L0–L5 per-claim evidence
+ladder. See `DECISIONS.md` D-084, D-086, D-087;
+[`docs/v2/THESIS_BRIEF_2026-09-23.md`](docs/v2/THESIS_BRIEF_2026-09-23.md).
+
+---
+
+## Infra & versions
+
+**Spark** — NVIDIA DGX Spark (GB10) workstation, 128 GB unified memory,
+SM12x architecture; no native FP4 compute. See [`ARCHITECTURE.md`](ARCHITECTURE.md) §3.
+
+**NVFP4** — 4-bit floating-point weight quantization. Flash's checkpoint
+(revision `fc694b54fb0174e0913e6adf86691ef85a4ead47`) uses NVFP4 weights with
+FP32 recurrent state and BF16 KV. See [`docs/FLASH_RESIDENT.md`](docs/FLASH_RESIDENT.md).
+The rollback pair's NVFP4 weights path was `/mnt/models/gemma-4-26b-a4b-nvfp4`
+(NOT BF16) — see [`ARCHITECTURE.md`](ARCHITECTURE.md) §3.1a.
+
+**NEXTN** — Flash's native speculative-decoding scheme (3 steps / 4 draft
+tokens). The rollback pair instead used per-model **MTP** (Multi-Token
+Prediction) assistants under vLLM v0.21.0 (D-022) — the MARLIN NvFp4 MoE
+backend and `Using 'MARLIN' NvFp4 MoE backend` startup-log check apply only
+to that rollback configuration. See `CLAUDE.md` inviolate rule 2 and
+[`ARCHITECTURE.md`](ARCHITECTURE.md) §3.1a.
+
+**BGE-M3** — `BAAI/bge-m3` embedding model used for ChromaDB. NOT
+the ChromaDB default `all-MiniLM-L6-v2`. Still current.
+
+---
+
+## Pointers for unfamiliar terms
+
+If a term used in the docs is **not** in this glossary and is not
+defined inline:
+
+1. Check [`DECISIONS.md`](DECISIONS.md) — many specialized terms
+   were introduced in a decision record.
+2. Check [`ARCHITECTURE.md`](ARCHITECTURE.md) — technical terms.
+3. If neither: open a PR to add the term to this file. Don't
+   guess; ask.
+
+---
+
+## Archived terms
+
+Everything below this line describes retired machinery (Track A/B/C/D,
+the three-tier autonomy model, apparatus-v0/Phase-N roadmap language). It is
+preserved for provenance — run-log rows, journal entries, and decision
+records reference these terms — but none of it is active. See the 2026-05-26
+banner above.
 
 ## Apparatus & program
 
@@ -192,36 +303,3 @@ tier shifts. Named for the week in which alignment evidence
 typically clears, not when the calendar arrives.
 
 ---
-
-## Infra & versions
-
-**Spark** — NVIDIA DGX Spark (GB10) workstation. SM12x architecture;
-no native FP4 compute. See [`ARCHITECTURE.md`](ARCHITECTURE.md) §2.
-
-**MARLIN backend** — The Marlin weight-only FP4 path in vLLM. Required
-startup log: `Using 'MARLIN' NvFp4 MoE backend`. If CUTLASS_FP4 appears
-instead, the `--moe-backend marlin` flag did not pick up — STOP. See
-[`CLAUDE.md`](CLAUDE.md) inviolate rule 2.
-
-**MTP** — Multi-Token Prediction. Speculative decoding enabled in
-vLLM v0.21.0 (D-022) — boosted single-stream decode from 32 → 69
-tok/s on Gemma 4.
-
-**NVFP4** — 4-bit floating-point weight quantization. Path:
-`/mnt/models/gemma-4-26b-a4b-nvfp4`. NOT BF16.
-
-**BGE-M3** — `BAAI/bge-m3` embedding model used for ChromaDB. NOT
-the ChromaDB default `all-MiniLM-L6-v2`.
-
----
-
-## Pointers for unfamiliar terms
-
-If a term used in the docs is **not** in this glossary and is not
-defined inline:
-
-1. Check [`DECISIONS.md`](DECISIONS.md) — many specialized terms
-   were introduced in a decision record.
-2. Check [`ARCHITECTURE.md`](ARCHITECTURE.md) — technical terms.
-3. If neither: open a PR to add the term to this file. Don't
-   guess; ask.

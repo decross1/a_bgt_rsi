@@ -132,8 +132,8 @@ composite score.** Raw tokens/sec is a health metric only.
 | Drift | `tools/qwen_builder.sh:60` defaults `QWEN_MODEL=qwen3.6-27b-nvfp4-mtp`; `bench/critic_eval/qwen_ab.py:43` likewise; `cron/weekly-frontier-agenda.sh:69-75` comments say "not installed" but it is | — |
 | Frontier seam | `invoke_frontier()` → `claude -p` (Max subscription, API key stripped) / `codex exec --sandbox read-only -m gpt-5.6-sol -c model_reasoning_effort=max` (isolated `run_state/codex_home`); 2,338 ledger rows; G1 ToS sentinel present | `agent_wrapper/frontier_cli.py` |
 | Frontier health | ISO week 35: 177/177 Claude calls failed (OAuth expiry, invisible 10 days); Codex timeouts 26% in the last 7 days (92/348), p90 = the 180 s cap | `run_state/frontier_calls.jsonl` |
-| Tests | 2,525 collected; 7 red in the eval instruments themselves (`test_critic_cal` ×4, `test_readjudication` ×3) | `docs/project_health_2026-09.md` |
-| Reproducibility | Gemma is **not** byte-deterministic at temp 0 (9–10/12 same-prompt divergences, MoE-Marlin reduction order); Qwen is (0/8) | `docs/external_spark_brief_review_2026-08-17.md:122-133` |
+| Tests | 2,525 collected; 7 red in the eval instruments themselves (`test_critic_cal` ×4, `test_readjudication` ×3) | `archive/docs-2026-09/project_health_2026-09.md` |
+| Reproducibility | Gemma is **not** byte-deterministic at temp 0 (9–10/12 same-prompt divergences, MoE-Marlin reduction order); Qwen is (0/8) | `archive/docs-2026-09/external_spark_brief_review_2026-08-17.md:122-133` |
 | Local temperature evidence | `experiments/judge_calibration/results.json` (2026-08-18, 224 calls): verdict flip rate between temp 0.2 and 0.7 = **0.027**, precision 0.30 at both | `workers/idea_judge.py` |
 | Worktrees | no `ui-session` worktree; 55 `lab/*`, `pkt/*`, `codex-team2` worktrees under `/tmp`; main checkout dirty (CLAUDE.md, DECISIONS.md D-078–081, LOOP_V1.md, README.md, START_HERE.md, docs/packet_sdlc.md, three ledgers, untracked AGENTS.md/.codex/notes) — **do not sweep these into session commits** | `git status` |
 

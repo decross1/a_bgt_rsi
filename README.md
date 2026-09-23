@@ -72,10 +72,13 @@ resuming, or restarting a service. The safe first check is read-only:
 ```bash
 ui/scripts/ui-services.sh status
 systemctl --user status nara-daemon.service --no-pager
-curl -fsS http://127.0.0.1:8000/v1/models
-curl -fsS http://127.0.0.1:8001/v1/models
+systemctl --user status flash-resident.service --no-pager
+curl -fsS http://127.0.0.1:30080/v1/models
 curl -fsS http://127.0.0.1:8700/api/health
 ```
+
+(`curl -fsS http://127.0.0.1:8000/v1/models` and `:8001` only apply to the
+stopped Gemma/Qwen rollback pair — see [`docs/FLASH_RESIDENT.md`](docs/FLASH_RESIDENT.md).)
 
 To assess progress, use the same benchmark release and compare its individual
 science, code, tool, strategy, and harness rows. A new run needs a preregistered

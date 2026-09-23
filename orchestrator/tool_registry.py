@@ -57,7 +57,7 @@ TOOL_SPECS: list[dict] = [
         "function": {
             "name": "hypothesize",
             "description": (
-                "STEP 1 of the LOOP_V0 chain. Generate 1-3 candidate "
+                "STEP 1 of the v2 research cycle's five-step chain. Generate 1-3 candidate "
                 "research hypotheses from a topic in game theory / "
                 "behavioral game theory / learning in games, and pick "
                 "the most specific. Returns {text, candidates_considered, "
@@ -80,7 +80,7 @@ TOOL_SPECS: list[dict] = [
         "function": {
             "name": "retrieve_literature",
             "description": (
-                "STEP 2 of the LOOP_V0 chain. Query the local knowledge "
+                "STEP 2 of the v2 research cycle's five-step chain. Query the local knowledge "
                 "base (foundational textbook chunks + live arXiv) for the "
                 "top-K most semantically similar prior results to the "
                 "hypothesis. Returns {k, neighbors: [...]} where each "
@@ -110,7 +110,7 @@ TOOL_SPECS: list[dict] = [
         "function": {
             "name": "novelty_classify",
             "description": (
-                "STEP 3 of the LOOP_V0 chain. Classify the hypothesis "
+                "STEP 3 of the v2 research cycle's five-step chain. Classify the hypothesis "
                 "against the retrieved neighbors into one of "
                 "{novel, rediscovery, nonsense, unclear} with rationale "
                 "and the doc_id of the most-similar neighbor. Reads the "
@@ -138,7 +138,7 @@ TOOL_SPECS: list[dict] = [
         "function": {
             "name": "critic_loop_v0",
             "description": (
-                "STEP 4 of the LOOP_V0 chain. Attempt to falsify the "
+                "STEP 4 of the v2 research cycle's five-step chain. Attempt to falsify the "
                 "hypothesis using ONLY the retrieved neighbors. Returns "
                 "one of {survives, falsified, restated, malformed, undecidable} with "
                 "a rationale and (for falsified/restated) the doc_id of "
@@ -167,7 +167,7 @@ TOOL_SPECS: list[dict] = [
         "function": {
             "name": "journal_writer",
             "description": (
-                "STEP 5 of the LOOP_V0 chain (always last). Write a "
+                "STEP 5 of the v2 research cycle's five-step chain (always last). Write a "
                 "markdown journal entry to journal/iterations/NNN.md "
                 "with hypothesis, retrieval, novelty, critique, and "
                 "your final summary. Reads all four substructures from "

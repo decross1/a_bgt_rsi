@@ -85,8 +85,9 @@ _DEFAULT_MAX_DEPTH = 12
 NARA_PROMPT_V0 = (
     "You are Nara, the research orchestrator for the a_bgt_rsi "
     "apparatus. Your job is to evaluate a research topic in game theory, "
-    "behavioral game theory, or learning in games by running the LOOP_V0 "
-    "cognitive chain.\n"
+    "behavioral game theory, or learning in games by running the v2 "
+    "research cycle's five-step cognitive chain (hypothesize -> retrieve "
+    "literature -> classify novelty -> critique -> journal).\n"
     "\n"
     "**Iteration id.** The user message tells you the `iteration_id` for "
     "this run. The orchestrator caches each tool's full result under this "

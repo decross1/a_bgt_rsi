@@ -1,5 +1,7 @@
 # Independent-skeptic ladder (D-041)
 
+> **Historical routing note (2026-09-23).** The `vllm-qwen` / `:8001` backend this doc names stopped 2026-09-19; Flash is the resident model now (`docs/FLASH_RESIDENT.md`). The independent-skeptic design intent (a genuinely different judge, non-default max_tokens) remains relevant even with one shared checkpoint; the specific backend routing below is a rollback-era detail.
+
 Status: steps 1–2 shipped 2026-06-09 (`orchestrator/novelty_skeptic.py`,
 `attack()`); step 3 is DESIGN ONLY this session.
 

@@ -6,7 +6,7 @@ unchanged Python apparatus that stays HOST-side behind a thin tool API. The
 repo / no /mnt), so "exec our workers in the sandbox" is impossible; β is a
 real port, host-tool-plane FIRST. THIS module is that piece: a read-only tool
 `get_apparatus_state` (snapshot) PLUS the first write/compute tool
-`run_loop_iteration` (triggers a HOST-side LOOP_V0 iteration on host GPU),
+`run_loop_iteration` (triggers a HOST-side v2 research-cycle iteration on host GPU),
 served over plain HTTP so a sandboxed OpenClaw agent can drive the apparatus
 through the NemoClaw gateway.
 
@@ -32,7 +32,7 @@ resolves inside the sandbox (the built-in `local-inference` preset uses it for
 the host vLLM at :8000). So bind on 0.0.0.0 and add a `policy-add` egress rule for
 `host.openshell.internal:8077` (agent/nemoclaw_nara/host_tool_plane_egress.yaml);
 the sandbox then reaches this at http://host.openshell.internal:8077. Verified
-end-to-end — see docs/nemoclaw_smoke_runbook.md.
+end-to-end — see archive/docs-2026-09/nemoclaw_smoke_runbook.md.
 
 Run (host side, real apparatus):
     env -u MOCK_LLM .venv-chroma/bin/python -m orchestrator.tool_plane --port 8077
@@ -65,10 +65,10 @@ TOOL_DESCRIPTION = (
     "mutates nothing."
 )
 
-# The first compute/write tool: trigger one HOST-side LOOP_V0 iteration.
+# The first compute/write tool: trigger one HOST-side v2 research-cycle iteration.
 RUN_TOOL_NAME = "run_loop_iteration"
 RUN_TOOL_DESCRIPTION = (
-    "Trigger ONE LOOP_V0 research iteration on the host (hypothesize -> "
+    "Trigger ONE v2 research-cycle iteration on the host (hypothesize -> "
     "retrieve_literature -> novelty_classify -> critic_loop_v0 -> "
     "journal_writer) for the given topic, returning the iteration's id, "
     "novelty class, critic verdict, low-confidence flag, and journal path. "
@@ -83,7 +83,7 @@ RUN_TOOL_DESCRIPTION = (
 # server-side boundary; the seam itself lives in orchestrator/submitted_run.py.
 SUBMIT_TOOL_NAME = "submit_loop_iteration"
 SUBMIT_TOOL_DESCRIPTION = (
-    "Submit ONE LOOP_V0 research iteration to run host-side and return "
+    "Submit ONE v2 research-cycle iteration to run host-side and return "
     "IMMEDIATELY with a run_id ticket (the iteration itself takes ~1-3 "
     "minutes of host GPU compute). Same boundary as run_loop_iteration: "
     "server-side topic validation and one iteration at a time — a busy "
@@ -244,7 +244,7 @@ def create_app(
     def call_run_loop_iteration(
         body: dict[str, Any] = Body(default={}),
     ) -> dict[str, Any]:
-        """Trigger ONE host-side LOOP_V0 iteration. SERVER-SIDE GATED.
+        """Trigger ONE host-side v2 research-cycle iteration. SERVER-SIDE GATED.
 
         This is the first tool a sandboxed (untrusted) agent can use to spend
         host GPU compute, so the boundary lives HERE, not in the sandbox:

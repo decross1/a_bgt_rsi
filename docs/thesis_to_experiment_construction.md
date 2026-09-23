@@ -1,5 +1,7 @@
 # Thesis → classical-game experiment → semi-synthetic promotion
 
+> **Historical routing note (2026-09-23).** Part 2's `:8001` Qwen-skeptic diagnosis describes the stopped Gemma/Qwen pair (rollback only since 2026-09-19); Flash is the resident model now (`docs/FLASH_RESIDENT.md`). The thesis-construction methodology in Part 1 is unaffected.
+
 Status: DESIGN + DIAGNOSIS (read-only limb L5). No spine edits; no code
 written. Part 1 is a construction spec naming concrete build points; Part 2
 is a read-only diagnosis of the Qwen independent-skeptic gate with the exact

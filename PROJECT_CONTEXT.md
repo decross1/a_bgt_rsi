@@ -1,5 +1,14 @@
 # Project Context — a_bgt_rsi
 
+> **Historical.** This document's runtime claims describe the original
+> Gemma-4-on-`:8000` deployment and are dated. The current deployed model is
+> the Flash resident (`docs/FLASH_RESIDENT.md`); the current actors are
+> Oracle, Nara, and the meta-oracle (`ARCHITECTURE.md` §2.1); the active plan
+> is [`LOOP_V2.md`](LOOP_V2.md), not `LOOP_V1.md`. The intellectual frame and
+> program background below remain accurate; only the dated
+> runtime/deployment specifics are historical. See
+> [`ARCHITECTURE.md`](ARCHITECTURE.md) for current state.
+
 > **What this document is.** The long-form background and rationale
 > for the `a_bgt_rsi` repository. A new session should read
 > [`START_HERE.md`](START_HERE.md) first for orientation, then
@@ -7,7 +16,8 @@
 > for the project's intellectual frame (the WHY), then this file for
 > background, then [`ARCHITECTURE.md`](ARCHITECTURE.md) for technical
 > detail, then [`DECISIONS.md`](DECISIONS.md) for rationale, and
-> [`LOOP_V1.md`](LOOP_V1.md) for the active build slice. The technical
+> [`LOOP_V2.md`](LOOP_V2.md) for the active build slice (`LOOP_V1.md` is a
+> historical build record). The technical
 > companion document (`research_apparatus_technical_plan_v1.md`) is
 > still pending commit under `docs/sources/`.
 >
@@ -334,7 +344,7 @@ Selected:
 |---|---|
 | The technical architecture | [`ARCHITECTURE.md`](ARCHITECTURE.md) + `docs/diagrams/` |
 | Why a decision was made | [`DECISIONS.md`](DECISIONS.md) |
-| What to execute today | [`LOOP_V1.md`](LOOP_V1.md) + most recent [`human/sessions/`](human/sessions/) note |
+| What to execute today | [`LOOP_V2.md`](LOOP_V2.md) + most recent [`human/sessions/`](human/sessions/) note (`LOOP_V1.md` is a historical build record) |
 | The intellectual program behind the apparatus | [`docs/sources/research_program_v2.md`](docs/sources/research_program_v2.md) |
 | The technical companion | `docs/sources/research_apparatus_technical_plan_v1.md` (pending) |
 | Retired track/tier framework (reference only) | [`archive/`](archive/) |

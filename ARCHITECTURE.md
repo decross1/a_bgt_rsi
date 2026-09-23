@@ -1,7 +1,10 @@
 # Architecture
 
 This document describes the deployed `a_bgt_rsi` apparatus as observed on
-2026-09-14 and the implemented v2 foundation and remaining design work. It is an orientation and
+2026-09-23 (the Flash resident cutover of 2026-09-19 and the Oracle/Nara/
+meta-oracle actor model of D-082/D-084..D-087 superseded the 2026-09-14
+Gemma/Qwen snapshot) and the implemented v2 foundation and remaining design
+work. It is an orientation and
 integration reference. Exact launchers, current code, validated receipts, and
 live read-only checks remain the evidence for a particular running process.
 
@@ -36,9 +39,13 @@ The system is designed around five invariants:
 
 ## 2. Deployed topology
 
-This is the incumbent deployment. The owner removed any requirement for two
-concurrently resident models on 2026-09-15. A single-primary topology and
-sequential or on-demand critics are eligible alternatives under the
+The deployed model is one resident local checkpoint, **Flash**
+(`nvidia/Qwen3.8-Flash-Next-NVFP4` on SGLang, `127.0.0.1:30080`, since
+2026-09-19). The prior Gemma/Qwen vLLM pair (`:8000`/`:8001`) stopped that day
+and is a rollback path only — see §3.1a. The owner removed any requirement for
+two concurrently resident models on 2026-09-15; Flash is the single-primary
+topology that requirement anticipated. See
+[the Flash resident record](docs/FLASH_RESIDENT.md) and the
 [model topology policy](docs/MODEL_TOPOLOGY_POLICY.md).
 
 ```mermaid
@@ -51,12 +58,16 @@ flowchart TB
     ND[Nara user daemon] --> CO[Bounded coordinator]
     CR[Hourly cron backstop] --> CO
     CO --> IT[Research iteration]
-    IT --> G[Gemma :8000]
-    IT --> Q[Qwen3.8 :8001]
+    IT --> FL[Flash resident :30080]
     IT --> KB[ChromaDB + literature]
     IT --> EL[Append-only research ledgers]
     EL --> PR[Deterministic projections]
     PR --> API
+
+    OR[Oracle] -->|plans + develops| MB[Lab mailbox]
+    MB <--> ND
+    MO[Meta-oracle] -->|reviews plans/branches| MB
+    MO -->|merges accepted work| EL
 
     W[Sunday weekly upgrade controller] --> FA[OpenAI + Claude subscription falsifiers]
     W -->|manual / explicit allowlist| EV[Bounded local evaluation]
@@ -64,21 +75,39 @@ flowchart TB
     WR --> PR
 
     API -. explicit bounded actions .-> CO
-    H -->|L5 verdict / runtime authority| EL
+    H -->|live-trading gate / runtime authority| EL
 ```
 
-### 2.1 Service inventory
+### 2.1 Actors
+
+- **Oracle** (running on Flash) plans the day and develops architecture, UI,
+  contracts, and its own system.
+- **Nara** runs research continuously (`nara-daemon` plus an hourly cron
+  backstop; no daily cap, D-085) and builds lab tools through the lane
+  (`orchestrator/nara_lane.py`, a bwrap sandbox, `nara/<id>` branches).
+- **The meta-oracle** (Claude Opus 5.5; `tools/meta_oracle_run.sh`) reviews
+  every plan, plan item, and branch, and merges accepted work.
+- **Codex sessions** hold standing repository-management authority for their
+  assigned scope; see checkout-local `AGENTS.md` (not yet committed in this
+  branch's base; see `README.md`'s documentation map for its status).
+- The owner's only required gate is live trading (D-084). Coordination runs
+  through the lab mailbox (`run_state/oracle_nara_mailbox.jsonl`,
+  [docs/ORACLE_NARA_MAILBOX.md](docs/ORACLE_NARA_MAILBOX.md)); the Nara-lane
+  review gate is `config/nara_lane.json`; the daily loop is
+  [docs/META_ORACLE_DAILY_LOOP.md](docs/META_ORACLE_DAILY_LOOP.md). See
+  DECISIONS.md D-082 and D-084 through D-087.
+
+### 2.2 Service inventory
 
 | Service | Current endpoint or owner | Role |
 | --- | --- | --- |
-| Gemma vLLM | `localhost:8000` | Local generator and PI path |
-| Qwen vLLM | `localhost:8001` | Independent skeptic, reasoning, and builder path |
+| Flash resident | `127.0.0.1:30080`, `flash-resident.service` | Local generator, critic, and builder path (single resident model) |
 | Nara daemon | `systemd --user`, `nara-daemon.service` | Event-driven bounded scheduler |
 | Coordinator cron | `0 * * * *` | Gated belt-and-braces cycle using the daemon's lock |
 | UI backend | `localhost:8700` | Read models and explicit action seams |
 | UI frontend | `localhost:5173` | Local operator and research workspace |
-| Telemetry sampler | `ui/.venv` process | Host/GPU/vLLM observations |
-| Model watchdog | every five minutes | Restarts existing production model containers only |
+| Telemetry sampler | `ui/.venv` process | Host/GPU/Flash observations |
+| Model watchdog | every five minutes | Restarts the existing production model service only (refuses pair startup while Flash owns the GPU) |
 | arXiv ingestion | daily at 03:00 UTC | Literature ingestion |
 | Chroma snapshot | Sunday at 04:30 UTC | Vector-store backup |
 | Weekly upgrade | Sunday at 05:30 UTC | Review-only frontier analysis and, only when allowlisted, bounded trials |
@@ -103,11 +132,38 @@ number is not evidence of improvement.
 
 ### 3.1 Resident model manifest
 
-The canonical launcher is [`cron/serve-models.sh`](cron/serve-models.sh).
-The table transcribes its executable flags. The served identities and context
-limits were checked against both live `/v1/models` endpoints on 2026-09-14;
-backend and MTP claims come from the launcher and require boot-log evidence
-when an operator validates a fresh start.
+The deployed resident is Flash. The canonical control surface is
+`flash-resident.service`; `.venv-chroma/bin/python -m orchestrator.flash_resident
+check-ready` performs read-only admission (supervisor boot/PID/heartbeat, exact
+served model, available host memory). Full detail, boot/recovery history, and
+the frozen bundle location are in [docs/FLASH_RESIDENT.md](docs/FLASH_RESIDENT.md).
+
+| Setting | Flash |
+| --- | --- |
+| OpenAI-compatible URL | `http://127.0.0.1:30080/v1` |
+| Exact request model | `nvidia/Qwen3.8-Flash-Next-NVFP4` |
+| Checkpoint revision | `fc694b54fb0174e0913e6adf86691ef85a4ead47` |
+| Runtime | SGLang image `sha256:2ee545cf877ae8497c123637e061b6e6313c624e30018f975969b1d554e27f56` |
+| Capacity | 262,144 total tokens (since 2026-09-22; helper v8); runtime currently admits 32,768/262,144 per call; one running request |
+| Precision | NVFP4 weights, FP32 recurrent state, BF16 KV |
+| Speculation | Native NEXTN, 3 steps / 4 draft tokens |
+| Resource limits | 112 GiB container cgroup (CPU-side charges only), zero container swap, 10 GiB host reserve (helper v8; was 20 GiB) |
+
+This is a host-specific deployment (a reviewed, hash-verified local bundle),
+not a portable installer. Historical benchmark notes that name Gemma, Qwen on
+`:8000`/`:8001`, a 32,768-token cap, or the 20 GiB reserve as the current
+production state are stale; see §3.1a for that configuration as a rollback
+record.
+
+#### 3.1a Rollback: the Gemma/Qwen pair (stopped 2026-09-19)
+
+The prior two-model deployment is retained only as a rollback path; it is not
+running. Restoring it requires stopping Flash, removing the Flash deployment
+selection, restoring the old client routes, then starting the retained
+containers (docs/FLASH_RESIDENT.md).
+
+The canonical launcher was [`cron/serve-models.sh`](cron/serve-models.sh).
+The table transcribes its executable flags as last validated (2026-09-14).
 
 | Setting | Gemma | Qwen |
 | --- | --- | --- |
@@ -122,11 +178,10 @@ when an operator validates a fresh start.
 | Reasoning parser | none | `qwen3` |
 | Concurrency control | batched-token cap 8,192 | max sequences 2 |
 
-Gemma's startup log must confirm the MARLIN NVFP4 MoE backend. Validation and
-restoration of this incumbent configuration check both services and its memory
-margin; future topologies need not keep two models resident. Historical benchmark
-notes that name a different Qwen version, memory fraction, or context are stale
-when they disagree with the launcher and a live endpoint.
+Gemma's startup log had to confirm the MARLIN NVFP4 MoE backend. The version
+pins in `CLAUDE.md` inviolate rule 2 (vLLM image, CUDA 13.0, weights path)
+apply to this rollback configuration; the production pin for the running
+system is the Flash checkpoint revision plus the SGLang image digest above.
 
 ### 3.2 Inference policy
 
@@ -303,8 +358,10 @@ baseline, not a trend.
   10 GiB since 2026-09-21 (see `docs/MODEL_TOPOLOGY_POLICY.md`).
 - `ui/scripts/ui-services.sh ensure` starts only missing UI services. Its
   `start` command deliberately stops and restarts all UI processes.
-- The watchdog starts only existing `vllm-gemma4` and `vllm-qwen` containers;
-  it does not create or reconfigure them.
+- The watchdog restarts only the existing production model service
+  (`flash-resident.service`); it does not create or reconfigure it, and it
+  refuses to start the retired `vllm-gemma4`/`vllm-qwen` pair while any owned
+  Flash container is running.
 - Runtime changes require targeted health checks, source/receipt identity,
   relevant tests, and a rollback. Repository authority alone does not authorize
   a service restart or model cutover.

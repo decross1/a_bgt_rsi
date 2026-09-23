@@ -1,10 +1,21 @@
 # The self-improvement loop — operator manual (D-066)
 
+> **Model topology note (2026-09-23).** This manual predates the Flash
+> resident cutover (2026-09-19) and the Oracle / Nara-lane build path
+> (D-082) — see [`docs/FLASH_RESIDENT.md`](FLASH_RESIDENT.md) and
+> `DECISIONS.md` D-082. Where this doc says "Gemma" or "local Qwen", read
+> "the resident local model (Flash)" — one shared checkpoint now serves the
+> generator/proposer and builder roles named below. The Nara lane
+> (`orchestrator/nara_lane.py`) is the current default path for Nara's own
+> code changes; this D-066 packet flow remains a separate, still-wired
+> mechanism for the narrower Tier-P self-improvement case it was built for.
+
 The lab plans its own next fix. Telemetry the apparatus already emits becomes
-a Gemma proposal; two opposed frontier falsifiers debate it; what survives is
-emitted as a **red-first task packet**; the packet is dispatched to a builder
-(local Qwen by default) inside an isolated worktree; the **dispatcher** — never
-the builder — decides whether it is done; and the **primary session** merges.
+a proposal from the local model; two opposed frontier falsifiers debate it;
+what survives is emitted as a **red-first task packet**; the packet is
+dispatched to a builder (the local model by default) inside an isolated
+worktree; the **dispatcher** — never the builder — decides whether it is
+done; and the **primary session** merges.
 
 Nothing in this chain merges, pushes, or touches the spine. Every stage is
 runnable by hand, and the whole loop is off by default.

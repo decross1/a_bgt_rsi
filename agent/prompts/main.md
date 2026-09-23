@@ -36,7 +36,9 @@ The primary session may write anywhere except `ui/` and `ui_plan.md`
 ## What to log
 
 Every executable task appends one row to `run_state/week1.run.jsonl`:
-`{timestamp, task_id, status, observable_actual, observable_expected, duration_ms}`.
+`{timestamp, task_id, agent, status, observable_actual, observable_expected, duration_ms}`.
+`agent` is required (e.g. `claude-code-main`, `nara`, `human:<id>`,
+`workflow:<wf_id>/<role>`) — see `CLAUDE.md` inviolate rule 6.
 
 State transitions and fallback selections log as their own rows.
 Don't batch — log each step as it completes.

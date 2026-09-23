@@ -6,7 +6,7 @@ returned the live snapshot, 2026-06-09). This bundle upgrades Nara from the
 read-only slice to a **runnable research agent**: it assesses the apparatus,
 forms one research thesis, runs it via one bounded host iteration, and reports
 the verdict. Installing + driving it in the live sandbox is **human/integrator**
-work — see [`../../docs/nemoclaw_agent_run_runbook.md`](../../docs/nemoclaw_agent_run_runbook.md).
+work — see [`../../archive/docs-2026-09/nemoclaw_agent_run_runbook.md`](../../archive/docs-2026-09/nemoclaw_agent_run_runbook.md).
 
 ## Why this exists (the β re-frame)
 

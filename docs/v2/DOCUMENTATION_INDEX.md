@@ -22,7 +22,19 @@ file date does not make every statement in it a production fact.
 | [`../../README.md`](../../README.md) | Current entry point | Project purpose, deployed snapshot, UI and repository map |
 | [`../../START_HERE.md`](../../START_HERE.md) | Current entry point | Reading order, truth hierarchy, current session checklist |
 | [`OPERATOR_GUIDE.md`](OPERATOR_GUIDE.md) | Current entry point | Health, UI interpretation, pause, recovery, weekly review and rollback |
-| [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md) | Current entry point | Dated deployed architecture and explicitly labeled v2 target |
+| [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md) | Current entry point | Dated deployed architecture, actors, and explicitly labeled v2 target |
+| [`../FLASH_RESIDENT.md`](../FLASH_RESIDENT.md) | Current entry point | The deployed resident model, its recovery procedures, and rollback path |
+| [`../MODEL_TOPOLOGY_POLICY.md`](../MODEL_TOPOLOGY_POLICY.md) | Active contract | Single-primary topology amendment; when a fixed-role/concurrent-residency claim can and cannot veto |
+
+## Actor coordination
+
+| Document | Status | Use |
+| --- | --- | --- |
+| [`../ORACLE_NARA_MAILBOX.md`](../ORACLE_NARA_MAILBOX.md) | Active contract | The lab mailbox (`run_state/oracle_nara_mailbox.jsonl`), its review scope, and the Nara-lane pause file |
+| [`../ORACLE_NARA_BUILDOUT_PLAN.md`](../ORACLE_NARA_BUILDOUT_PLAN.md) | Preparation/history | Buildout plan for the Oracle/Nara mailbox and lane |
+| [`../META_ORACLE_DAILY_LOOP.md`](../META_ORACLE_DAILY_LOOP.md) | Active contract | The daily loop the meta-oracle runs: plan review, branch review, merge |
+| [`ALIGNMENT_AND_GOALS.md`](ALIGNMENT_AND_GOALS.md) | Active contract | Goals G0–G7 for the v2 research program |
+| [`THESIS_BRIEF_2026-09-23.md`](THESIS_BRIEF_2026-09-23.md) | Current plan | D-086 research direction and refinement protocol; the active thesis brief |
 
 ## Active contracts and decisions
 
@@ -31,8 +43,10 @@ file date does not make every statement in it a production fact.
 | checkout-local `AGENTS.md` | Active contract | Codex repository-maintenance authority and boundaries |
 | [`../../CLAUDE.md`](../../CLAUDE.md) | Active contract | Claude runtime/scientific operating constraints and session rules |
 | [`../../DECISIONS.md`](../../DECISIONS.md) | Active contract | Accepted rationale; a later decision supersedes the earlier decision it names |
-| [`../../cron/serve-models.sh`](../../cron/serve-models.sh) | Active executable contract | Production model container configuration |
+| [`../../systemd/flash-resident.service`](../../systemd/flash-resident.service) | Active executable contract | Installed Flash resident service shape; the production model container configuration |
+| [`../../cron/serve-models.sh`](../../cron/serve-models.sh) | Rollback executable contract | Gemma/Qwen pair container configuration; stopped 2026-09-19, used only for a deliberate rollback |
 | [`../../systemd/nara-daemon.service`](../../systemd/nara-daemon.service) | Active executable contract | Installed Nara service shape; verify the installed user unit before acting |
+| [`../../systemd/nara-lane.service`](../../systemd/nara-lane.service), `nara-lane.path`, `nara-lane.timer` | Active executable contract | Installed Nara-lane build service shape |
 | [`../../schema/`](../../schema/) | Active data contracts | Versioned schemas for covered public records |
 
 An active contract governs only its stated subject. Git maintenance authority
@@ -95,7 +109,7 @@ requirements are satisfied.
 | [`../weekly_upgrade_loop_handoff.md`](../weekly_upgrade_loop_handoff.md) | Historical implementation input | Original weekly-loop proposal; current behavior comes from code, receipts and the v2 operator guide |
 | [`../../PROJECT_CONTEXT.md`](../../PROJECT_CONTEXT.md) | Historical | Original program and hardware context |
 | [`../../docs/diagrams/`](../diagrams/) | Historical conceptual specification | May 2026 v5 architecture/intelligence-loop snapshot |
-| [`../../GLOSSARY.md`](../../GLOSSARY.md) | Historical/partial | Older terminology; verify terms against current code and front doors |
+| [`../../GLOSSARY.md`](../../GLOSSARY.md) | Current entry point + historical | "Current terms" section is live (Flash, Oracle, Nara, lane, mailbox, meta-oracle, campaign, focus, L0–L5, T/S/A); "Archived terms" section is retired Track A/B/C/D/tier terminology |
 | [`../../archive/`](../../archive/) | Historical | Retired implementations and prior governance artifacts |
 
 The front-door files before the v2 documentation rewrite are available at Git

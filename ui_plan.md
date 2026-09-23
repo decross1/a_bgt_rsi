@@ -407,7 +407,7 @@ Hygiene note (same closure): the planned `.gitignore` additions
 no edit was needed.
 
 The live reactive session that follows this build runs from
-[`docs/live_session_runbook.md`](docs/live_session_runbook.md).
+[`archive/docs-2026-09/live_session_runbook.md`](archive/docs-2026-09/live_session_runbook.md).
 
 ---
 
@@ -824,7 +824,7 @@ skipped, or coerced.
 ## §2026-06-19 — the /todo cockpit S2 reframe + two page wins
 
 Work order: `human/sessions/2026-06-19.md` "## UI session work order"; authoritative
-per-page spec `docs/ui_reframe_plan.md` (§1 cockpit, §2 Dashboard, §4 Coordinator — the
+per-page spec `archive/docs-2026-09/ui_reframe_plan.md` (§1 cockpit, §2 Dashboard, §4 Coordinator — the
 S2 slice; §3 Activity + §5 Experiments are S3, deferred + gated on primary producers).
 The human ruled **flag-2** (calibratedId → per-id `Set`), now in-scope. Built by this UI
 session via **four Dynamic Workflows** (Understand 6 readers → Build 7 → Reconcile 4 →

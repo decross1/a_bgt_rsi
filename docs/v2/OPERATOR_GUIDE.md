@@ -252,6 +252,26 @@ touch /home/decross1/projects/a_bgt_rsi/run_state/pause_weekly_upgrade
 The human removes either pause file when resuming. A pause refusal exits cleanly
 and is the designed state.
 
+### Nara lane
+
+The Nara lane (`orchestrator/nara_lane.py`, `nara-lane.service` /
+`nara-lane.path` / `nara-lane.timer`) runs Nara's own code changes inside a
+bwrap sandbox and lands them on `nara/<id>` branches for review; the review
+gate is `config/nara_lane.json`.
+
+```bash
+touch /home/decross1/projects/a_bgt_rsi/run_state/pause_nara_lane
+```
+
+pauses the lane while leaving the research coordinator (`pause_coordinator`)
+unaffected. Only the human removes it to resume:
+
+```bash
+rm /home/decross1/projects/a_bgt_rsi/run_state/pause_nara_lane
+```
+
+See [`docs/ORACLE_NARA_MAILBOX.md`](../ORACLE_NARA_MAILBOX.md).
+
 ### Hard-stop Nara
 
 Use a hard stop when the process itself must be absent:
@@ -320,10 +340,39 @@ process working directory after the operation.
 
 ## 6. Model service recovery
 
+The deployed resident is Flash (`flash-resident.service`); the prior
+Gemma/Qwen pair is stopped and is a rollback path only (§6.2).
+
+### 6.1 Flash resident recovery
+
+```bash
+systemctl --user status flash-resident.service --no-pager
+journalctl --user -u flash-resident.service -n 100 --no-pager
+.venv-chroma/bin/python -m orchestrator.flash_resident check-ready
+curl -fsS http://127.0.0.1:30080/v1/models
+```
+
+`check-ready` performs read-only admission (supervisor boot/PID/heartbeat,
+exact served model, available host memory) and is the supported check — do
+not substitute the old pair-specific health check. The supervisor takes the
+shared lab locks only while changing services, stopping Nara during the
+transition and resuming it after readiness; both Nara and cron check actual
+Flash readiness on every pass. Preserve the 10 GiB host reserve (helper v8) —
+do not lower it to make a model fit. Full recovery detail, including the
+NVIDIA CDI boot-ordering fix and the swap-limit repair, is in
+[`docs/FLASH_RESIDENT.md`](../FLASH_RESIDENT.md).
+
+An owner-selected rollback requires stopping Flash first, removing the Flash
+deployment selection and restoring the old client routes, then starting the
+retained pair containers per §6.2. The watchdog refuses pair startup while
+any owned Flash container remains running.
+
+### 6.2 Rollback: the Gemma/Qwen pair (stopped 2026-09-19)
+
 The watchdog checks every five minutes and runs `docker start` only for the
-existing `vllm-gemma4` and `vllm-qwen` containers. It does not re-create or
-change them. An A/B container named `vllm-qwen-ab` deliberately makes the
-watchdog stand down.
+existing `vllm-gemma4` and `vllm-qwen` containers when the pair is the active
+selection. It does not re-create or change them. An A/B container named
+`vllm-qwen-ab` deliberately makes the watchdog stand down.
 
 Inspect before acting:
 
@@ -335,8 +384,8 @@ docker logs --tail 100 vllm-qwen
 
 Starting an existing stopped container is different from running
 `cron/serve-models.sh`: the launcher removes and recreates containers from the
-current production configuration. Use the launcher only for an authorized
-configuration adoption or recovery that requires recreation, then verify:
+prior production configuration. Use the launcher only for an authorized
+rollback that requires recreation, then verify:
 
 - exact `/v1/models` IDs;
 - Gemma's MARLIN backend log;

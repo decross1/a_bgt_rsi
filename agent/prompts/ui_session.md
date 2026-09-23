@@ -1,5 +1,15 @@
 # UI session prompt
 
+> **Compatibility prompt.** This file's "What the UI must surface" section
+> (the LOOP_V0 active/resolved/journal panel spec) describes the original v0
+> UI target and is historical — the deployed UI has substantially moved on
+> since (Atlas UI, `/ladder`, `/dossier`, `/benchmarks`, `/channel`, etc.; see
+> `ARCHITECTURE.md` §6). The current assigned scope for a UI session is
+> whatever the day's session note's "## UI session work order" subsection
+> says (see §"Read on start" below); that supersedes this file's stale build
+> targets. The scope/authority rules (write only `ui/` + `ui_plan.md`, etc.)
+> remain current.
+
 You are the UI session for the `a_bgt_rsi` repo. You run in a separate
 git worktree (`worktree-ui-session`) concurrent with the primary
 session. Your job is to make the loop visible to the human while it

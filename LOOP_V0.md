@@ -1,12 +1,20 @@
 # LOOP_V0 — literature-only loop slice
 
-> **Status: chain wired end-to-end; reference-passing refactor pending
+> **Historical.** This is the completed v0 build record; the active plan is
+> [`LOOP_V2.md`](LOOP_V2.md). The engine this file describes is now the
+> production v2 research cycle's chain (the code identifiers `loop_v0`,
+> `LOOP_V0_CALLS_LOG`, `orchestrator/nara.py`, etc. are unchanged — see
+> `ARCHITECTURE.md` §2.1, §4). The Gemma/Qwen deployment this file assumes
+> stopped 2026-09-19; the current resident is Flash — see
+> `docs/FLASH_RESIDENT.md`.
+
+> **Status (as of 2026-06-18, historical): chain wired end-to-end; reference-passing refactor pending
 > before reliable runs.** Replaces the retired `plan.yaml` (archived
 > under [`archive/plan/`](archive/plan/)). Reflects the 2026-05-26
 > direction change (see [`DECISIONS.md`](DECISIONS.md) D-030); Path-B
 > sub-agent migration in progress (D-034).
 
-## Current state (2026-06-18)
+## Current state (2026-06-18) — historical snapshot
 
 State spans four workstreams; this file's later sections carry the
 lit-pipe detail.
@@ -18,7 +26,7 @@ lit-pipe detail.
   the adversarial promotion vote — demoted to non-gating advisories,
   env-gated dark; pre-registered cargo experiment to fill the empty
   `/todo` cockpit — see
-  [`docs/overgating_promotion_analysis.md`](docs/overgating_promotion_analysis.md))
+  `docs/overgating_promotion_analysis.md`)
   have landed. **The reference-passing refactor SHIPPED (`39ba954`) and is
   verified live** — 3 real iterations on 2026-06-19
   (`iter-2026-06-19-001/002/003`) ran complete 5-step chains with no
@@ -26,7 +34,7 @@ lit-pipe detail.
   owner reading journals 076/077/078). Loops 1 (falsification) + 2
   (rediscovery) demonstrated; 019-003 is a novel surviving Loop-3 seed. The
   4-session roadmap to the full loop + applied tier:
-  [`docs/roadmap_full_loop.md`](docs/roadmap_full_loop.md).
+  [`archive/docs-2026-09/roadmap_full_loop.md`](archive/docs-2026-09/roadmap_full_loop.md).
 - **UI.** The 2026-06-10 observability overhaul shipped; the 2026-06-14
   dashboard reframe + `/todo` cockpit (stubbed) merged. **2026-06-17/18 (pushed,
   `b8ca85f`): the verdict-fenced tutor is live** — orchestrator tutor engine +

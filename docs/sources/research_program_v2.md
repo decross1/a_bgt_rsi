@@ -39,7 +39,11 @@ The loop's value is strongest when findings generalize across tiers, and its fai
 | 4 — Meta-scientific synthesis | Months 19–36 | The meta-claim about independent AI-augmented research firms up from accumulated evidence; main paper or thesis-equivalent artifact |
 | 5 — Extension | Months 37–60 | Depending on where Phase 4 lands — either a second research program using the same apparatus, or deepening into whatever the loop surfaced as most promising |
 
-The active build slice is governed by a separate, focused plan — see [`LOOP_V1.md`](../../LOOP_V1.md). This arc is the long-term orientation, not a daily ladder.
+The active build slice is governed by a separate, focused plan — see
+[`LOOP_V2.md`](../../LOOP_V2.md) and
+[`docs/v2/ALIGNMENT_AND_GOALS.md`](../v2/ALIGNMENT_AND_GOALS.md) (goals
+G0–G7). `LOOP_V1.md` is a historical build record. This arc is the long-term
+orientation, not a daily ladder.
 
 ## Foundational Literature
 

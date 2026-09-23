@@ -196,7 +196,7 @@ useful positioning evidence, but it is not an exhaustive priority claim.
 ## Decisions and next evidence
 
 The actionable consequences are drafted, not ratified, in
-`docs/decisions_draft_2026-09.md`:
+`archive/docs-2026-09/decisions_draft_2026-09.md`:
 
 - DRAFT-D-078: native claim-evidence integrity audit before L4;
 - DRAFT-D-079: temporal-holdout benchmark for agenda/topic judgment;
