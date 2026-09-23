@@ -114,6 +114,7 @@ generate ──> screen (novelty, literature) ──> select focus ──> T (th
   verifiers, UI). Nara generates hypotheses, writes and runs experiments on local
   weights, and records dispositions. The meta-oracle reviews every stage transition
   and every design, and never authors hypotheses or findings (D-061).
+- **Refinement (D-086):** a failed or surprising result is recorded unchanged, explained in an anomaly note, and may spawn a new, separately preregistered branch; a killed parent with a promising branch hands its place to the branch.
 - **Regeneration:** after a kill, Nara proposes 3–5 successor hypotheses from the
   retained negative knowledge plus recent literature. Each has a named mechanism, a
   T-stage falsifier and a candidate market. Oracle screens them and selects one. The
@@ -132,7 +133,9 @@ Nara builds or runs) and a done-when check.
 | G0.3 | Close the payoff-assistance line: final `THESIS_DISPOSITION` (closed for low expected value, reopening conditions) written on local weights | N | Focus `killed` by receipt; research cycles resume |
 | G0.4 | The daemon stops counting a gated queue as work; the coordinator's `dry_run=True` log line is fixed (`coordinator.py:2078`) | O | No empty 30-minute cycles; log matches the run mode |
 | **G1** | **Regenerate** | | |
-| G1.1 | Successor generation per §5 (3–5 hypotheses with mechanism, T-falsifier, candidate market) from negative knowledge and literature | N (tool) + O (wiring) | One successor set produced and screened; one focus selected by G0.2 |
+| G1.1 | Successor generation per `docs/v2/THESIS_BRIEF_2026-09-23.md` (D-086: information and beliefs; 3–5 candidates on local weights, each with mechanism, T/S/A design, falsifier and anomaly map) | N (candidates) + O (screen) | One candidate set produced, screened by Oracle, reviewed, and one focus selected by the owner through G0.2 |
+| G1.2 | Literature scouting linked to the thesis (D-086): every ingested paper stays embedded; while a focus is active each new paper gets a relevance score for it, and related papers are linked as related work, prior art or evidence; unrelated one-off hypotheses stop being the default cycle output | O (wiring) + N (scoring tool) | A related paper appears on the thesis within a day of ingestion; unrelated papers are only stored |
+| G1.3 | Refinement protocol (D-086): anomaly notes and preregistered branch hypotheses linked to their parent; the meta-oracle checks for HARKing | O | An anomaly note and a branch can be recorded and shown with their parent |
 | **G2** | **Stage T: theory runner** | | |
 | G2.1 | Generic OpenSpiel experiment runner: preregistered design, seed policy, decision rule, retained results; a generic verifier registered for admission | O (admission and verifier) + N (runner) | A toy game study runs end to end and is admitted |
 | G2.2 | Hand Nara a registered study to run: mailbox `run_study` kind or a `nara_run` lane bound to a `study_manifests` entry, and a daemon "due study" signal | O | A registered study runs without a human command |

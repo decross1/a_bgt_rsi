@@ -4040,3 +4040,35 @@ campaign registry's 512-receipt limit (without a daily limit this fills in days,
 successor campaign becomes a regular need, not a rare one). Spend is still written to
 `run_state/coordinator_budget.jsonl`. Frontier calls are unaffected: the frontier
 screen runs only on finding promotion. The weekly frontier budget (D-061) is unchanged.
+
+## D-086 — Research direction: information and beliefs; learn from anomalies; scouting always on (owner direction, 2026-09-23)
+
+**Authority.** Derrick, in the primary Claude session's research planning session on 2026-09-23, verbatim:
+
+> let's stick to information and beliefs - i am interested in behavioral
+> economics (khaneman), quantum theory and how it relates to information
+> dissemintion (david duetch) and also agents in games like counter swapping or
+> being a one trick or cheesy strategies, civ6. But I also want to think about not
+> just falisying the hypothesis, but also consider, okay if something failed or
+> behavied differently, well what does this relate to or can we expand on this, or
+> did we get a novel insight that let's us refine the campaign/hypothesis.
+
+> I want the literature scouting to always happen, as this should be an ever
+> growing repository of knowledge. You could imagine we are building or trying to
+> validate some research, and a new paper comes out that is related or helps
+> progress the research, we want to have an understanding of that. If it doesn't
+> relate store it/embed it as it should be part of future research work as well.
+
+Selection answers in the same session: the owner sets the direction and Nara
+proposes 3–5 candidates; each thesis names its own market.
+
+**Decision.** (1) The next thesis comes from the area of information and
+beliefs, using the lenses in `docs/v2/THESIS_BRIEF_2026-09-23.md`. (2) Refinement
+protocol: an unexpected or failed result is recorded unchanged, explained in an
+anomaly note, and may spawn a new, separately preregistered branch hypothesis;
+confirmatory data is never reused for the branch that it suggested. This extends
+D-084 Decision 3 ("pursue until killed"). (3) Literature scouting runs
+permanently: every paper is embedded and stored, and while a thesis is active each
+paper is scored for relevance and linked to it when related (goal G1.2).
+Unrelated single-paper hypotheses stop being the default cycle output once G1.2
+lands.
