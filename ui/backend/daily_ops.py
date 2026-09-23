@@ -61,8 +61,10 @@ _INTENTS = {"question", "change_request", "reply", "receipt"}
 _REQUEST_INTENTS = {"question", "change_request"}
 _MESSAGE_STATUSES = {"queued", "delivered", "acknowledged", "failed"}
 _PRIVATE_PATHS = {"/api/daily-ops/messages", "/api/daily-ops/decisions"}
-_DECISION_ACTIONS = {"modify", "skip", "reprioritize"}
-_DECISION_TARGETS = {"agenda", "work_card"}
+_DECISION_ACTIONS = {"modify", "skip", "reprioritize", "approve", "decline", "defer", "reply"}
+_DECISION_TARGETS = {"agenda", "work_card", "question"}
+_QUESTION_ACTIONS = {"approve", "decline", "defer", "reply"}
+_PLAN_ACTIONS = {"modify", "skip", "reprioritize", "approve", "decline", "defer"}
 
 
 def _unique_object(pairs):
@@ -354,8 +356,12 @@ def _decision_payload(payload: object) -> dict:
         or (priority is not None and priority not in {"now", "next", "later"})
     ):
         raise HTTPException(status_code=422, detail="owner decision is invalid")
-    if action == "modify" and note is None:
-        raise HTTPException(status_code=422, detail="modify requires a note")
+    if target == "question" and action not in _QUESTION_ACTIONS:
+        raise HTTPException(status_code=422, detail="a question accepts only approve, decline, defer or reply")
+    if target != "question" and action not in _PLAN_ACTIONS:
+        raise HTTPException(status_code=422, detail="a plan target does not accept reply")
+    if action in ("modify", "reply") and note is None:
+        raise HTTPException(status_code=422, detail=f"{action} requires a note")
     if action == "reprioritize":
         if target != "work_card" or priority is None:
             raise HTTPException(

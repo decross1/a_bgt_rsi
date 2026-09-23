@@ -41,7 +41,7 @@ def _summary():
             "closed_at": NOW, "reason": "Closed for opportunity cost.", "closure_sha256": "b" * 64}},
         "work_items": [{
             "id": "d1", "goal": "G7.1", "owner": "oracle", "lane": "oracle_dev", "repo": "a_bgt_rsi",
-            "title": "Lane precheck", "why_today": "Retro finding.", "acceptance": "Tests pass.",
+            "title": "Lane precheck", "summary": None, "why_today": "Retro finding.", "acceptance": "Tests pass.",
             "depends_on": [], "status": "merged", "detail": "Merge oracle/2026-09-20-d1",
             "evidence_msg_id": None, "evidence_sha": "2cbe6dbe8a39", "evidence_at": NOW,
         }],
@@ -522,7 +522,8 @@ def test_message_and_decision_write_capabilities_are_independent(tmp_path):
 
 
 @pytest.mark.parametrize("mutation", [
-    lambda value: value.update(action="approve"),
+    lambda value: value.update(action="execute"),  # not a recognized decision action
+    lambda value: value.update(action="reply"),  # reply is question-only, not a plan action
     lambda value: value.pop("expected_plan_revision"),
     lambda value: value.update(target_kind="nara"),
     lambda value: value.update(action="modify", note=None),

@@ -1,0 +1,215 @@
+"""LabMailboxRouter: owner decision buttons write ONE row to the lab mailbox.
+
+Covers the D-084 owner-ui authority write path: authorize() reuses the same
+Origin allowlist + bearer token contract as DailyOpsBridge, and route_decision
+writes exactly one row via the real orchestrator.oracle_mailbox.post, never a
+second, and only when authorized.
+"""
+import json
+from pathlib import Path
+
+import pytest
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
+from starlette.requests import Request
+
+from backend import daily_ops_live as live
+from backend.app import create_app
+from backend.daily_ops_bridge import LabMailboxRouter
+
+live._orchestrator()  # puts the checkout's orchestrator on sys.path
+from orchestrator import oracle_mailbox  # noqa: E402
+
+REVISION = "2026-09-23"
+
+
+def _private(path: Path):
+    path.mkdir(parents=True, mode=0o700)
+    path.chmod(0o700)
+    return path
+
+
+def _install_plan(root: Path):
+    plans = _private(root / "run_state" / "daily_plans") if not (root / "run_state" / "daily_plans").exists() \
+        else root / "run_state" / "daily_plans"
+    plans.mkdir(parents=True, exist_ok=True)
+    plan = {
+        "date": REVISION, "week_alignment": "G0 first.",
+        "bottlenecks": [],
+        "items": [
+            {"id": "d1", "owner": "oracle", "lane": "oracle_dev", "goal": "G7.1",
+             "repo": "a_bgt_rsi", "title": "Lane precheck gate", "why_today": "x",
+             "allowed_write_paths": ["orchestrator/nara_lane.py"], "acceptance": "Tests pass.",
+             "depends_on": [], "flash_minutes": 10},
+            {"id": "d2", "owner": "nara", "lane": "nara_dev", "goal": "G7.1",
+             "repo": "a_bgt_rsi", "title": "Lab state packet", "why_today": "x",
+             "allowed_write_paths": ["tools/lab_state_packet.py"], "acceptance": "Tests pass.",
+             "depends_on": [], "flash_minutes": 10},
+        ],
+    }
+    (plans / f"{REVISION}.json").write_text(json.dumps(plan))
+    return plan
+
+
+@pytest.fixture()
+def repo(tmp_path):
+    _install_plan(tmp_path)
+    return tmp_path
+
+
+@pytest.fixture()
+def config(tmp_path):
+    private = _private(tmp_path / "private")
+    (private / "owner.key").write_text("k" * 48 + "\n", encoding="ascii")
+    (private / "owner.key").chmod(0o600)
+    return {"private_root": str(private), "allowed_origins": ["http://10.0.0.73:5173"]}
+
+
+def _request(*, token="k" * 48, origin="http://10.0.0.73:5173"):
+    headers = []
+    if token is not None:
+        headers.append((b"authorization", f"Bearer {token}".encode()))
+    if origin is not None:
+        headers.append((b"origin", origin.encode()))
+    return Request({"type": "http", "method": "POST", "path": "/api/daily-ops/decisions",
+                    "headers": headers, "query_string": b"", "server": ("test", 80),
+                    "client": ("10.0.0.4", 4000), "scheme": "http"})
+
+
+def test_authorized_decision_writes_exactly_one_correctly_shaped_row(repo, config):
+    router = LabMailboxRouter(config, repo_root=repo)
+    assert router.authorize(_request()) is True
+    receipt = router.route_decision({
+        "request_id": "11111111-1111-1111-1111-111111111111",
+        "target_kind": "work_card", "target_id": "d1", "action": "approve",
+        "expected_plan_revision": REVISION, "note": "Go ahead.",
+    })
+    assert receipt["status"] == "queued"
+    assert receipt["duplicate"] is False
+    assert receipt["execution_available"] is False
+
+    rows = oracle_mailbox.read(repo / "run_state" / "oracle_nara_mailbox.jsonl")
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["actor"] == "human:derrick"
+    assert row["kind"] == "note"
+    assert row["to"] == "oracle"  # d1's lane is oracle_dev
+    assert row["body"]["decision"] == "approve"
+    assert row["body"]["target"] == {"plan": REVISION, "item": "d1"}
+    assert row["body"]["text"] == "Go ahead."
+    assert row["body"]["via"] == "owner-ui"
+    assert row["body"]["authority"] == "owner, D-084"
+    assert row["body"]["title"] == f"OWNER DECISION: approve {REVISION}:d1"
+
+
+def test_nara_dev_item_routes_to_nara(repo, config):
+    router = LabMailboxRouter(config, repo_root=repo)
+    router.route_decision({
+        "request_id": "22222222-2222-2222-2222-222222222222",
+        "target_kind": "work_card", "target_id": "d2", "action": "decline",
+        "expected_plan_revision": REVISION, "note": "",
+    })
+    rows = oracle_mailbox.read(repo / "run_state" / "oracle_nara_mailbox.jsonl")
+    assert rows[-1]["to"] == "nara"
+
+
+def test_reply_to_a_question_posts_an_answer_in_reply_to_it(repo, config):
+    mailbox = repo / "run_state" / "oracle_nara_mailbox.jsonl"
+    question = oracle_mailbox.post("oracle", "question", {"title": "What next?"}, to="owner", path=mailbox)
+    router = LabMailboxRouter(config, repo_root=repo)
+    receipt = router.route_decision({
+        "request_id": "33333333-3333-3333-3333-333333333333",
+        "target_kind": "question", "target_id": question["msg_id"], "action": "reply",
+        "expected_plan_revision": REVISION, "note": "Do the safe thing.",
+    })
+    assert receipt["target_kind"] == "question"
+    rows = oracle_mailbox.read(mailbox)
+    answer = rows[-1]
+    assert answer["kind"] == "answer"
+    assert answer["actor"] == "human:derrick"
+    assert answer["to"] == "oracle"
+    assert answer["in_reply_to"] == question["msg_id"]
+    assert answer["body"]["text"] == "Do the safe thing."
+
+
+def test_approve_on_a_question_posts_a_note_not_an_answer(repo, config):
+    mailbox = repo / "run_state" / "oracle_nara_mailbox.jsonl"
+    question = oracle_mailbox.post("oracle", "question", {"title": "Proceed?"}, to="owner", path=mailbox)
+    router = LabMailboxRouter(config, repo_root=repo)
+    router.route_decision({
+        "request_id": "44444444-4444-4444-4444-444444444444",
+        "target_kind": "question", "target_id": question["msg_id"], "action": "approve",
+        "expected_plan_revision": REVISION, "note": "",
+    })
+    rows = oracle_mailbox.read(mailbox)
+    note = rows[-1]
+    assert note["kind"] == "note"
+    assert note["body"]["decision"] == "approve"
+    assert note["body"]["target"] == {"msg_id": question["msg_id"]}
+
+
+def test_unauthorized_or_wrong_origin_never_writes(repo, config):
+    router = LabMailboxRouter(config, repo_root=repo)
+    assert router.authorize(_request(token="wrong" * 10)) is False
+    assert router.authorize(_request(origin="http://evil.example")) is False
+    mailbox = repo / "run_state" / "oracle_nara_mailbox.jsonl"
+    assert not mailbox.exists()
+
+
+def test_unknown_decision_target_or_action_is_rejected(repo, config):
+    router = LabMailboxRouter(config, repo_root=repo)
+    with pytest.raises(HTTPException):
+        router.route_decision({
+            "request_id": "55555555-5555-5555-5555-555555555555",
+            "target_kind": "work_card", "target_id": "does-not-exist", "action": "approve",
+            "expected_plan_revision": REVISION, "note": "",
+        })
+    assert not (repo / "run_state" / "oracle_nara_mailbox.jsonl").exists()
+
+
+def test_over_long_text_is_rejected_before_it_reaches_the_router():
+    from backend.daily_ops import _decision_payload
+    with pytest.raises(HTTPException):
+        _decision_payload({
+            "request_id": "66666666-6666-6666-6666-666666666666",
+            "target_kind": "work_card", "target_id": "d1", "action": "modify",
+            "expected_plan_revision": REVISION, "note": "x" * 3001,
+        })
+
+
+def test_end_to_end_via_the_http_decision_route(repo, config, monkeypatch):
+    router = LabMailboxRouter(config, repo_root=repo)
+    app = create_app(
+        loop_v0_repo=repo, loop_v0_run_state=repo / "run_state", loop_v0_journal=repo / "journal",
+        loop_v0_memory=repo / "memory" / "loop_memory.jsonl",
+        coordinator_run_state=repo / "run_state", coordinator_memory=repo / "memory",
+        daily_ops_authorizer=router.authorize, daily_ops_router=None,
+        daily_ops_decision_router=router.route_decision,
+        daily_ops_live_summary=lambda: {
+            "schema_version": "daily-ops-summary/v3", "generated_at": "2026-09-23T00:00:00Z",
+            "current_plan_revision": None, "daily_plan": None,
+            "research_focus": {"status": "none", "observed_at": "2026-09-23T00:00:00Z"},
+            "work_items": [], "waiting_on_you": [], "accomplishments": [], "improvements": [],
+            "agents": {}, "warnings": [], "sources": {"plan": None, "mailbox": None, "focus": None, "git": None},
+        },
+    )
+    client = TestClient(app)
+    response = client.post("/api/daily-ops/decisions", json={
+        "request_id": "77777777-7777-7777-7777-777777777777",
+        "target_kind": "work_card", "target_id": "d1", "action": "defer",
+        "expected_plan_revision": REVISION, "note": "Not this week.",
+    }, headers={"Authorization": "Bearer " + "k" * 48, "Origin": "http://10.0.0.73:5173"})
+    assert response.status_code == 200, response.text
+    rows = oracle_mailbox.read(repo / "run_state" / "oracle_nara_mailbox.jsonl")
+    assert len(rows) == 1
+    assert rows[0]["body"]["decision"] == "defer"
+
+    # No Authorization header -> unauthorized, and nothing new is written.
+    response = client.post("/api/daily-ops/decisions", json={
+        "request_id": "88888888-8888-8888-8888-888888888888",
+        "target_kind": "work_card", "target_id": "d2", "action": "approve",
+        "expected_plan_revision": REVISION,
+    }, headers={"Origin": "http://10.0.0.73:5173"})
+    assert response.status_code == 403
+    rows = oracle_mailbox.read(repo / "run_state" / "oracle_nara_mailbox.jsonl")
+    assert len(rows) == 1

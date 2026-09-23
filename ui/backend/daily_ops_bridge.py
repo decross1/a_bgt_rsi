@@ -11,7 +11,9 @@ import hmac
 import json
 import logging
 import os
+import re
 import stat
+import sys
 import threading
 import time
 import uuid
@@ -30,6 +32,8 @@ from .daily_ops import (
 )
 from .daily_ops_agents import list_processes, observe as observe_agents, observe_nara_service
 from .daily_ops_live import build as build_live, current_plan
+
+CODE_ROOT = Path(__file__).resolve().parents[2]
 
 CANONICAL_INSTANCE = "canonical_oracle"
 BOUNDED_INSTANCE = "bounded_ui_responder"
@@ -155,6 +159,26 @@ def _json_bytes(value: object) -> bytes:
     return (json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode()
 
 
+def _bearer_authorize(request: Request, origins: frozenset, token: str) -> bool:
+    """Origin allowlist + exact bearer token. Shared by every owner-write seam."""
+    origin = request.headers.get("origin")
+    if origin is not None and origin not in origins:
+        return False
+    supplied = request.headers.get("authorization", "")
+    return hmac.compare_digest(supplied.encode(), ("Bearer " + token).encode())
+
+
+def _owner_token(private_root: Path) -> str:
+    path = private_root / "owner.key"
+    st = path.lstat()
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or st.st_mode & 0o077:
+        raise ValueError("owner credential must be a private regular file")
+    token = _read_regular(path, 256).decode("ascii").strip()
+    if len(token) < 32 or any(c.isspace() for c in token):
+        raise ValueError("owner credential is invalid")
+    return token
+
+
 class DailyOpsBridge:
     def __init__(self, state_dir: Path, config: dict, *, repo_root: Path | None = None,
                  process_lister=None, pi_sessions: Path | None = None):
@@ -263,21 +287,10 @@ class DailyOpsBridge:
         return _recipient_binding(value)
 
     def _token(self) -> str:
-        path = self.private / "owner.key"
-        st = path.lstat()
-        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or st.st_mode & 0o077:
-            raise ValueError("owner credential must be a private regular file")
-        token = _read_regular(path, 256).decode("ascii").strip()
-        if len(token) < 32 or any(c.isspace() for c in token):
-            raise ValueError("owner credential is invalid")
-        return token
+        return _owner_token(self.private)
 
     def authorize(self, request: Request) -> bool:
-        origin = request.headers.get("origin")
-        if origin is not None and origin not in self.origins:
-            return False
-        supplied = request.headers.get("authorization", "")
-        return hmac.compare_digest(supplied.encode(), ("Bearer " + self._token()).encode())
+        return _bearer_authorize(request, self.origins, self._token())
 
     @contextmanager
     def _locked(self):
@@ -869,4 +882,121 @@ def configured_bridge(state_dir: Path, config_path: str | None, *,
     except (OSError, ValueError, KeyError, TypeError):
         # A broken optional relay must disable messaging, not the entire lab UI.
         logging.getLogger(__name__).error("Daily Oracle relay configuration unavailable; owner messaging disabled")
+        return None
+
+
+_QUESTION_ACTIONS = {"approve", "decline", "defer", "reply"}
+_PLAN_ACTIONS = {"modify", "skip", "reprioritize", "approve", "decline", "defer"}
+
+
+class LabMailboxRouter:
+    """Owner decisions -> ONE row in the lab Oracle<->Nara mailbox (D-084 owner-ui authority).
+
+    The owner authorizer here is the same Origin allowlist + bearer token
+    contract as ``DailyOpsBridge.authorize`` (``_bearer_authorize``/`_owner_token`,
+    reading the same private ``owner.key``). It does not touch the (dead) Pi
+    relay's admission/envelope machinery; it writes directly to
+    ``run_state/oracle_nara_mailbox.jsonl`` via ``orchestrator.oracle_mailbox.post``.
+    """
+
+    def __init__(self, config: dict, *, repo_root: Path):
+        required = {"allowed_origins", "private_root"}
+        optional = {"owner_actor", "mailbox_root", "planner_latest", "session_id"}
+        if not required.issubset(config) or not set(config).issubset(required | optional):
+            raise ValueError("invalid lab owner relay configuration")
+        origins = config["allowed_origins"]
+        if not isinstance(origins, list) or not origins or not all(
+            isinstance(v, str) and v.startswith(("http://", "https://")) and "*" not in v
+            for v in origins
+        ):
+            raise ValueError("explicit UI origins are required")
+        self.origins = frozenset(origins)
+        self.private = Path(config["private_root"])
+        if not self.private.is_absolute():
+            raise ValueError("private root must be absolute")
+        _private_directory(self.private)
+        self.owner_actor = config.get("owner_actor", "human:derrick")
+        if not re.fullmatch(r"human:[a-z0-9_.-]{1,40}", self.owner_actor):
+            raise ValueError("owner_actor must be a human:<id> actor")
+        self.repo_root = Path(repo_root)
+        self._token()  # invalid/missing credentials fail closed at configuration
+
+    def _token(self) -> str:
+        return _owner_token(self.private)
+
+    def authorize(self, request: Request) -> bool:
+        return _bearer_authorize(request, self.origins, self._token())
+
+    def _mailbox_module(self):
+        root = str(CODE_ROOT)
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        from orchestrator import oracle_mailbox
+        return oracle_mailbox
+
+    def route_decision(self, payload: dict) -> dict:
+        oracle_mailbox = self._mailbox_module()
+        mailbox_path = self.repo_root / "run_state" / "oracle_nara_mailbox.jsonl"
+        target_kind, target_id, action = payload["target_kind"], payload["target_id"], payload["action"]
+        note = payload.get("note") or ""
+        if target_kind == "question":
+            if action not in _QUESTION_ACTIONS:
+                raise HTTPException(422, "action is not valid for a question")
+            rows = oracle_mailbox.read(mailbox_path)
+            question = next((r for r in rows if r.get("msg_id") == target_id and r.get("kind") == "question"), None)
+            if question is None:
+                raise HTTPException(409, "owner decision target question is no longer present")
+            to = str(question.get("actor", "oracle")).split(":")[0]
+            if to not in {"oracle", "nara", "claude", "codex"}:
+                to = "oracle"
+            if action == "reply":
+                row = oracle_mailbox.post(self.owner_actor, "answer", {"text": note or "(no text)"},
+                                          to=to, in_reply_to=question["msg_id"], path=mailbox_path)
+            else:
+                body = {
+                    "title": f"OWNER DECISION: {action} {payload['expected_plan_revision']}:{target_id}",
+                    "decision": action, "target": {"msg_id": target_id}, "text": note,
+                    "via": "owner-ui", "authority": "owner, D-084",
+                }
+                row = oracle_mailbox.post(self.owner_actor, "note", body, to=to,
+                                          in_reply_to=question["msg_id"], path=mailbox_path)
+        else:
+            if action not in _PLAN_ACTIONS:
+                raise HTTPException(422, "action is not valid for a plan target")
+            current = current_plan(self.repo_root)
+            if current is None or payload["expected_plan_revision"] != current[0]:
+                raise HTTPException(409, "plan revision changed; refresh before requesting changes")
+            plan_id, plan = current
+            item = None
+            if target_kind == "agenda":
+                valid = target_id == plan_id
+            else:
+                item = next((i for i in plan["items"] if i["id"] == target_id), None)
+                valid = item is not None
+            if not valid:
+                raise HTTPException(409, "owner decision target or action is no longer current")
+            to = "nara" if item is not None and item.get("lane") == "nara_dev" else "oracle"
+            body = {
+                "title": f"OWNER DECISION: {action} {payload['expected_plan_revision']}:{target_id}",
+                "decision": action, "target": {"plan": payload["expected_plan_revision"], "item": target_id},
+                "text": note, "via": "owner-ui", "authority": "owner, D-084",
+            }
+            row = oracle_mailbox.post(self.owner_actor, "note", body, to=to, path=mailbox_path)
+        return {
+            "request_id": payload["request_id"], "status": "queued",
+            "accepted_at": _iso(datetime.fromisoformat(row["ts"])),
+            "duplicate": False, "target_kind": target_kind, "target_id": target_id, "action": action,
+            "expected_plan_revision": payload["expected_plan_revision"], "execution_available": False,
+        }
+
+
+def configured_lab_mailbox_router(config_path: str | None, *, repo_root: Path) -> LabMailboxRouter | None:
+    """The lab-mailbox owner-decision router: same ORACLE_DAILY_OPS_CONFIG file, same owner.key."""
+    if not config_path:
+        return None
+    try:
+        return LabMailboxRouter(_read(Path(config_path), 16_384), repo_root=repo_root)
+    except (OSError, ValueError, KeyError, TypeError):
+        logging.getLogger(__name__).error(
+            "Lab mailbox owner-decision router configuration unavailable; decisions disabled")
         return None

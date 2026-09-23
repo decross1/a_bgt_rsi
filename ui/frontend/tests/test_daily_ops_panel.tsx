@@ -39,7 +39,7 @@ type Loose = Record<string, any>;
 function item(id: string, lane: string, status: string, extra: Loose = {}): Loose {
   return {
     id, goal: "G7.1", owner: lane.startsWith("nara") ? "nara" : lane === "owner_decision" ? "owner" : "oracle",
-    lane, repo: "a_bgt_rsi", title: `Item ${id} title`, why_today: `Why ${id}.`, acceptance: `Accept ${id}.`,
+    lane, repo: "a_bgt_rsi", title: `Item ${id} title`, summary: null, why_today: `Why ${id}.`, acceptance: `Accept ${id}.`,
     depends_on: [], status, detail: `Detail for ${id}.`, evidence_msg_id: null, evidence_sha: null,
     evidence_at: null, ...extra,
   };
@@ -174,7 +174,8 @@ describe("DailyOpsPanel", () => {
     expect(screen.getByText("5 items")).toBeInTheDocument();
     expect(screen.queryByText(/cards shown/)).toBeNull();
     const d1 = screen.getByTestId("daily-work-card-d1");
-    expect(d1).toHaveTextContent("d1 · G7.1 · oracle dev");
+    expect(d1).toHaveTextContent("G7.1 · Oracle");
+    expect(d1).toHaveTextContent("Item d1 title");
     expect(d1).toHaveTextContent("merged");
     expect(d1).toHaveTextContent("sha 2cbe6dbe8a39");
     expect(screen.getByTestId("daily-work-card-d2")).toHaveTextContent("held");
@@ -182,20 +183,56 @@ describe("DailyOpsPanel", () => {
     expect(screen.getByTestId("daily-work-card-d3")).toHaveTextContent("awaiting review");
     expect(screen.getByTestId("daily-work-card-d4")).toHaveTextContent("not started");
     expect(screen.getByTestId("daily-work-card-d5")).toHaveTextContent("waiting on you");
-    const why = within(screen.getByTestId("daily-work-card-d2")).getByText("Why today, acceptance, dependencies");
+    const why = within(screen.getByTestId("daily-work-card-d2")).getByText("Details");
     fireEvent.click(why);
     expect(screen.getByTestId("daily-work-card-d2")).toHaveTextContent("Accept d2.");
     expect(screen.getByTestId("daily-work-card-d2")).toHaveTextContent("Depends ond1");
   });
 
-  it("lists what is waiting on the owner with the mailbox command to answer", () => {
+  it("lists what is waiting on the owner as plain questions with decision buttons, no commands", () => {
     show();
     const waiting = screen.getByTestId("daily-waiting-on-you");
     expect(within(waiting).getByRole("heading", { name: "Waiting on you" })).toBeInTheDocument();
-    expect(screen.getByTestId(`daily-waiting-${PLAN}:d5`)).toHaveTextContent("plan decision");
-    expect(screen.getByTestId(`daily-waiting-${PLAN}:d5`)).toHaveTextContent(
-      "--kind answer --to claude --in-reply-to claude-81a020b8a67564fb");
-    expect(screen.getByTestId("daily-waiting-claude-18ae939243e70e7d")).toHaveTextContent("Two authority rulings");
+    const planDecision = screen.getByTestId(`daily-waiting-${PLAN}:d5`);
+    expect(planDecision).toHaveTextContent("plan decision");
+    expect(planDecision).not.toHaveTextContent("--kind answer");
+    expect(planDecision).not.toHaveTextContent(".venv-chroma/bin/python");
+    expect(within(planDecision).getByRole("button", { name: "Approve" })).toBeInTheDocument();
+    expect(within(planDecision).getByRole("button", { name: "Decline" })).toBeInTheDocument();
+    expect(within(planDecision).getByRole("button", { name: "Defer" })).toBeInTheDocument();
+    expect(within(planDecision).getByRole("button", { name: "Reply…" })).toBeInTheDocument();
+    const question = screen.getByTestId("daily-waiting-claude-18ae939243e70e7d");
+    expect(question).toHaveTextContent("Two authority rulings");
+    expect(question).not.toHaveTextContent("answer claude-18ae939243e70e7d");
+    expect(within(question).getByRole("button", { name: "Approve" })).toBeInTheDocument();
+  });
+
+  it("sends an owner decision on a waiting item and shows it was sent", async () => {
+    sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
+    show();
+    const planDecision = screen.getByTestId(`daily-waiting-${PLAN}:d5`);
+    fireEvent.click(within(planDecision).getByRole("button", { name: "Approve" }));
+    const editor = screen.getByTestId("daily-decision-editor");
+    fireEvent.click(within(editor).getByRole("button", { name: "Send approval" }));
+    await waitFor(() => expect(D.postDecision).toHaveBeenCalledWith(expect.objectContaining({
+      accessKey: "owner-secret", targetKind: "work_card", targetId: "d5", action: "approve",
+      expectedPlanRevision: PLAN,
+    })));
+    expect(await within(editor).findByText(/Sent to Oracle|Request queued/)).toBeInTheDocument();
+  });
+
+  it("requires a note before it will send a reply to a question", async () => {
+    sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
+    show();
+    const question = screen.getByTestId("daily-waiting-claude-18ae939243e70e7d");
+    fireEvent.click(within(question).getByRole("button", { name: "Reply…" }));
+    const editor = screen.getByTestId("daily-decision-editor");
+    expect(within(editor).getByRole("button", { name: "Send reply" })).toBeDisabled();
+    fireEvent.change(within(editor).getByLabelText("Your reply"), { target: { value: "Proceed carefully." } });
+    fireEvent.click(within(editor).getByRole("button", { name: "Send reply" }));
+    await waitFor(() => expect(D.postDecision).toHaveBeenCalledWith(expect.objectContaining({
+      targetKind: "question", targetId: "claude-18ae939243e70e7d", action: "reply", note: "Proceed carefully.",
+    })));
   });
 
   it("gives an accurate one-line reason when change requests are unavailable", () => {
@@ -205,7 +242,7 @@ describe("DailyOpsPanel", () => {
       pi_client: { ...base.agents.pi_client, relay } } });
     show();
     expect(screen.getByTestId("daily-decisions-readonly")).toHaveTextContent(
-      "Change requests are unavailable: the Oracle Pi relay is offline (Mailbox is unavailable or stale).");
+      "Change requests are unavailable: Oracle looks offline right now.");
     expect(within(screen.getByTestId("daily-work-card-d2")).getByRole("button", { name: "Ask to modify" })).toBeDisabled();
     expect(screen.getByTestId("daily-ops-relay")).toHaveTextContent("Owner relay: offline — Mailbox is unavailable or stale.");
 
@@ -227,7 +264,7 @@ describe("DailyOpsPanel", () => {
       targetKind: "work_card", targetId: "d2", action: "modify", expectedPlanRevision: PLAN,
       note: "Wait for d1.",
     }));
-    expect(await within(editor).findByText(/Request queued/)).toHaveTextContent("No execution is implied");
+    expect(await within(editor).findByText(/Sent to Oracle/)).toHaveTextContent("No execution is implied");
   });
 
   it("does not apply a late request result to a different card editor", async () => {
@@ -247,7 +284,7 @@ describe("DailyOpsPanel", () => {
         expected_plan_revision: PLAN, execution_available: false });
       await Promise.resolve();
     });
-    expect(within(editor).queryByText(/Request queued/)).toBeNull();
+    expect(within(editor).queryByText(/Sent to Oracle/)).toBeNull();
     expect(within(editor).getByRole("button", { name: "Queue skip request" })).toBeEnabled();
   });
 
@@ -326,7 +363,7 @@ describe("DailyOpsPanel", () => {
 
     expect(screen.getByTestId("daily-ops-agent-oracle-now")).toHaveTextContent("Now: daily-loop phase work for 2026-09-20");
     expect(screen.getByTestId("daily-ops-agent-pi-now")).toHaveTextContent("Now: idle since Sep 20, 06:00 AM UTC (2 h ago)");
-    expect(screen.getByTestId("daily-ops-agent-nara-now")).toHaveTextContent("Now: lane: building Lab state packet");
+    expect(screen.getByTestId("daily-ops-agent-nara-now")).toHaveTextContent("Now: lane");
     expect(screen.getByTestId("daily-ops-agent-meta-now")).toHaveTextContent(
       "Now: idle since Sep 20, 07:41 AM UTC (19 min ago) · last meta-oracle mode code for 2026-09-20 ended completed");
     const oracle = screen.getByTestId("daily-ops-agent-oracle");
@@ -530,7 +567,8 @@ describe("DailyOpsPanel", () => {
     expect(setupDetail).not.toHaveAttribute("open");
     fireEvent.click(setupSummary);
     expect(setupDetail).toHaveAttribute("open");
-    expect(screen.getByText("cat ~/.local/state/oracle-lab-ui/owner.key")).toBeInTheDocument();
+    expect(screen.getByText(/owner.key under this machine/)).toBeInTheDocument();
+    expect(screen.queryByText(/^cat /)).toBeNull();
   });
 
   it("keeps plan changes disabled when no revision can be bound", () => {

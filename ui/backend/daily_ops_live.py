@@ -359,6 +359,7 @@ def work_items(plan: dict, rows: list[dict], windows: dict, git: _Git, now: date
             "lane": _clip(lane, 40) or "—",
             "repo": _clip(item.get("repo"), 60) or "—",
             "title": _clip(item.get("title"), 300) or item["id"],
+            "summary": _clip(item.get("summary"), 90),
             "why_today": _clip(item.get("why_today"), 1200),
             "acceptance": _clip(item.get("acceptance"), 1200),
             "depends_on": [str(d)[:40] for d in item.get("depends_on", []) if isinstance(d, str)][:8]
@@ -635,11 +636,12 @@ def validate_live(value: dict, agents_ok) -> None:
                 and all(_text(focus["last_closure"][k], 1200, optional=True)
                         for k in ("focus_id", "title", "disposition", "reason", "closure_sha256"))))):
         raise ValueError("v3 research focus is invalid")
-    item_keys = {"id", "goal", "owner", "lane", "repo", "title", "why_today", "acceptance", "depends_on",
-                 "status", "detail", "evidence_msg_id", "evidence_sha", "evidence_at"}
+    item_keys = {"id", "goal", "owner", "lane", "repo", "title", "summary", "why_today", "acceptance",
+                 "depends_on", "status", "detail", "evidence_msg_id", "evidence_sha", "evidence_at"}
     if not _rows(value["work_items"], item_keys, MAX_WORK_ITEMS, lambda r: (
             r["status"] in WORK_STATUSES and all(_text(r[k], 300) for k in ("id", "goal", "owner", "lane",
                                                                              "repo", "title", "detail"))
+            and _text(r["summary"], 90, optional=True)
             and _text(r["why_today"], 1200, optional=True) and _text(r["acceptance"], 1200, optional=True)
             and isinstance(r["depends_on"], list) and all(_text(d, 40) for d in r["depends_on"])
             and _text(r["evidence_msg_id"], 80, optional=True) and _text(r["evidence_sha"], 40, optional=True)

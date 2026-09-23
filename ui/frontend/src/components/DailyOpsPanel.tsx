@@ -17,6 +17,7 @@ import DailyDecisionCards, {
   type DailyWorkCard,
   type WorkStatus,
 } from "./DailyDecisionCards";
+import { deriveSummary } from "./dailyOpsCopy";
 import { ResearchOpsCard } from "./ResearchOpsCard";
 
 const SUMMARY_KEY = "daily_ops_summary";
@@ -47,6 +48,7 @@ const nullableTime = (value: unknown): string | null | undefined =>
 type WorkItem = {
   id: string;
   title: string;
+  fullTitle: string | null;
   detail: string;
   status: string;
   tags: string[];
@@ -185,16 +187,17 @@ function workCards(value: unknown, actions: DailyOpsDecisionAction[]): DailyWork
     if (!record(item) || !bounded(item.id, 40) || !bounded(item.title, 300) || !bounded(item.goal, 300) ||
         !bounded(item.owner, 300) || !bounded(item.lane, 300) || !bounded(item.repo, 300) ||
         !bounded(item.detail, 400) || !WORK_STATUS.has(String(item.status))) return null;
+    const summary = nullableText(item.summary, 90);
     const whyToday = nullableText(item.why_today, 1200);
     const acceptance = nullableText(item.acceptance, 1200);
     const evidenceMsgId = nullableText(item.evidence_msg_id, 80);
     const evidenceSha = nullableText(item.evidence_sha, 40);
     const evidenceAt = nullableTime(item.evidence_at);
     const dependsOn = strings(item.depends_on, 8, 40);
-    if (whyToday === undefined || acceptance === undefined || evidenceMsgId === undefined ||
+    if (summary === undefined || whyToday === undefined || acceptance === undefined || evidenceMsgId === undefined ||
         evidenceSha === undefined || evidenceAt === undefined || dependsOn === null) return null;
     cards.push({ id: item.id, goal: item.goal, owner: item.owner, lane: item.lane, repo: item.repo,
-      title: item.title, whyToday, acceptance, dependsOn, status: item.status as WorkStatus,
+      title: item.title, summary, whyToday, acceptance, dependsOn, status: item.status as WorkStatus,
       detail: item.detail, evidenceMsgId, evidenceSha, evidenceAt, actions });
   }
   return cards;
@@ -208,8 +211,11 @@ function waiting(value: unknown): DailyWaitingItem[] {
     const askedAt = nullableTime(item.asked_at);
     const msgId = nullableText(item.msg_id, 80);
     if (askedAt === undefined || msgId === undefined) return [];
-    return [{ kind: item.kind as DailyWaitingItem["kind"], id: item.id, title: item.title,
-      askedBy: item.asked_by, askedAt, msgId, cli: item.cli }];
+    // owner_decision ids are "<plan revision>:<item id>"; the plan item's own id is what
+    // the decision route needs as target_id.
+    const itemId = item.kind === "owner_decision" ? item.id.split(":").slice(1).join(":") || item.id : item.id;
+    return [{ kind: item.kind as DailyWaitingItem["kind"], id: item.id, itemId, title: item.title,
+      askedBy: item.asked_by, askedAt, msgId }];
   });
 }
 
@@ -222,7 +228,8 @@ function accomplishments(value: unknown): WorkItem[] {
   return value.slice(0, 16).flatMap((item): WorkItem[] =>
     record(item) && bounded(item.id, 120) && ACCOMPLISHMENT_KIND.has(String(item.kind)) &&
     bounded(item.title, 400) && timestamp(item.at) && bounded(item.evidence, 120)
-      ? [{ id: item.id, title: item.title, detail: `Evidence: ${item.evidence}`,
+      ? [{ id: item.id, title: deriveSummary(item.title), fullTitle: item.title,
+        detail: `Evidence: ${item.evidence}`,
         status: ACCOMPLISHMENT_LABEL[String(item.kind)], tags: [], observedAt: item.at }]
       : []);
 }
@@ -232,8 +239,8 @@ function improvements(value: unknown): WorkItem[] {
   return value.slice(0, 40).flatMap((item): WorkItem[] => {
     const goals = record(item) ? strings(item.goals, 6, 12) : null;
     return record(item) && bounded(item.sha, 40) && timestamp(item.at) && bounded(item.subject, 240) && goals
-      ? [{ id: item.sha, title: item.subject, detail: `main ${item.sha}`, status: "merged", tags: goals,
-        observedAt: item.at }]
+      ? [{ id: item.sha, title: deriveSummary(item.subject), fullTitle: item.subject,
+        detail: `main ${item.sha}`, status: "merged", tags: goals, observedAt: item.at }]
       : [];
   });
 }
@@ -367,9 +374,11 @@ function ItemRows({ items }: { items: WorkItem[] }) {
       <div className="flex flex-wrap items-center gap-2"><span className="font-medium">{item.title}</span><Status value={item.status} />
         {item.tags.map(tag => <span key={tag} className="rounded bg-[var(--accent-muted)] px-1.5 py-0.5 font-mono text-[11px] font-semibold text-[var(--accent)]">{tag}</span>)}</div>
       <p className="mt-1 text-sm text-[var(--fg-muted)]">{preview(item.detail)}</p>
-      {item.detail.length > 280 && <details className="mt-1 text-xs text-[var(--fg-muted)]">
+      {(item.detail.length > 280 || (item.fullTitle && item.fullTitle !== item.title)) &&
+        <details className="mt-1 text-xs text-[var(--fg-muted)]">
         <summary className="cursor-pointer text-[var(--accent)]">Full recorded detail</summary>
-        <p className="mt-1 whitespace-pre-wrap">{item.detail}</p>
+        {item.fullTitle && item.fullTitle !== item.title && <p className="whitespace-pre-wrap">{item.fullTitle}</p>}
+        {item.detail.length > 280 && <p className="mt-1 whitespace-pre-wrap">{item.detail}</p>}
       </details>}
       <p className="mt-1 text-xs text-[var(--fg-muted)]">{timeLabel(item.observedAt)}</p>
     </li>)}</>;
@@ -404,10 +413,11 @@ const SINCE_LABEL: Record<string, string> = {
 
 /** One "Now" line: what the agent runs right now, or since when it has been quiet. */
 export function nowLine(state: { status: string; activity: string | null; since: string | null }): string {
-  if (["working", "active"].includes(state.status)) return state.activity ?? phrase(state.status);
+  const activity = state.activity ? deriveSummary(state.activity) : null;
+  if (["working", "active"].includes(state.status)) return activity ?? phrase(state.status);
   const quiet = state.since ? `${SINCE_LABEL[state.status] ?? "since"} ${timeLabel(state.since)} (${ago(state.since)})`
     : phrase(state.status);
-  return state.activity ? `${quiet} · ${state.activity}` : quiet;
+  return activity ? `${quiet} · ${activity}` : quiet;
 }
 
 /** Source age for a section; a quiet producer reads "idle since …", never as current. */
@@ -528,7 +538,7 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
     ? "Change requests are unavailable: no plan of record is readable."
     : summary.decisionWriteAvailable !== true
       ? "Change requests are unavailable: no authenticated Oracle relay is configured for this backend."
-      : `Change requests are unavailable: the Oracle Pi relay is ${relay ? phrase(relay.status) : "unobserved"}${relay ? ` (${relay.detail.replace(/\.$/, "")})` : ""}. Use the mailbox commands under Waiting on you.`;
+      : `Change requests are unavailable: ${responderLabel} looks ${relay ? phrase(relay.status) : "unobserved"} right now. They'll re-enable once ${responderLabel} is healthy again.`;
   const decisionCanRequest = decisionRouteAvailable && accessKey.length > 0;
   const decisionBlockedReason = !accessKey
     ? "Unlock owner access below before sending a request."
@@ -761,8 +771,7 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
         <p className="mt-1 text-xs text-[var(--fg-muted)]">The key is sent only in the Authorization header. It is not placed in the URL, timeline, or request text.</p>
         <details className="mt-2 text-xs text-[var(--fg-muted)]">
           <summary className="cursor-pointer text-[var(--accent)]">Where to get the local owner key</summary>
-          <p className="mt-1">On the Spark host, read the local credential:</p>
-          <code className="mt-1 inline-block rounded bg-[var(--surface-1)] px-2 py-1">cat ~/.local/state/oracle-lab-ui/owner.key</code>
+          <p className="mt-1">On the Spark host, the local credential file is at owner.key under this machine&apos;s oracle-lab-ui state directory.</p>
         </details>
       </div>}
 

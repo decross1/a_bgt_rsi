@@ -6,6 +6,7 @@ import {
   type DailyOpsDecisionReceipt,
   type DailyOpsDecisionTarget,
 } from "../api/dailyOps";
+import { cardHeadline, deriveSummary, ownerWord, statusSentence } from "./dailyOpsCopy";
 
 /** Live status of one plan item, derived from the lab mailbox and git (daily_ops_live.py). */
 export type WorkStatus =
@@ -20,6 +21,7 @@ export type DailyWorkCard = {
   lane: string;
   repo: string;
   title: string;
+  summary: string | null;
   whyToday: string | null;
   acceptance: string | null;
   dependsOn: string[];
@@ -34,11 +36,12 @@ export type DailyWorkCard = {
 export type DailyWaitingItem = {
   kind: "question" | "owner_decision";
   id: string;
+  /** For a plan item, the plan item's own id (without the "<plan>:" prefix). */
+  itemId: string;
   title: string;
   askedBy: string;
   askedAt: string | null;
   msgId: string | null;
-  cli: string;
 };
 
 export type DailyDecisionRequest = {
@@ -67,12 +70,20 @@ const actionLabel: Record<DailyOpsDecisionAction, string> = {
   modify: "Ask to modify",
   skip: "Ask to skip",
   reprioritize: "Ask to reprioritize",
+  approve: "Approve",
+  decline: "Decline",
+  defer: "Defer",
+  reply: "Reply…",
 };
 
 const submitLabel: Record<DailyOpsDecisionAction, string> = {
   modify: "Queue modification request",
   skip: "Queue skip request",
   reprioritize: "Queue priority request",
+  approve: "Send approval",
+  decline: "Send decline",
+  defer: "Send defer",
+  reply: "Send reply",
 };
 
 const phrase = (value: string) => value.replaceAll("_", " ");
@@ -120,35 +131,41 @@ function WorkCard({ card, requestAvailable, openEditor }: {
   requestAvailable: boolean;
   openEditor: (target: EditorTarget, trigger: HTMLButtonElement) => void;
 }) {
-  const evidence = [card.evidenceSha && `sha ${card.evidenceSha}`, card.evidenceMsgId].filter(Boolean).join(" · ");
+  const headline = cardHeadline(card.summary, card.title);
+  const mergedAt = card.status === "merged" ? card.evidenceAt : null;
   return <article data-testid={`daily-work-card-${card.id}`}
     className="rounded border border-[var(--border-1)] bg-[var(--surface-1)] p-3">
     <div className="flex flex-wrap items-start justify-between gap-2">
       <div className="min-w-0">
         <p className="text-xs font-semibold uppercase tracking-wide text-[var(--fg-muted)]">
-          {card.id} · {card.goal} · {phrase(card.lane)}</p>
-        <h4 className="mt-1 text-base font-semibold leading-snug">{card.title}</h4>
+          {card.goal} · {ownerWord(card.owner)}</p>
+        <h4 className="mt-1 text-base font-semibold leading-snug" data-testid={`daily-work-card-${card.id}-headline`}>
+          {headline}</h4>
       </div>
       <Badge value={card.status}>{statusLabel[card.status]}</Badge>
     </div>
-    <p className="mt-2 text-sm text-[var(--fg-muted)]" data-testid={`daily-work-card-${card.id}-status`}>{card.detail}</p>
-    {evidence && <p className="mt-1 font-mono text-xs text-[var(--fg-muted)]">
-      {evidence}{card.evidenceAt ? ` · ${timeLabel(card.evidenceAt)}` : ""}</p>}
+    <p className="mt-2 text-sm text-[var(--fg-muted)]" data-testid={`daily-work-card-${card.id}-status`}>
+      {statusSentence(card.status, mergedAt)}</p>
 
-    {(card.whyToday || card.acceptance || card.dependsOn.length > 0) && <details className="mt-3 text-xs text-[var(--fg-muted)]">
-      <summary className="cursor-pointer text-[var(--accent)]">Why today, acceptance, dependencies</summary>
+    <details className="mt-3 text-xs text-[var(--fg-muted)]">
+      <summary className="cursor-pointer text-[var(--accent)]">Details</summary>
       <dl className="mt-2 grid gap-2">
+        <div><dt className="font-semibold">Full title</dt><dd>{card.title}</dd></div>
         {card.whyToday && <div><dt className="font-semibold">Why today</dt><dd>{card.whyToday}</dd></div>}
         {card.acceptance && <div><dt className="font-semibold">Acceptance</dt><dd>{card.acceptance}</dd></div>}
-        <div><dt className="font-semibold">Owner · repo</dt><dd>{card.owner} · {card.repo}</dd></div>
+        <div><dt className="font-semibold">Item · lane · repo</dt><dd>{card.id} · {phrase(card.lane)} · {card.repo}</dd></div>
         <div><dt className="font-semibold">Depends on</dt><dd>{card.dependsOn.length ? card.dependsOn.join(", ") : "None"}</dd></div>
+        <div><dt className="font-semibold">Ledger status</dt><dd>{card.detail}</dd></div>
+        {(card.evidenceSha || card.evidenceMsgId) && <div><dt className="font-semibold">Evidence</dt>
+          <dd>{[card.evidenceSha && `sha ${card.evidenceSha}`, card.evidenceMsgId].filter(Boolean).join(" · ")}
+            {card.evidenceAt ? ` · ${timeLabel(card.evidenceAt)}` : ""}</dd></div>}
       </dl>
-    </details>}
+    </details>
 
-    {card.actions.length > 0 && <div className="mt-3 flex flex-wrap gap-2" aria-label={`Actions for ${card.title}`}>
+    {card.actions.length > 0 && <div className="mt-3 flex flex-wrap gap-2" aria-label={`Actions for ${headline}`}>
       {card.actions.map(action => <button key={action} type="button" disabled={!requestAvailable}
         aria-describedby={!requestAvailable ? "daily-decisions-readonly" : undefined}
-        onClick={event => openEditor({ kind: "work_card", id: card.id, title: card.title, action }, event.currentTarget)}
+        onClick={event => openEditor({ kind: "work_card", id: card.id, title: headline, action }, event.currentTarget)}
         className="rounded border border-[var(--border-2)] px-3 py-1.5 text-sm text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50">
         {actionLabel[action]}
       </button>)}
@@ -156,21 +173,47 @@ function WorkCard({ card, requestAvailable, openEditor }: {
   </article>;
 }
 
-function WaitingOnYou({ items }: { items: DailyWaitingItem[] }) {
+const WAITING_ACTIONS: DailyOpsDecisionAction[] = ["approve", "decline", "defer", "reply"];
+
+function WaitingOnYou({ items, requestAvailable, openEditor }: {
+  items: DailyWaitingItem[];
+  requestAvailable: boolean;
+  openEditor: (target: EditorTarget, trigger: HTMLButtonElement) => void;
+}) {
   return <section aria-labelledby="daily-waiting-heading" data-testid="daily-waiting-on-you"
     className="mt-4 rounded border border-[var(--status-warn)] p-3">
     <h3 id="daily-waiting-heading" className="text-base font-semibold">Waiting on you</h3>
     {items.length === 0 ? <p className="mt-1 text-sm text-[var(--fg-muted)]">
       No open owner question in the lab mailbox and no owner decision in today&apos;s plan.</p> :
-      <ul className="mt-2 space-y-3">{items.map(item => <li key={item.id} data-testid={`daily-waiting-${item.id}`}>
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span className="font-medium">{item.title}</span>
-          <Badge value="waiting_on_you">{item.kind === "question" ? "question" : "plan decision"}</Badge>
-        </div>
-        <p className="mt-1 text-xs text-[var(--fg-muted)]">from {item.askedBy}{item.askedAt ? ` · ${timeLabel(item.askedAt)}` : ""}{item.msgId ? ` · ${item.msgId}` : ""}</p>
-        <p className="mt-1 text-xs text-[var(--fg-muted)]">{item.msgId ? "Answer from the lab checkout:" : "No mailbox question exists for this item; reply with a note:"}</p>
-        <code className="mt-1 block overflow-x-auto whitespace-pre rounded bg-[var(--surface-2)] px-2 py-1 text-xs">{item.cli}</code>
-      </li>)}</ul>}
+      <ul className="mt-2 space-y-3">{items.map(item => {
+        const headline = deriveSummary(item.title);
+        const targetKind: DailyOpsDecisionTarget = item.kind === "question" ? "question" : "work_card";
+        const targetId = item.kind === "question" ? (item.msgId ?? item.id) : item.itemId;
+        const canAct = item.kind !== "question" || item.msgId != null;
+        return <li key={item.id} data-testid={`daily-waiting-${item.id}`}>
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="font-medium">{headline}</span>
+            <Badge value="waiting_on_you">{item.kind === "question" ? "question" : "plan decision"}</Badge>
+          </div>
+          <p className="mt-1 text-xs text-[var(--fg-muted)]">Asked by {ownerWord(item.askedBy)}
+            {item.askedAt ? ` · ${timeLabel(item.askedAt)}` : ""}</p>
+          <details className="mt-1 text-xs text-[var(--fg-muted)]">
+            <summary className="cursor-pointer text-[var(--accent)]">Details</summary>
+            <dl className="mt-2 grid gap-1">
+              <div><dt className="inline font-semibold">Full text: </dt><dd className="inline">{item.title}</dd></div>
+              {item.msgId && <div><dt className="inline font-semibold">Message: </dt><dd className="inline">{item.msgId}</dd></div>}
+            </dl>
+          </details>
+          {canAct ? <div className="mt-2 flex flex-wrap gap-2" aria-label={`Actions for ${headline}`}>
+            {WAITING_ACTIONS.map(action => <button key={action} type="button" disabled={!requestAvailable}
+              aria-describedby={!requestAvailable ? "daily-decisions-readonly" : undefined}
+              onClick={event => openEditor({ kind: targetKind, id: targetId, title: headline, action }, event.currentTarget)}
+              className="rounded border border-[var(--border-2)] px-3 py-1.5 text-sm text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50">
+              {actionLabel[action]}
+            </button>)}
+          </div> : <p className="mt-2 text-xs text-[var(--fg-muted)]">No open mailbox question exists yet for this plan item; use the plan item&apos;s buttons above once one is asked, or send Oracle a note.</p>}
+        </li>;
+      })}</ul>}
   </section>;
 }
 
@@ -226,7 +269,7 @@ export function DailyDecisionCards({ cards, waiting, requestAvailable, readonlyR
     const generation = editorGeneration.current;
     if (!editor || !canRequest || ["submitting", "queued"].includes(submit.kind) ||
         inFlightGeneration.current === generation ||
-        (editor.action === "modify" && !note.trim())) return;
+        (["modify", "reply"].includes(editor.action) && !note.trim())) return;
     const normalizedNote = note.trim();
     const fingerprint = JSON.stringify([
       editor.kind, editor.id, editor.action, normalizedNote,
@@ -279,7 +322,7 @@ export function DailyDecisionCards({ cards, waiting, requestAvailable, readonlyR
       {readonlyReason}
     </p>}
 
-    <WaitingOnYou items={waiting} />
+    <WaitingOnYou items={waiting} requestAvailable={requestAvailable} openEditor={openEditor} />
 
     {editor && <section ref={editorRef} tabIndex={-1} data-testid="daily-decision-editor"
       aria-labelledby="daily-decision-editor-heading"
@@ -296,11 +339,11 @@ export function DailyDecisionCards({ cards, waiting, requestAvailable, readonlyR
             <option value="now">Now</option><option value="next">Next</option><option value="later">Later</option>
           </select></label>}
         <label htmlFor="daily-decision-note" className="block text-sm font-medium">
-          {editor.action === "modify" ? "Required change" : "Note (optional)"}
+          {editor.action === "modify" ? "Required change" : editor.action === "reply" ? "Your reply" : "Note (optional)"}
         </label>
         <textarea id="daily-decision-note" rows={3} maxLength={3000} value={note}
           onChange={event => { setNote(event.target.value); setSubmit({ kind: "idle" }); }}
-          placeholder={editor.action === "modify" ? "What should change?" : "Add context for Oracle…"}
+          placeholder={editor.action === "modify" ? "What should change?" : editor.action === "reply" ? "Write your reply…" : "Add context for Oracle…"}
           className="mt-1 w-full rounded border border-[var(--border-2)] bg-[var(--surface-1)] px-3 py-2 text-sm" />
         <p className="mt-2 text-xs text-[var(--fg-muted)]">This sends owner direction to Oracle. It does not execute work or create scientific credit.</p>
         {!canRequest && <div className="mt-2 rounded border border-[var(--status-warn)] bg-[var(--status-warn-bg)] p-2 text-sm">
@@ -309,17 +352,21 @@ export function DailyDecisionCards({ cards, waiting, requestAvailable, readonlyR
         </div>}
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <button type="submit" disabled={!canRequest || ["submitting", "queued"].includes(submit.kind) ||
-            (editor.action === "modify" && !note.trim())}
+            (["modify", "reply"].includes(editor.action) && !note.trim())}
             className="rounded bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--accent-fg)] disabled:cursor-not-allowed disabled:opacity-50">
             {submit.kind === "submitting" ? "Sending…" : submitLabel[editor.action]}
           </button>
-          {editor.action === "modify" && !note.trim() && <span className="text-xs text-[var(--fg-muted)]">Describe the change to continue.</span>}
+          {["modify", "reply"].includes(editor.action) && !note.trim() && <span className="text-xs text-[var(--fg-muted)]">{editor.action === "modify" ? "Describe the change to continue." : "Write a reply to continue."}</span>}
         </div>
       </form>
       <div aria-live="polite" className="mt-2 min-h-5 text-sm">
         {submit.kind === "failed" && <p className="text-[var(--status-bad)]">{submit.message}</p>}
         {submit.kind === "queued" && <p className="text-[var(--status-info)]">
-          {submit.receipt.duplicate ? "Existing request found" : "Request queued"} · {submit.receipt.request_id}. No execution is implied.
+          {submit.receipt.duplicate ? "Already sent to Oracle" : "Sent to Oracle"}. No execution is implied.{" "}
+          <details className="inline text-xs text-[var(--fg-muted)]">
+            <summary className="inline cursor-pointer text-[var(--accent)]">Request id</summary>
+            {" "}{submit.receipt.request_id}
+          </details>
         </p>}
       </div>
     </section>}

@@ -31,8 +31,9 @@ export interface DailyOpsReceipt {
   expected_plan_revision: string | null;
 }
 
-export type DailyOpsDecisionTarget = "agenda" | "work_card";
-export type DailyOpsDecisionAction = "modify" | "skip" | "reprioritize";
+export type DailyOpsDecisionTarget = "agenda" | "work_card" | "question";
+export type DailyOpsDecisionAction =
+  | "modify" | "skip" | "reprioritize" | "approve" | "decline" | "defer" | "reply";
 export type DailyOpsDecisionPriority = "now" | "next" | "later";
 
 export interface DailyOpsDecisionReceipt {
