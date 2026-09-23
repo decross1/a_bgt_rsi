@@ -163,7 +163,7 @@ def relay(tmp_path, monkeypatch):
         "planner_latest": str(planner),
     }
     return {
-        "bridge": DailyOpsBridge(state, config), "state": state,
+        "bridge": DailyOpsBridge(state, config, process_lister=list, pi_sessions=tmp_path / "pi"), "state": state,
         "private": private, "mailbox": mailbox, "config": config,
     }
 
@@ -391,11 +391,11 @@ def test_bounded_responder_requires_ready_empty_worker_and_projects_honest_ident
 
     assert summary["agents"]["oracle"]["label"] == "Oracle bounded UI responder"
     assert summary["agents"]["pi_client"]["label"] == "Headless Pi client"
-    assert summary["agents"]["oracle"]["source"] == (
+    assert summary["agents"]["oracle"]["relay"]["source"] == (
         "Oracle bounded UI responder mailbox heartbeat"
     )
-    assert "Temporary summary-only responder" in summary["agents"]["oracle"]["detail"]
-    assert _iso(WORKER_DEADLINE) in summary["agents"]["oracle"]["detail"]
+    assert "Temporary summary-only responder" in summary["agents"]["oracle"]["relay"]["detail"]
+    assert _iso(WORKER_DEADLINE) in summary["agents"]["oracle"]["relay"]["detail"]
 
     worker_status = json.loads(bounded["worker_status"].read_text())
     worker_status.update(status="working", admission_open=False,
@@ -404,8 +404,8 @@ def test_bounded_responder_requires_ready_empty_worker_and_projects_honest_ident
     bounded["bridge"]._last_refresh = 0.0
     bounded["bridge"].refresh()
     working_summary = json.loads((bounded["state"] / "daily_ops_summary.json").read_text())
-    assert working_summary["agents"]["oracle"]["status"] == "working"
-    assert "new requests are paused" in working_summary["agents"]["oracle"]["detail"]
+    assert working_summary["agents"]["oracle"]["relay"]["status"] == "working"
+    assert "new requests are paused" in working_summary["agents"]["oracle"]["relay"]["detail"]
     with pytest.raises(HTTPException) as caught:
         bounded["bridge"].route(_payload())
     assert caught.value.status_code == 503
@@ -680,8 +680,8 @@ def test_bounded_responder_closes_admission_without_full_turn_budget(relay, monk
     bounded["bridge"]._last_refresh = 0.0
     bounded["bridge"].refresh()
     summary = json.loads((bounded["state"] / "daily_ops_summary.json").read_text())
-    assert summary["agents"]["oracle"]["status"] == "waiting"
-    assert "no longer has time for a full owner turn" in summary["agents"]["oracle"]["detail"]
+    assert summary["agents"]["oracle"]["relay"]["status"] == "waiting"
+    assert "no longer has time for a full owner turn" in summary["agents"]["oracle"]["relay"]["detail"]
 
 
 def test_bounded_duplicate_replay_requires_full_turn_budget(relay, monkeypatch):
@@ -836,9 +836,9 @@ def test_owner_request_requires_scoped_and_durable_mailbox_enforcement(relay, ca
     relay["bridge"]._last_refresh = 0.0
     relay["bridge"].refresh()
     summary = json.loads((relay["state"] / "daily_ops_summary.json").read_text())
-    assert summary["agents"]["oracle"]["status"] == "degraded"
-    assert summary["agents"]["pi_client"]["status"] == "degraded"
-    assert "update must be loaded" in summary["agents"]["oracle"]["detail"]
+    assert summary["agents"]["oracle"]["relay"]["status"] == "degraded"
+    assert summary["agents"]["pi_client"]["relay"]["status"] == "degraded"
+    assert "update must be loaded" in summary["agents"]["oracle"]["relay"]["detail"]
 
 
 def test_same_request_id_with_changed_payload_conflicts(relay):
@@ -986,8 +986,8 @@ def test_live_mailbox_states_are_observed_without_calling_work_offline(relay, st
     relay["bridge"]._last_refresh = 0.0
     relay["bridge"].refresh()
     summary = json.loads((relay["state"] / "daily_ops_summary.json").read_text())
-    assert summary["agents"]["oracle"]["status"] == expected
-    assert summary["agents"]["pi_client"]["status"] == expected
+    assert summary["agents"]["oracle"]["relay"]["status"] == expected
+    assert summary["agents"]["pi_client"]["relay"]["status"] == expected
 
 
 def test_refresh_preserves_curated_notes_timestamp_across_day_rollover(relay):
@@ -1103,3 +1103,25 @@ def test_refresh_failure_after_durable_enqueue_does_not_turn_post_into_failure(r
     assert (relay["bridge"].requests / (payload["request_id"] + ".json")).exists()
     assert (relay["mailbox"] / "inbox" /
             ("owner-ui-" + payload["request_id"] + ".json")).exists()
+
+
+def test_agent_cards_come_from_live_sources_and_the_relay_only_gates_messaging(relay, tmp_path):
+    # A live oversight mailbox no longer makes the daily-loop Oracle look active.
+    _force_refresh(relay)
+    agents = json.loads((relay["state"] / "daily_ops_summary.json").read_text())["agents"]
+    assert agents["oracle"]["relay"]["status"] == "idle"
+    assert agents["oracle"]["status"] == "unknown"
+    assert agents["pi_client"]["status"] == "offline"
+    assert agents["meta_oracle"]["label"] == "Meta-oracle (Claude)"
+
+    # A running daily-loop phase makes the card working even with the relay down.
+    (tmp_path / "logs" / "oracle_daily").mkdir(parents=True)
+    relay["bridge"]._process_lister = lambda: [{
+        "pid": 9, "ppid": 1, "tty": 0, "cwd": "/",
+        "argv": ["bash", "/x/scripts/oracle-daily", "work"]}]
+    (relay["mailbox"] / "latest-status.json").unlink()
+    _force_refresh(relay)
+    agents = json.loads((relay["state"] / "daily_ops_summary.json").read_text())["agents"]
+    assert agents["oracle"]["status"] == "working"
+    assert agents["oracle"]["relay"]["status"] == "offline"
+    assert agents["oracle"]["relay"]["detail"] == "Mailbox is unavailable or stale."

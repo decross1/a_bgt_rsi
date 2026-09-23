@@ -23,7 +23,7 @@ const MESSAGES_KEY = "daily_ops_messages";
 const OWNER_KEY = "oracle-lab-owner-access-key";
 const STATUS = new Set(["planned", "in_progress", "blocked", "done", "awaiting_owner"]);
 const IMPROVEMENT_STATUS = new Set(["proposed", "implemented", "verified", "blocked"]);
-const AGENT_STATUS = new Set(["online", "working", "idle", "waiting", "degraded", "offline", "unknown"]);
+const AGENT_STATUS = new Set(["online", "active", "working", "idle", "waiting", "degraded", "stale", "failed", "offline", "unknown"]);
 const MESSAGE_STATUS = new Set(["queued", "delivered", "acknowledged", "failed"]);
 const WORK_CARD_STATUS = new Set(["authorized", "in_progress", "blocked", "done", "draft"]);
 const EVIDENCE_KIND = new Set(["estimate", "measured", "unrated"]);
@@ -62,12 +62,20 @@ type Focus = {
   observedAt: string;
 };
 
-type AgentState = {
+type AgentRelay = { status: string; detail: string; source: string };
+
+type PlanItem = { id: string; goal: string; owner: string; title: string };
+
+type AgentState = AgentRelay & {
   label: string;
-  status: string;
-  detail: string;
   observedAt: string;
-  source: string;
+  role: string | null;
+  activity: string | null;
+  activityAt: string | null;
+  since: string | null;
+  items: PlanItem[];
+  // Owner-message relay health (the oversight mailbox); gates the composer only.
+  relay: AgentRelay;
 };
 
 type Summary = {
@@ -77,7 +85,7 @@ type Summary = {
   accomplishments: WorkItem[];
   improvements: WorkItem[];
   focus: Focus | null;
-  agents: { oracle: AgentState; piClient: AgentState; nara: AgentState } | null;
+  agents: { oracle: AgentState; piClient: AgentState; nara: AgentState; metaOracle: AgentState | null } | null;
   warnings: string[];
   authRequired: boolean;
   writeAvailable: boolean;
@@ -217,12 +225,37 @@ function focus(value: unknown): Focus | null {
   };
 }
 
+const optionalText = (value: unknown, limit: number): string | null | undefined =>
+  value === undefined || value === null ? null : bounded(value, limit) ? value : undefined;
+const optionalTime = (value: unknown): string | null | undefined =>
+  value === undefined || value === null ? null : timestamp(value) ? value : undefined;
+
+function planItems(value: unknown): PlanItem[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 16) return null;
+  const items = value.map(item => record(item) && bounded(item.id, 512) && bounded(item.goal, 512) &&
+    bounded(item.owner, 512) && bounded(item.title, 512)
+    ? { id: item.id, goal: item.goal, owner: item.owner, title: item.title } : null);
+  return items.every(item => item !== null) ? items as PlanItem[] : null;
+}
+
 function agent(value: unknown): AgentState | null {
   if (!record(value) || !bounded(value.label, 512) || !bounded(value.status, 32) ||
       !AGENT_STATUS.has(value.status) || !bounded(value.detail, 4096) || !timestamp(value.observed_at) ||
       !bounded(value.source, 512)) return null;
-  return { label: value.label, status: value.status, detail: value.detail,
-    observedAt: value.observed_at, source: value.source };
+  const role = optionalText(value.role, 512);
+  const activity = optionalText(value.activity, 512);
+  const activityAt = optionalTime(value.activity_at);
+  const since = optionalTime(value.since);
+  const items = planItems(value.items);
+  const relay = value.relay;
+  if (role === undefined || activity === undefined || activityAt === undefined || since === undefined ||
+      items === null) return null;
+  if (relay !== undefined && relay !== null && (!record(relay) || !bounded(relay.status, 32) ||
+      !AGENT_STATUS.has(relay.status) || !bounded(relay.detail, 4096) || !bounded(relay.source, 512))) return null;
+  const own = { status: value.status, detail: value.detail, source: value.source };
+  return { label: value.label, ...own, observedAt: value.observed_at, role, activity, activityAt, since, items,
+    relay: record(relay) ? { status: relay.status as string, detail: relay.detail as string, source: relay.source as string } : own };
 }
 
 export function admitDailyOpsSummary(value: unknown): Summary | null {
@@ -237,9 +270,11 @@ export function admitDailyOpsSummary(value: unknown): Summary | null {
     oracle: agent(value.agents.oracle),
     piClient: agent(value.agents.pi_client),
     nara: agent(value.agents.nara),
+    // Optional fourth card; an absent or invalid one hides only that card.
+    metaOracle: agent(value.agents.meta_oracle),
   } : null;
   const completeAgents = agents && agents.oracle && agents.piClient && agents.nara
-    ? { oracle: agents.oracle, piClient: agents.piClient, nara: agents.nara }
+    ? { oracle: agents.oracle, piClient: agents.piClient, nara: agents.nara, metaOracle: agents.metaOracle }
     : null;
   const currentPlanRevision = value.current_plan_revision === null || bounded(value.current_plan_revision, 200)
     ? value.current_plan_revision as string | null
@@ -336,9 +371,9 @@ export function makeRequestId(): string {
 }
 
 function statusStyle(status: string): React.CSSProperties {
-  if (["done", "complete", "verified", "online", "acknowledged"].includes(status))
+  if (["done", "complete", "verified", "online", "active", "acknowledged"].includes(status))
     return { color: "var(--status-ok)", background: "var(--status-ok-bg)" };
-  if (["blocked", "degraded", "failed", "awaiting_owner"].includes(status))
+  if (["blocked", "degraded", "failed", "stale", "awaiting_owner"].includes(status))
     return { color: "var(--status-warn)", background: "var(--status-warn-bg)" };
   if (["working", "in_progress", "delivered"].includes(status))
     return { color: "var(--status-info)", background: "var(--status-info-bg)" };
@@ -374,22 +409,57 @@ function ItemList({ items, empty }: { items: WorkItem[]; empty: string }) {
   </>;
 }
 
+const OBSERVATION_STALE_MS = 2 * 60_000; // the bridge re-observes about every 30 s
+
+function ago(value: string): string {
+  const minutes = Math.max(0, Math.floor((Date.now() - Date.parse(value)) / 60_000));
+  if (minutes < 1) return "just now";
+  if (minutes < 120) return `${minutes} min ago`;
+  return `${Math.floor(minutes / 60)} h ago`;
+}
+
+const SINCE_LABEL: Record<string, string> = {
+  working: "Working since", active: "Session written", idle: "Idle since",
+  failed: "Failed at", stale: "Last seen", waiting: "Waiting since", online: "Since",
+};
+
 function AgentStrip({ agents }: { agents: NonNullable<Summary["agents"]> }) {
-  return <div className="grid gap-2 sm:grid-cols-3" data-testid="daily-ops-agents">
-    {([
-      ["oracle", agents.oracle, "Steward"],
-      ["pi", agents.piClient, "Oracle client"],
-      ["nara", agents.nara, "Observed runner"],
-    ] as const).map(([key, state, role]) => <div key={key} className="rounded border border-[var(--border-1)] p-3">
+  const cards = [
+    ["oracle", agents.oracle, "Steward"],
+    ["pi", agents.piClient, "Oracle client"],
+    ["nara", agents.nara, "Observed runner"],
+    ...(agents.metaOracle ? [["meta", agents.metaOracle, "Reviewer"] as const] : []),
+  ] as const;
+  return <div className={`grid gap-2 sm:grid-cols-2 ${cards.length > 3 ? "xl:grid-cols-4" : "xl:grid-cols-3"}`}
+    data-testid="daily-ops-agents">
+    {cards.map(([key, state, role]) => {
+      const stale = Date.now() - Date.parse(state.observedAt) > OBSERVATION_STALE_MS;
+      return <div key={key} className="rounded border border-[var(--border-1)] p-3" data-testid={`daily-ops-agent-${key}`}>
       <div className="flex flex-wrap items-center gap-2"><span className="font-semibold">{state.label}</span><Status value={state.status} /></div>
-      <p className="mt-1 text-xs uppercase tracking-wide text-[var(--fg-muted)]">{role}</p>
+      <p className="mt-1 text-xs uppercase tracking-wide text-[var(--fg-muted)]">{state.role ?? role}</p>
+      {state.activity && <p className="mt-2 text-sm">
+        <span className="font-medium">{state.status === "working" ? "Now: " : "Latest: "}</span>{state.activity}
+        {state.activityAt && <span className="text-xs text-[var(--fg-muted)]"> · {ago(state.activityAt)}</span>}
+      </p>}
+      {state.since && <p className="mt-1 text-xs text-[var(--fg-muted)]">
+        {SINCE_LABEL[state.status] ?? "Last change"} {timeLabel(state.since)} ({ago(state.since)})</p>}
       <p className="mt-2 text-sm text-[var(--fg-muted)]">{preview(state.detail, 240)}</p>
       {state.detail.length > 240 && <details className="mt-1 text-xs text-[var(--fg-muted)]">
         <summary className="cursor-pointer text-[var(--accent)]">Full recorded detail</summary>
         <p className="mt-1 whitespace-pre-wrap">{state.detail}</p>
       </details>}
-      <p className="mt-1 text-xs text-[var(--fg-muted)]">Observed {timeLabel(state.observedAt)}</p>
-    </div>)}
+      {state.items.length > 0 && <details className="mt-2 text-xs" data-testid={`daily-ops-agent-${key}-plan`}>
+        <summary className="cursor-pointer text-[var(--accent)]">Today's plan · {state.items.length} item{state.items.length === 1 ? "" : "s"}</summary>
+        <ul className="mt-1 space-y-1">{state.items.map(item => <li key={item.id}>
+          <span className="font-medium">{item.id}</span> · {item.goal} · {item.owner}: {preview(item.title, 160)}
+        </li>)}</ul>
+      </details>}
+      {state.relay.source !== state.source && <p className="mt-2 text-xs text-[var(--fg-muted)]">
+        Owner message relay: {phrase(state.relay.status)} — {preview(state.relay.detail, 160)}</p>}
+      <p className={`mt-1 text-xs ${stale ? "text-[var(--status-warn)]" : "text-[var(--fg-muted)]"}`}>
+        {stale ? "Stale: observed " : "Observed "}{ago(state.observedAt)}</p>
+    </div>;
+    })}
   </div>;
 }
 
@@ -448,8 +518,8 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
   const notesDay = summary ? dayLabel(summary.notesUpdatedAt) : "";
   const responderLabel = summary?.agents?.oracle.label ?? "Oracle";
   const clientLabel = summary?.agents?.piClient.label ?? "Pi client";
-  const boundedResponder = summary?.agents?.oracle.source ===
-    "Oracle bounded UI responder mailbox heartbeat";
+  const relay = summary?.agents?.oracle.relay;
+  const boundedResponder = relay?.source === "Oracle bounded UI responder mailbox heartbeat";
 
   useEffect(() => {
     if (accessKey && messagesPoll.error instanceof DailyOpsError &&
@@ -469,9 +539,10 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
   const earlierRows = sortedRows.slice(0, -5);
   const routerConfigured = summary?.writeAvailable === true;
   const writeAvailable = routerConfigured && accessKey.length > 0 && messages?.writable === true;
-  const oracleReady = summary?.agents != null &&
-    !["offline", "degraded", "unknown"].includes(summary.agents.oracle.status) &&
-    (!boundedResponder || summary.agents.oracle.status === "idle");
+  // Messaging readiness follows the owner relay, not the daily-loop activity card.
+  const oracleReady = relay != null &&
+    !["offline", "degraded", "unknown"].includes(relay.status) &&
+    (!boundedResponder || relay.status === "idle");
   const changeBound = intent !== "change_request" || Boolean(summary?.currentPlanRevision);
   const canSubmit = writeAvailable && accessKey.length > 0 && text.trim().length > 0 &&
     text.trim().length <= 4096 && changeBound && oracleReady && submit.kind !== "submitting";
@@ -675,7 +746,7 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
       {boundedResponder && summary.agents && <div role="status" data-testid="daily-ops-bounded-responder"
         className="mt-4 rounded border border-[var(--status-warn)] bg-[var(--status-warn-bg)] p-3 text-sm">
         <p className="font-semibold">Temporary summary-only responder</p>
-        <p className="mt-1">{summary.agents.oracle.detail}</p>
+        <p className="mt-1">{summary.agents.oracle.relay.detail}</p>
       </div>}
 
       {routerConfigured && <div className="mt-4">

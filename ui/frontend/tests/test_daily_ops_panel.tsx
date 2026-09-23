@@ -705,6 +705,69 @@ describe("DailyOpsPanel", () => {
     expect(screen.queryByText("What is blocking the study?")).toBeNull();
   });
 
+  it("shows who is active, what each agent is doing, and the day's plan", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-20T08:00:30Z"));
+    const relay = { status: "offline", detail: "Mailbox is unavailable or stale.", observed_at: now, source: "Oracle oversight mailbox heartbeat" };
+    D.summary = summary({
+      agents: {
+        oracle: {
+          label: "Oracle", role: "Steward (daily loop)", status: "working",
+          detail: "Running daily-loop phase work for 2026-09-20.", observed_at: now,
+          source: "/proc oracle-daily", activity: "#56 note: READY FOR REVIEW: d3",
+          activity_at: "2026-09-20T07:55:00Z", since: "2026-09-20T07:30:00Z",
+          items: [{ id: "d1", goal: "G7.1", owner: "oracle", title: "Lane precheck" },
+            { id: "d2", goal: "G0.2", owner: "nara", title: "Lab state packet" }],
+          relay,
+        },
+        pi_client: {
+          label: "Pi client", role: "Owner's interactive Oracle client", status: "idle",
+          detail: "1 interactive Pi process(es); no session write in the last 10 min.", observed_at: now,
+          source: "/proc interactive pi", activity: null, activity_at: null, since: "2026-09-20T06:00:00Z", relay,
+        },
+        nara: {
+          label: "Nara research runner", role: "Research runner", status: "working",
+          detail: "Nara service is active.", observed_at: now, source: "nara-daemon.service",
+          activity: "Lane (claimed): Lab state packet", activity_at: "2026-09-20T07:58:00Z",
+          since: "2026-09-20T07:58:00Z",
+        },
+        meta_oracle: {
+          label: "Meta-oracle (Claude)", role: "Reviewer", status: "idle",
+          detail: "No live run. Last meta-oracle mode code for 2026-09-20 ended completed.", observed_at: now,
+          source: "/proc meta_oracle_run.sh", activity: "#55 review amend re READY FOR REVIEW: d1",
+          activity_at: "2026-09-20T07:40:00Z", since: "2026-09-20T07:41:00Z",
+        },
+      },
+    });
+    sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
+    show();
+    fireEvent.change(screen.getByLabelText("Message to Oracle"), { target: { value: "Status?" } });
+
+    const oracle = screen.getByTestId("daily-ops-agent-oracle");
+    expect(oracle).toHaveTextContent("working");
+    expect(oracle).toHaveTextContent("Now: #56 note: READY FOR REVIEW: d3 · 5 min ago");
+    expect(oracle).toHaveTextContent("Working since");
+    expect(oracle).toHaveTextContent("Today's plan · 2 items");
+    expect(oracle).toHaveTextContent("d2 · G0.2 · nara: Lab state packet");
+    expect(oracle).toHaveTextContent("Owner message relay: offline — Mailbox is unavailable or stale.");
+    expect(oracle).toHaveTextContent("Observed just now");
+    expect(screen.getByTestId("daily-ops-agent-pi")).toHaveTextContent("Idle since");
+    expect(screen.getByTestId("daily-ops-agent-nara")).toHaveTextContent("Now: Lane (claimed): Lab state packet");
+    const meta = screen.getByTestId("daily-ops-agent-meta");
+    expect(meta).toHaveTextContent("Reviewer");
+    expect(meta).toHaveTextContent("Latest: #55 review amend");
+    // The activity card is working, but owner messaging follows the offline relay.
+    expect(screen.getByRole("button", { name: "Queue for Oracle" })).toBeDisabled();
+  });
+
+  it("marks an agent card stale when its observation stopped refreshing", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-20T08:30:00Z"));
+    show();
+    expect(screen.getByTestId("daily-ops-agent-nara")).toHaveTextContent("Stale: observed 30 min ago");
+    expect(screen.queryByTestId("daily-ops-agent-meta")).toBeNull();
+  });
+
   it("preserves the legacy research view when the daily snapshot is malformed", () => {
     D.summary = { schema_version: "wrong" };
     show();

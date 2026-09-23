@@ -397,6 +397,7 @@ def _env_path(var, default):
 _daily_bridge = configured_bridge(
     _env_path("UI_COORDINATOR_RUN_STATE", DEFAULT_COORDINATOR_RUN_STATE),
     os.environ.get("ORACLE_DAILY_OPS_CONFIG"),
+    repo_root=_env_path("UI_LOOP_V0_REPO", DEFAULT_LOOP_V0_REPO),
 )
 app = create_app(
     logs_dir=_env_path("UI_LOGS_DIR", DEFAULT_LOGS_DIR),

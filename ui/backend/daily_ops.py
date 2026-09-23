@@ -64,7 +64,9 @@ _SUMMARY_FIELDS_V2 = _SUMMARY_FIELDS_V1 | {"work_cards", "agenda_decision"}
 _GOAL_STATUSES = {"planned", "in_progress", "blocked", "done", "awaiting_owner"}
 _GOAL_OWNERS = {"codex", "oracle", "nara", "owner", "lab"}
 _IMPROVEMENT_STATUSES = {"proposed", "implemented", "verified", "blocked"}
-_AGENT_STATUSES = {"online", "working", "idle", "waiting", "degraded", "offline", "unknown"}
+_AGENT_STATUSES = {
+    "online", "active", "working", "idle", "waiting", "degraded", "stale", "failed", "offline", "unknown",
+}
 _FOCUS_STATUSES = {"selected", "blocked", "complete", "unavailable"}
 _GATE_STATUSES = {"pending", "blocked", "complete"}
 _ACTORS = {"owner", "oracle", "system"}
@@ -216,11 +218,36 @@ def _focus(value: object) -> bool:
     )
 
 
+def _agent_activity(row: dict) -> bool:
+    """Optional live-activity fields a bridge projection adds to an agent card."""
+    items = row.get("items", [])
+    relay = row.get("relay")
+    return (
+        ("role" not in row or _text(row["role"], MAX_SHORT_TEXT))
+        and (row.get("activity") is None or _text(row["activity"], MAX_SHORT_TEXT))
+        and all(row.get(key) is None or _timestamp(row[key]) for key in ("activity_at", "since"))
+        and isinstance(items, list) and len(items) <= MAX_ITEMS
+        and all(isinstance(item, dict) and set(item) == {"id", "goal", "owner", "title"}
+                and all(_text(field, MAX_SHORT_TEXT) for field in item.values()) for item in items)
+        and (relay is None or (
+            isinstance(relay, dict) and set(relay) == {"status", "detail", "observed_at", "source"}
+            and relay.get("status") in _AGENT_STATUSES and _text(relay.get("detail"))
+            and _timestamp(relay.get("observed_at")) and _text(relay.get("source"), MAX_SHORT_TEXT)
+        ))
+    )
+
+
 def _agents(value: object) -> bool:
-    if not isinstance(value, dict) or set(value) != {"oracle", "pi_client", "nara"}:
+    if not isinstance(value, dict) or not {"oracle", "pi_client", "nara"} <= set(value) <= {
+        "oracle", "pi_client", "nara", "meta_oracle",
+    }:
         return False
     for key, row in value.items():
-        if not isinstance(row, dict) or set(row) != {"label", "status", "detail", "observed_at", "source"}:
+        if not isinstance(row, dict) or not (
+            {"label", "status", "detail", "observed_at", "source"} <= set(row)
+            <= {"label", "status", "detail", "observed_at", "source",
+                "role", "activity", "activity_at", "since", "items", "relay"}
+        ):
             return False
         if not (
             _text(row.get("label"), MAX_SHORT_TEXT)
@@ -228,6 +255,7 @@ def _agents(value: object) -> bool:
             and _text(row.get("detail"))
             and _timestamp(row.get("observed_at"))
             and _text(row.get("source"), MAX_SHORT_TEXT)
+            and _agent_activity(row)
         ):
             return False
         if key == "pi_client" and "client" not in row["label"].lower():

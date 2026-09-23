@@ -33,6 +33,7 @@ from .daily_ops import (
     _validate_summary,
 )
 from .daily_ops_agenda import read_pending_agenda
+from .daily_ops_agents import list_processes, observe as observe_agents
 from .daily_ops_work_plan import read_work_plan
 
 CANONICAL_INSTANCE = "canonical_oracle"
@@ -160,7 +161,8 @@ def _json_bytes(value: object) -> bytes:
 
 
 class DailyOpsBridge:
-    def __init__(self, state_dir: Path, config: dict):
+    def __init__(self, state_dir: Path, config: dict, *, repo_root: Path | None = None,
+                 process_lister=None, pi_sessions: Path | None = None):
         required = {"private_root", "mailbox_root", "session_id", "allowed_origins"}
         optional = {
             "planner_latest", "instance_kind", "responder_label", "client_label",
@@ -242,6 +244,10 @@ class DailyOpsBridge:
         self._last_refresh = 0.0
         self._nara_checked = 0.0
         self._nara_status = None
+        # Live agent cards read the lab repo; run_state/ is the default state dir.
+        self.repo_root = Path(repo_root) if repo_root is not None else self.state.parent
+        self._process_lister = process_lister or list_processes
+        self._pi_sessions = pi_sessions
         self._token()  # invalid/missing credentials fail closed at configuration
 
     def _current_recipient(self) -> dict:
@@ -899,15 +905,23 @@ class DailyOpsBridge:
                     f"Configured availability ends {_iso(self.availability_ends_at)}. "
                 )
                 source = BOUNDED_HEARTBEAT_SOURCE
-            for key, label in (
-                ("oracle", self.responder_label), ("pi_client", self.client_label),
-            ):
-                summary["agents"][key] = {
-                    "label": label, "status": agent_status,
-                    "detail": identity_notice + health_detail,
-                    "observed_at": observation, "source": source,
-                }
-            summary["agents"]["nara"] = self._observe_nara()
+            # The oversight mailbox only gates owner messaging now. Who is active
+            # and what each agent is doing comes from live processes and logs.
+            relay = {"status": agent_status, "detail": identity_notice + health_detail,
+                     "observed_at": observation, "source": source}
+            try:
+                summary["agents"] = observe_agents(
+                    self.repo_root, now=_now(), nara_service=self._observe_nara(),
+                    oracle_label=self.responder_label, client_label=self.client_label,
+                    processes=self._process_lister(), pi_sessions=self._pi_sessions,
+                )
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                logging.getLogger(__name__).exception("live agent observation failed")
+                summary["warnings"] = (summary["warnings"] + [
+                    "Live agent observation failed; agent cards show the curated brief.",
+                ])[-16:]
+            summary["agents"]["oracle"]["relay"] = relay
+            summary["agents"]["pi_client"]["relay"] = relay
             # Authored scientific claims keep their own original observed_at. A
             # fresh projection timestamp is never new scientific evidence.
             _validate_summary(summary)
@@ -917,11 +931,12 @@ class DailyOpsBridge:
             self._last_refresh = time.monotonic()
 
 
-def configured_bridge(state_dir: Path, config_path: str | None) -> DailyOpsBridge | None:
+def configured_bridge(state_dir: Path, config_path: str | None, *,
+                      repo_root: Path | None = None) -> DailyOpsBridge | None:
     if not config_path:
         return None
     try:
-        return DailyOpsBridge(state_dir, _read(Path(config_path), 16_384))
+        return DailyOpsBridge(state_dir, _read(Path(config_path), 16_384), repo_root=repo_root)
     except (OSError, ValueError, KeyError, TypeError):
         # A broken optional relay must disable messaging, not the entire lab UI.
         logging.getLogger(__name__).error("Daily Oracle relay configuration unavailable; owner messaging disabled")
