@@ -21,32 +21,39 @@ deployed, what is being prepared for v2, and what remains a historical record.
 valuable historical inputs. They contain dated implementation claims and are
 not a substitute for current code, validated receipts, or a live health check.
 
-## Current state — 2026-09-14
+## Current state — 2026-09-23
 
-- One DGX Spark hosts two resident local endpoints: Gemma on `:8000` and
-  Qwen3.8 on `:8001`.
-- Nara runs as an event-driven user service. Its coordinator is bounded by a
-  lock, ratification sentinel, human pause file, unified-memory preflight, and
-  daily action budget. Hourly cron uses the same lock and gate ladder.
+- One DGX Spark hosts one resident local model, Flash
+  (`nvidia/Qwen3.8-Flash-Next-NVFP4` on SGLang, `127.0.0.1:30080`, 262,144-token
+  context, one running request; two-request serving is prepared, see
+  `docs/FLASH_C2_CUTOVER.md` on branch `claude/flash-c2-prep-20260923`). The prior
+  Gemma/Qwen vLLM pair (`:8000`/`:8001`) stopped 2026-09-19 and is a rollback only.
+  See `docs/FLASH_RESIDENT.md` and `docs/MODEL_TOPOLOGY_POLICY.md`.
+- Three actors coordinate the lab: **Oracle** (Pi on Flash) plans the day and
+  develops architecture, UI, contracts and its own system; **Nara** runs research
+  continuously (`nara-daemon` plus the hourly cron; no daily cap since D-085) and
+  builds lab tools through the lane (`orchestrator/nara_lane.py`, a bwrap sandbox,
+  `nara/<id>` branches); the **meta-oracle** (Claude Opus 5.5,
+  `tools/meta_oracle_run.sh`) reviews every plan, plan item and branch and merges
+  accepted work. They coordinate through the lab mailbox
+  (`run_state/oracle_nara_mailbox.jsonl`, `docs/ORACLE_NARA_MAILBOX.md`); the daily
+  loop is `docs/META_ORACLE_DAILY_LOOP.md`. See D-082 and D-084 to D-087.
+- Nara's coordinator is bounded by a lock, ratification sentinel, human pause file
+  and unified-memory preflight; the hourly cron uses the same lock and gate ladder.
 - Research claims move through the L0-L5 evidence ladder. Only L4+ can surface;
-  only an explicit human verdict earns L5.
-- The weekly upgrade controller runs Sunday at 05:30 UTC in review-only mode.
-  It may use two subscription frontier sessions to propose and challenge one
-  bounded hypothesis. It cannot promote production automatically.
-- Named generation profiles exist as explicit evaluation arms. Legacy calls
-  that do not select a profile retain their existing deterministic behavior.
-- The v2 foundation adds immutable campaign identity, explicit lifecycle receipts,
-  legacy isolation, and a measured research funnel. Runtime activation is an
-  exact hash-bound pointer; consult `/benchmarks` and
-  `run_state/v2_preparation/deployment_receipt.json` for adoption evidence.
-- The prepared first campaign is `v2-agentic-game-theory-20260914`. It asks how
-  individual versus shared payoff objectives and access to player-identified
-  interaction history affect cooperation and utility-consistent behavior in
-  repeated public-goods games among model agents. Its 324 CPU records are 81
-  scripted-policy assignments under four objective/observation invariance
-  conditions, not 324 independent behavior samples. They made no model calls;
-  the narrower one-model-seat study remains gated.
-
+  only an explicit human verdict earns L5. A thesis separately climbs T (theory,
+  OpenSpiel), then S (semi-synthetic), then A (applied proposal, paper trade)
+  per D-084. The owner's only required gate is live trading.
+- The goal plan is `docs/v2/ALIGNMENT_AND_GOALS.md` (G0-G7); the research direction
+  (information and beliefs), the refinement protocol and conviction scoring are in
+  D-086, D-087 and `docs/v2/THESIS_BRIEF_2026-09-23.md`.
+- The active campaign is `v2-daily-agentic-game-theory-20260917` (registered
+  exploratory arXiv intake). No research focus is selected: the payoff-assistance
+  line was killed on 2026-09-22 (closure receipt under
+  `run_state/research_focus/closures/`), and successor theses (G1.1) are in progress.
+- The weekly upgrade controller runs Sunday at 05:30 UTC in review-only mode. It
+  may use two subscription frontier sessions to propose and challenge one bounded
+  hypothesis. It cannot promote production automatically.
 ## Truth hierarchy
 
 Use evidence in this order for the question it can answer:
@@ -76,9 +83,9 @@ git log -1 --oneline
 ui/scripts/ui-services.sh status
 systemctl --user show nara-daemon.service \
   -p ActiveState -p SubState -p MainPID -p ExecMainStartTimestamp
+systemctl --user status flash-resident.service --no-pager
 curl -fsS http://127.0.0.1:8700/api/health
-curl -fsS http://127.0.0.1:8000/v1/models
-curl -fsS http://127.0.0.1:8001/v1/models
+curl -fsS http://127.0.0.1:30080/v1/models
 ```
 
 Then inspect the files and receipts relevant to the task. Preserve all unrelated
