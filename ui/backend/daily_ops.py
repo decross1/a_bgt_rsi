@@ -3,11 +3,12 @@
 The dashboard is a consumer of two small runtime projections:
 
 ``daily_ops_summary.json``
-    Human-readable goals, recent outcomes, the selected research focus and
-    observed agent health.  A separate producer owns the projection; this
-    module never infers completion from prose or mutates scientific state.
-    Its ``generated_at`` value is the curated daily-notes update time, not the
-    time a live health projection happened to be read.
+    The live v3 projection (``daily_ops_live``): today's plan of record, the
+    research focus, per-item work status from the lab mailbox and git, owner
+    requests, and observed agent activity.  Every section is re-derived from its
+    producer on refresh; ``generated_at`` is that projection time and each
+    section carries its own source time.  With no relay configured, the summary
+    endpoint derives the same projection in memory instead of reading a file.
 
 ``daily_ops_messages.jsonl``
     An append-only projection of owner requests and *observed* delivery/reply
@@ -37,47 +38,29 @@ from pathlib import Path
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 from starlette.responses import Response
 
-LEGACY_SUMMARY_SCHEMA = "daily-ops-summary/v1"
-SUMMARY_SCHEMA = "daily-ops-summary/v2"
+SUMMARY_SCHEMA = "daily-ops-summary/v3"
 MESSAGES_SCHEMA = "daily-ops-messages/v1"
 SUMMARY_NAME = "daily_ops_summary.json"
 MESSAGES_NAME = "daily_ops_messages.jsonl"
 
-MAX_SUMMARY_BYTES = 65_536
+MAX_SUMMARY_BYTES = 131_072
 MAX_LOG_BYTES = 524_288
 MAX_ROW_BYTES = 8_192
 MAX_ROWS = 100
 MAX_TEXT = 4_096
 MAX_DECISION_NOTE = 3_000
 MAX_SHORT_TEXT = 512
-MAX_ITEMS = 16
 MAX_DEPTH = 12
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$")
-_SHA256 = re.compile(r"^[0-9a-f]{64}$")
-_SUMMARY_FIELDS_V1 = {
-    "schema_version", "generated_at", "goals", "accomplishments",
-    "improvements", "research_focus", "agents", "warnings",
-    "current_plan_revision",
-}
-_SUMMARY_FIELDS_V2 = _SUMMARY_FIELDS_V1 | {"work_cards", "agenda_decision"}
-_GOAL_STATUSES = {"planned", "in_progress", "blocked", "done", "awaiting_owner"}
-_GOAL_OWNERS = {"codex", "oracle", "nara", "owner", "lab"}
-_IMPROVEMENT_STATUSES = {"proposed", "implemented", "verified", "blocked"}
 _AGENT_STATUSES = {
     "online", "active", "working", "idle", "waiting", "degraded", "stale", "failed", "offline", "unknown",
 }
-_FOCUS_STATUSES = {"selected", "blocked", "complete", "unavailable"}
-_GATE_STATUSES = {"pending", "blocked", "complete"}
 _ACTORS = {"owner", "oracle", "system"}
 _INTENTS = {"question", "change_request", "reply", "receipt"}
 _REQUEST_INTENTS = {"question", "change_request"}
 _MESSAGE_STATUSES = {"queued", "delivered", "acknowledged", "failed"}
 _PRIVATE_PATHS = {"/api/daily-ops/messages", "/api/daily-ops/decisions"}
-_WORK_CARD_STATUSES = {"authorized", "in_progress", "blocked", "done", "draft"}
-_EVIDENCE_KINDS = {"estimate", "measured", "unrated"}
-_WORTH_TIME = {"do_now", "after_dependency", "hold", "unrated"}
-_AGENDA_DISPOSITIONS = {"amend_required", "review_required"}
 _DECISION_ACTIONS = {"modify", "skip", "reprioritize"}
 _DECISION_TARGETS = {"agenda", "work_card"}
 
@@ -168,76 +151,8 @@ def _read_regular(path: Path, maximum: int) -> bytes:
     return raw
 
 
-def _summary_item(value: object, *, kind: str) -> bool:
-    if not isinstance(value, dict):
-        return False
-    common = {"id", "title", "detail", "source", "observed_at"}
-    expected = common | ({"status", "owner"} if kind == "goal" else {"status"})
-    if set(value) != expected:
-        return False
-    if not (
-        _identifier(value.get("id"))
-        and _text(value.get("title"), MAX_SHORT_TEXT)
-        and _text(value.get("detail"))
-        and _text(value.get("source"), MAX_SHORT_TEXT)
-        and _timestamp(value.get("observed_at"))
-    ):
-        return False
-    if kind == "goal":
-        return value.get("status") in _GOAL_STATUSES and value.get("owner") in _GOAL_OWNERS
-    if kind == "improvement":
-        return value.get("status") in _IMPROVEMENT_STATUSES
-    return value.get("status") == "complete"
-
-
-def _focus(value: object) -> bool:
-    if value is None:
-        return True
-    if not isinstance(value, dict) or set(value) != {
-        "focus_id", "title", "status", "stage", "next_action", "next_gate",
-        "blockers", "source_receipt_sha256", "observed_at",
-    }:
-        return False
-    gate = value.get("next_gate")
-    return (
-        _identifier(value.get("focus_id"))
-        and _text(value.get("title"), MAX_SHORT_TEXT)
-        and value.get("status") in _FOCUS_STATUSES
-        and _text(value.get("stage"), MAX_SHORT_TEXT)
-        and _text(value.get("next_action"))
-        and isinstance(gate, dict)
-        and set(gate) == {"from", "to", "artifact", "status", "owner"}
-        and all(_text(gate.get(field), MAX_SHORT_TEXT) for field in ("from", "to", "artifact", "owner"))
-        and gate.get("status") in _GATE_STATUSES
-        and isinstance(value.get("blockers"), list)
-        and len(value["blockers"]) <= MAX_ITEMS
-        and all(_text(item, MAX_SHORT_TEXT) for item in value["blockers"])
-        and isinstance(value.get("source_receipt_sha256"), str)
-        and _SHA256.fullmatch(value["source_receipt_sha256"]) is not None
-        and _timestamp(value.get("observed_at"))
-    )
-
-
-def _agent_activity(row: dict) -> bool:
-    """Optional live-activity fields a bridge projection adds to an agent card."""
-    items = row.get("items", [])
-    relay = row.get("relay")
-    return (
-        ("role" not in row or _text(row["role"], MAX_SHORT_TEXT))
-        and (row.get("activity") is None or _text(row["activity"], MAX_SHORT_TEXT))
-        and all(row.get(key) is None or _timestamp(row[key]) for key in ("activity_at", "since"))
-        and isinstance(items, list) and len(items) <= MAX_ITEMS
-        and all(isinstance(item, dict) and set(item) == {"id", "goal", "owner", "title"}
-                and all(_text(field, MAX_SHORT_TEXT) for field in item.values()) for item in items)
-        and (relay is None or (
-            isinstance(relay, dict) and set(relay) == {"status", "detail", "observed_at", "source"}
-            and relay.get("status") in _AGENT_STATUSES and _text(relay.get("detail"))
-            and _timestamp(relay.get("observed_at")) and _text(relay.get("source"), MAX_SHORT_TEXT)
-        ))
-    )
-
-
 def _agents(value: object) -> bool:
+    """Slim live agent cards: status, one "Now" line, since/observed times, relay."""
     if not isinstance(value, dict) or not {"oracle", "pi_client", "nara"} <= set(value) <= {
         "oracle", "pi_client", "nara", "meta_oracle",
     }:
@@ -246,16 +161,24 @@ def _agents(value: object) -> bool:
         if not isinstance(row, dict) or not (
             {"label", "status", "detail", "observed_at", "source"} <= set(row)
             <= {"label", "status", "detail", "observed_at", "source",
-                "role", "activity", "activity_at", "since", "items", "relay"}
+                "role", "activity", "activity_at", "since", "relay"}
         ):
             return False
+        relay = row.get("relay")
         if not (
             _text(row.get("label"), MAX_SHORT_TEXT)
             and row.get("status") in _AGENT_STATUSES
             and _text(row.get("detail"))
             and _timestamp(row.get("observed_at"))
             and _text(row.get("source"), MAX_SHORT_TEXT)
-            and _agent_activity(row)
+            and ("role" not in row or _text(row["role"], MAX_SHORT_TEXT))
+            and (row.get("activity") is None or _text(row["activity"], MAX_SHORT_TEXT))
+            and all(row.get(k) is None or _timestamp(row[k]) for k in ("activity_at", "since"))
+            and (relay is None or (
+                isinstance(relay, dict) and set(relay) == {"status", "detail", "observed_at", "source"}
+                and relay.get("status") in _AGENT_STATUSES and _text(relay.get("detail"))
+                and _timestamp(relay.get("observed_at")) and _text(relay.get("source"), MAX_SHORT_TEXT)
+            ))
         ):
             return False
         if key == "pi_client" and "client" not in row["label"].lower():
@@ -263,149 +186,12 @@ def _agents(value: object) -> bool:
     return True
 
 
-def _evidence(value: object) -> bool:
-    return (
-        isinstance(value, dict)
-        and set(value) == {"summary", "kind", "basis"}
-        and _text(value.get("summary"), MAX_SHORT_TEXT)
-        and value.get("kind") in _EVIDENCE_KINDS
-        and _text(value.get("basis"), MAX_SHORT_TEXT)
-    )
-
-
-def _conviction(value: object) -> bool:
-    if not isinstance(value, dict) or set(value) != {"score", "kind", "basis"}:
-        return False
-    score = value.get("score")
-    kind = value.get("kind")
-    return (
-        kind in _EVIDENCE_KINDS
-        and _text(value.get("basis"), MAX_SHORT_TEXT)
-        and (
-            (kind == "unrated" and score is None)
-            or (kind != "unrated" and type(score) is int and 0 <= score <= 10)
-        )
-    )
-
-
-def _work_cards(value: object) -> bool:
-    if not isinstance(value, list) or len(value) > 3:
-        return False
-    prior: set[str] = set()
-    for card in value:
-        expected = {
-            "id", "title", "what", "benefit", "cost", "conviction",
-            "worth_time", "status", "owner", "depends_on", "source",
-            "observed_at", "approval_required", "actions",
-        }
-        if not isinstance(card, dict) or set(card) != expected:
-            return False
-        ident = card.get("id")
-        dependencies = card.get("depends_on")
-        actions = card.get("actions")
-        worth = card.get("worth_time")
-        if not (
-            _identifier(ident)
-            and ident not in prior
-            and _text(card.get("title"), MAX_SHORT_TEXT)
-            and _text(card.get("what"))
-            and _text(card.get("benefit"))
-            and _evidence(card.get("cost"))
-            and _conviction(card.get("conviction"))
-            and isinstance(worth, dict)
-            and set(worth) == {"recommendation", "basis"}
-            and worth.get("recommendation") in _WORTH_TIME
-            and _text(worth.get("basis"), MAX_SHORT_TEXT)
-            and card.get("status") in _WORK_CARD_STATUSES
-            and card.get("owner") in _GOAL_OWNERS - {"owner"}
-            and isinstance(dependencies, list)
-            and len(dependencies) <= 3
-            and len(set(dependencies)) == len(dependencies)
-            and all(_identifier(item) and item in prior for item in dependencies)
-            and _text(card.get("source"), MAX_SHORT_TEXT)
-            and _timestamp(card.get("observed_at"))
-            and card.get("approval_required") is False
-            and isinstance(actions, list)
-            and 1 <= len(actions) <= 3
-            and len(set(actions)) == len(actions)
-            and set(actions).issubset(_DECISION_ACTIONS)
-            and "reprioritize" in actions
-        ):
-            return False
-        prior.add(ident)
-    return True
-
-
-def _agenda_decision(value: object, current_revision: object) -> bool:
-    if value is None:
-        return current_revision is None
-    expected = {
-        "id", "agenda_id", "revision", "title", "what", "reason",
-        "disposition", "approval_required", "approve_enabled",
-        "execution_available", "actions", "task_titles", "source",
-        "observed_at",
-    }
-    if not isinstance(value, dict) or set(value) != expected:
-        return False
-    actions = value.get("actions")
-    titles = value.get("task_titles")
-    return (
-        _identifier(value.get("id"))
-        and _identifier(value.get("agenda_id"))
-        and _identifier(value.get("revision"))
-        and value.get("revision") == current_revision
-        and _text(value.get("title"), MAX_SHORT_TEXT)
-        and _text(value.get("what"))
-        and _text(value.get("reason"))
-        and value.get("disposition") in _AGENDA_DISPOSITIONS
-        and value.get("approval_required") is False
-        and value.get("approve_enabled") is False
-        and value.get("execution_available") is False
-        and isinstance(actions, list)
-        and 1 <= len(actions) <= 2
-        and len(set(actions)) == len(actions)
-        and set(actions).issubset({"modify", "skip"})
-        and isinstance(titles, list)
-        and len(titles) <= 3
-        and all(_text(title, MAX_SHORT_TEXT) for title in titles)
-        and _text(value.get("source"), MAX_SHORT_TEXT)
-        and _timestamp(value.get("observed_at"))
-    )
-
-
 def _validate_summary(value: object) -> dict:
-    if not isinstance(value, dict):
-        raise ValueError("summary is not an object")
-    schema = value.get("schema_version")
-    expected = _SUMMARY_FIELDS_V2 if schema == SUMMARY_SCHEMA else _SUMMARY_FIELDS_V1
-    if schema not in {SUMMARY_SCHEMA, LEGACY_SUMMARY_SCHEMA} or set(value) != expected:
+    """Accept only the live v3 projection; retired v1/v2 briefs are refused."""
+    if not isinstance(value, dict) or value.get("schema_version") != SUMMARY_SCHEMA:
         raise ValueError("summary fields do not match a supported contract")
-    if not _timestamp(value.get("generated_at")):
-        raise ValueError("summary schema or timestamp is invalid")
-    revision = value.get("current_plan_revision")
-    if revision is not None and not _identifier(revision):
-        raise ValueError("summary current plan revision is invalid")
-    for field, kind in (
-        ("goals", "goal"), ("accomplishments", "accomplishment"),
-        ("improvements", "improvement"),
-    ):
-        rows = value.get(field)
-        if not isinstance(rows, list) or len(rows) > MAX_ITEMS or not all(
-            _summary_item(row, kind=kind) for row in rows
-        ):
-            raise ValueError(f"summary {field} is invalid")
-    warnings = value.get("warnings")
-    if not isinstance(warnings, list) or len(warnings) > MAX_ITEMS or not all(
-        _text(item, MAX_SHORT_TEXT) for item in warnings
-    ):
-        raise ValueError("summary warnings are invalid")
-    if not _focus(value.get("research_focus")) or not _agents(value.get("agents")):
-        raise ValueError("summary focus or agent observations are invalid")
-    if schema == SUMMARY_SCHEMA and (
-        not _work_cards(value.get("work_cards"))
-        or not _agenda_decision(value.get("agenda_decision"), revision)
-    ):
-        raise ValueError("summary work cards or agenda decision are invalid")
+    from .daily_ops_live import validate_live  # lazy: daily_ops_live imports this module
+    validate_live(value, _agents)
     if not _json_safe(value):
         raise ValueError("summary is not safely JSON encodable")
     return value
@@ -633,6 +419,7 @@ def register(
     message_router: Callable[[dict], dict] | None = None,
     decision_router: Callable[[dict], dict] | None = None,
     projection_refresher: Callable[[], None] | None = None,
+    live_summary: Callable[[], dict] | None = None,
 ) -> APIRouter:
     """Attach the daily-ops routes.
 
@@ -691,6 +478,18 @@ def register(
     @router.get("/summary")
     def summary():
         _refresh_projection()
+        if projection_refresher is None and live_summary is not None:
+            # No relay writes the projection: derive it now instead of serving
+            # whatever file an earlier producer left behind.
+            try:
+                value = _validate_summary(live_summary())
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail="daily operations live projection is unavailable or invalid",
+                ) from exc
+            return {**value, "available": True, "source_sha256": None,
+                    "capabilities": capabilities}
         if not summary_path.exists():
             return {
                 "schema_version": SUMMARY_SCHEMA,
@@ -698,14 +497,15 @@ def register(
                 "generated_at": None,
                 "source_sha256": None,
                 "current_plan_revision": None,
-                "goals": [],
+                "daily_plan": None,
+                "research_focus": None,
+                "work_items": [],
+                "waiting_on_you": [],
                 "accomplishments": [],
                 "improvements": [],
-                "research_focus": None,
                 "agents": {},
                 "warnings": ["daily operations snapshot is not available"],
-                "work_cards": [],
-                "agenda_decision": None,
+                "sources": {"plan": None, "mailbox": None, "focus": None, "git": None},
                 "capabilities": capabilities,
             }
         try:

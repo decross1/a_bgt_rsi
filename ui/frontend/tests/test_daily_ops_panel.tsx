@@ -28,38 +28,84 @@ vi.mock("../src/api/pollhub", () => ({
   refreshPoll: vi.fn(),
 }));
 
-import DailyOpsPanel, { makeRequestId } from "../src/components/DailyOpsPanel";
+import DailyOpsPanel, { makeRequestId, nowLine } from "../src/components/DailyOpsPanel";
 
 const now = "2026-09-20T08:00:00Z";
+const PLAN = "2026-09-20-r2";
 
-function summary(overrides: Record<string, unknown> = {}) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Loose = Record<string, any>;
+
+function item(id: string, lane: string, status: string, extra: Loose = {}): Loose {
   return {
-    schema_version: "daily-ops-summary/v1",
+    id, goal: "G7.1", owner: lane.startsWith("nara") ? "nara" : lane === "owner_decision" ? "owner" : "oracle",
+    lane, repo: "a_bgt_rsi", title: `Item ${id} title`, why_today: `Why ${id}.`, acceptance: `Accept ${id}.`,
+    depends_on: [], status, detail: `Detail for ${id}.`, evidence_msg_id: null, evidence_sha: null,
+    evidence_at: null, ...extra,
+  };
+}
+
+function summary(overrides: Loose = {}): Loose {
+  return {
+    schema_version: "daily-ops-summary/v3",
     available: true,
     generated_at: now,
     source_sha256: "a".repeat(64),
-    current_plan_revision: "plan-revision-20260920-0800",
-    goals: [{ id: "goal-1", title: "Close the instrument gap", detail: "Freeze the corrected contract.", source: "focus", observed_at: now, status: "in_progress", owner: "oracle" }],
-    accomplishments: [{ id: "done-1", title: "Rebuilt Oracle recall", detail: "Targeted retrieval works again.", source: "receipt", observed_at: now, status: "complete" }],
-    improvements: [{ id: "improvement-1", title: "Bounded daily brief", detail: "Reduced startup context.", source: "receipt", observed_at: now, status: "verified" }],
-    research_focus: {
-      focus_id: "focus-1", title: "Does payoff assistance improve strategic planning?",
-      status: "blocked", stage: "instrument calibration", next_action: "Review the corrected tool contract.",
-      next_gate: { from: "calibration", to: "registered study", artifact: "Frozen preregistration and verifier", status: "blocked", owner: "Oracle + Codex" },
-      blockers: ["Tool contract needs a fresh calibration"], source_receipt_sha256: "b".repeat(64), observed_at: now,
+    current_plan_revision: PLAN,
+    daily_plan: {
+      id: PLAN, date: "2026-09-20", revision: "r2", path: `run_state/daily_plans/${PLAN}.json`,
+      sha256: "b".repeat(64), written_at: now, is_current: true,
+      week_alignment: "Finishes G0 before starting G1.",
+      bottlenecks: ["Nothing can select the next research focus.", "The lane has nothing admissible."],
+      review: { note_msg_id: "oracle-f04a55e3a7ddc8b3", sha_matches: true, verdict: "amend",
+        review_msg_id: "claude-bfc06cece11638c0", reviewed_at: now, summary: "Accept d2, d4 and d5.",
+        accepted_items: ["d2", "d4", "d5"] },
     },
+    research_focus: {
+      status: "none", observed_at: now,
+      last_closure: { focus_id: "payoff-assistance", title: "Does payoff assistance improve strategic planning?",
+        disposition: "killed", closed_at: "2026-09-19T23:39:12Z",
+        reason: "Development closed for opportunity cost, not refuted.", closure_sha256: "c".repeat(64) },
+    },
+    work_items: [
+      item("d1", "oracle_dev", "merged", { detail: "Merge oracle/2026-09-20-d1 at 8c6c92a", evidence_sha: "2cbe6dbe8a39", evidence_at: now }),
+      item("d2", "nara_dev", "held", { evidence_msg_id: "nara-f5ac608bc8da3020", depends_on: ["d1"] }),
+      item("d3", "oracle_dev", "awaiting_review"),
+      item("d4", "nara_dev", "not_started"),
+      item("d5", "owner_decision", "waiting_on_you", { evidence_msg_id: "claude-81a020b8a67564fb" }),
+    ],
+    waiting_on_you: [
+      { kind: "owner_decision", id: `${PLAN}:d5`, title: "Item d5 title", asked_by: "claude", asked_at: now,
+        msg_id: "claude-81a020b8a67564fb",
+        cli: ".venv-chroma/bin/python -m orchestrator.oracle_mailbox post --as human:derrick --kind answer --to claude --in-reply-to claude-81a020b8a67564fb --body '{\"text\": \"...\"}'" },
+      { kind: "question", id: "claude-18ae939243e70e7d", title: "Two authority rulings", asked_by: "claude",
+        asked_at: now, msg_id: "claude-18ae939243e70e7d", cli: "answer claude-18ae939243e70e7d" },
+    ],
+    accomplishments: [
+      { id: "2026-09-20:d1", kind: "merged", title: "2026-09-20 d1 (G7.1): Lane precheck", at: now, evidence: "2cbe6dbe8a39" },
+      { id: "closure:c", kind: "focus_closed", title: "Focus killed: payoff assistance", at: now, evidence: "cccccccccccc" },
+    ],
+    improvements: [
+      { sha: "f5ee462351aa", at: now, subject: "Mark G0.2 done (focus-selection CLI)", goals: ["G0.2"] },
+      { sha: "b8018dfaa6a1", at: now, subject: "Now page: agent cards", goals: [] },
+    ],
     agents: {
-      oracle: { label: "Oracle", status: "working", detail: "Reviewing the next gate.", observed_at: now, source: "mailbox" },
-      pi_client: { label: "Pi", status: "online", detail: "Oracle client reloaded.", observed_at: now, source: "session" },
+      oracle: { label: "Oracle", status: "working", detail: "Live run.", observed_at: now, source: "proc",
+        role: "Steward (daily loop)", activity: "daily-loop phase work for 2026-09-20", activity_at: now,
+        since: "2026-09-20T07:30:00Z" },
+      pi_client: { label: "Pi client", status: "online", detail: "Oracle client reloaded.", observed_at: now, source: "session" },
       nara: { label: "Nara", status: "idle", detail: "Awaiting registered work.", observed_at: now, source: "service" },
     },
     warnings: [],
-    capabilities: { auth_required: true, write_available: true, targets: ["oracle"], intents: ["question", "change_request"], nara_interaction: "ask_oracle_about_nara" },
+    sources: { plan: now, mailbox: now, focus: "2026-09-19T23:39:12Z", git: now },
+    capabilities: { auth_required: true, write_available: true, targets: ["oracle"], intents: ["question", "change_request"],
+      nara_interaction: "ask_oracle_about_nara", decision_write_available: true,
+      decision_actions: ["modify", "skip", "reprioritize"] },
     ...overrides,
   };
 }
 
-function messages(overrides: Record<string, unknown> = {}) {
+function messages(overrides: Loose = {}) {
   return {
     schema_version: "daily-ops-messages/v1",
     available: true,
@@ -67,59 +113,6 @@ function messages(overrides: Record<string, unknown> = {}) {
     rows: [{ request_id: "request-1", created_at: now, actor: "owner", intent: "question", status: "queued", text: "What is blocking the study?", target: "oracle", plan_revision: null }],
     ...overrides,
   };
-}
-
-function v2Summary(overrides: Record<string, unknown> = {}) {
-  const revision = "1044a9c5ff6b617a7f7fce104019202fd77d38bdb2294ff8749100ed331e9621";
-  return summary({
-    schema_version: "daily-ops-summary/v2",
-    current_plan_revision: revision,
-    warnings: [],
-    capabilities: {
-      auth_required: true, write_available: true, targets: ["oracle"],
-      intents: ["question", "change_request"], nara_interaction: "ask_oracle_about_nara",
-      decision_write_available: true, decision_actions: ["modify", "skip", "reprioritize"],
-    },
-    work_cards: [
-      {
-        id: "build-v2-runner", title: "Finish the experiment runner", what: "Build the runner and evidence records for the current thesis.",
-        benefit: "Lets us run a controlled test and inspect exactly what happened.",
-        cost: { summary: "4–8 engineering hours; no local study runs.", kind: "estimate", basis: "Codex planning estimate from the accepted v2 development sequence; not measured effort." },
-        conviction: { score: 9, kind: "estimate", basis: "Reviewer judgment that this work is worth doing; not a probability of a positive research result." },
-        worth_time: { recommendation: "do_now", basis: "The offline core is complete; this is the next missing integration." },
-        status: "authorized", owner: "codex", depends_on: [], source: "curated daily brief", observed_at: now,
-        approval_required: false, actions: ["modify", "skip", "reprioritize"],
-      },
-      {
-        id: "verify-v2-replay", title: "Check that results can be reproduced", what: "Independently replay the retained evidence and check new fixtures.",
-        benefit: "Catches missing or duplicate steps before we trust study results.",
-        cost: { summary: "2–4 review hours; no local study runs.", kind: "estimate", basis: "Codex planning estimate from the accepted v2 development sequence; not measured effort." },
-        conviction: { score: 9, kind: "estimate", basis: "Reviewer judgment that this work is worth doing; not a probability of a positive research result." },
-        worth_time: { recommendation: "after_dependency", basis: "Start after the runner and new replay fixtures are available." },
-        status: "authorized", owner: "codex", depends_on: ["build-v2-runner"], source: "curated daily brief", observed_at: now,
-        approval_required: false, actions: ["modify", "skip", "reprioritize"],
-      },
-      {
-        id: "draft-v2-shakedown", title: "Plan a small trial", what: "Draft a small, excluded shakedown test for review.",
-        benefit: "Finds setup problems cheaply before the registered study.",
-        cost: { summary: "1–2 agent/review hours; about 1–5 local model minutes.", kind: "estimate", basis: "Codex planning estimate from the accepted v2 development sequence; not measured effort." },
-        conviction: { score: 8, kind: "estimate", basis: "Reviewer judgment that this work is worth doing; not a probability of a positive research result." },
-        worth_time: { recommendation: "after_dependency", basis: "Draft after independent runner/replay acceptance; this card does not run a study." },
-        status: "authorized", owner: "oracle", depends_on: ["verify-v2-replay"], source: "curated daily brief", observed_at: now,
-        approval_required: false, actions: ["modify", "skip", "reprioritize"],
-      },
-    ],
-    agenda_decision: {
-      id: "agenda-decision-1044", agenda_id: "morning-20260920", revision,
-      title: "Morning agenda needs amendment", what: "Keep the runner direction, but replace the stale task framing.",
-      reason: "It imported unrelated L1 debt and used historical episodes as a denominator.",
-      disposition: "amend_required", approval_required: false, approve_enabled: false,
-      execution_available: false, actions: ["modify", "skip"],
-      task_titles: ["Repeat old calibration", "Resolve unrelated L1 debt"],
-      source: "independent semantic review", observed_at: now,
-    },
-    ...overrides,
-  });
 }
 
 function show() {
@@ -131,12 +124,11 @@ beforeEach(() => {
   D.summary = summary();
   D.messages = messages();
   D.messageError = null;
-  D.post.mockReset().mockResolvedValue({ request_id: "request-2", status: "queued", accepted_at: now, duplicate: false, expected_plan_revision: "plan-revision-20260920-0800" });
+  D.post.mockReset().mockResolvedValue({ request_id: "request-2", status: "queued", accepted_at: now, duplicate: false, expected_plan_revision: PLAN });
   D.postDecision.mockReset().mockResolvedValue({
     request_id: "11111111-1111-4111-8111-111111111111", status: "queued",
-    accepted_at: now, duplicate: false, target_kind: "work_card", target_id: "build-v2-runner",
-    action: "modify", expected_plan_revision: "1044a9c5ff6b617a7f7fce104019202fd77d38bdb2294ff8749100ed331e9621",
-    execution_available: false,
+    accepted_at: now, duplicate: false, target_kind: "work_card", target_id: "d2",
+    action: "modify", expected_plan_revision: PLAN, execution_available: false,
   });
   vi.stubGlobal("crypto", { randomUUID: () => "11111111-1111-4111-8111-111111111111" });
 });
@@ -146,249 +138,215 @@ afterEach(() => {
 });
 
 describe("DailyOpsPanel", () => {
-  it("replaces verbose goals with three concise source-bound work cards", () => {
-    D.summary = v2Summary();
+  it("heads the panel with the plan of record, its bottlenecks and the meta-oracle verdict", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-20T09:00:00Z"));
     show();
+    expect(screen.getByTestId("daily-plan-badge")).toHaveTextContent("Plan of record 2026-09-20 r2 · written Sep 20");
+    const plan = screen.getByTestId("daily-plan");
+    expect(plan).toHaveTextContent("Today's plan · 2026-09-20 r2");
+    expect(plan).toHaveTextContent("Week alignment: Finishes G0 before starting G1.");
+    expect(plan).toHaveTextContent("Nothing can select the next research focus.");
+    expect(screen.getByTestId("daily-plan-review")).toHaveTextContent(
+      "Meta-oracle review: amend · accepted d2, d4, d5 · claude-bfc06cece11638c0");
+    expect(plan).toHaveTextContent("updated 60 min ago");
+    expect(screen.queryByTestId("daily-plan-stale")).toBeNull();
+    expect(screen.queryByText(/Daily notes last updated/)).toBeNull();
+    expect(screen.queryByText(/could not be verified/)).toBeNull();
+  });
 
+  it("says when the newest plan is not today's and when its producer went quiet", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-22T09:00:00Z"));
+    const base = summary();
+    D.summary = summary({ daily_plan: { ...base.daily_plan, is_current: false, review: null } });
+    show();
+    expect(screen.getByTestId("daily-plan-stale")).toHaveTextContent(
+      "The newest plan is for 2026-09-20; Oracle has not written a plan for today yet.");
+    expect(screen.getByTestId("daily-plan-review")).toHaveTextContent("No PLAN READY note names this plan file");
+    expect(screen.getByTestId("daily-plan")).toHaveTextContent("producer idle since Sep 20");
+  });
+
+  it("shows every plan item with its live status and evidence, with no card cap", () => {
+    show();
     expect(screen.getByRole("heading", { name: "Today's work" })).toBeInTheDocument();
-    expect(screen.getByText("These steps are already authorized. No owner approval is needed.")).toBeInTheDocument();
-    expect(screen.getAllByTestId(/^daily-work-card-/)).toHaveLength(3);
-    expect(screen.queryByText("Close the instrument gap")).toBeNull();
-    expect(screen.getByText("Build the runner and evidence records for the current thesis.")).toBeInTheDocument();
-    expect(screen.getByText("Lets us run a controlled test and inspect exactly what happened.")).toBeInTheDocument();
-    expect(screen.getByText("4–8 engineering hours; no local study runs.")).toBeInTheDocument();
-    expect(screen.getAllByText("9/10")).toHaveLength(2);
-    expect(screen.getByText("8/10")).toBeInTheDocument();
-    expect(screen.getAllByText("estimate").length).toBeGreaterThanOrEqual(6);
-    expect(screen.getByText("Build the runner and evidence records for the current thesis.")).toBeVisible();
-    expect(screen.getAllByText("Build the runner and evidence records for the current thesis.")).toHaveLength(1);
-    const metadata = screen.getAllByText("Basis, dependencies, and source")[0].closest("details");
-    expect(metadata).not.toHaveAttribute("open");
+    expect(screen.getAllByTestId(/^daily-work-card-d\d$/)).toHaveLength(5);
+    expect(screen.getByText("5 items")).toBeInTheDocument();
+    expect(screen.queryByText(/cards shown/)).toBeNull();
+    const d1 = screen.getByTestId("daily-work-card-d1");
+    expect(d1).toHaveTextContent("d1 · G7.1 · oracle dev");
+    expect(d1).toHaveTextContent("merged");
+    expect(d1).toHaveTextContent("sha 2cbe6dbe8a39");
+    expect(screen.getByTestId("daily-work-card-d2")).toHaveTextContent("held");
+    expect(screen.getByTestId("daily-work-card-d2")).toHaveTextContent("nara-f5ac608bc8da3020");
+    expect(screen.getByTestId("daily-work-card-d3")).toHaveTextContent("awaiting review");
+    expect(screen.getByTestId("daily-work-card-d4")).toHaveTextContent("not started");
+    expect(screen.getByTestId("daily-work-card-d5")).toHaveTextContent("waiting on you");
+    const why = within(screen.getByTestId("daily-work-card-d2")).getByText("Why today, acceptance, dependencies");
+    fireEvent.click(why);
+    expect(screen.getByTestId("daily-work-card-d2")).toHaveTextContent("Accept d2.");
+    expect(screen.getByTestId("daily-work-card-d2")).toHaveTextContent("Depends ond1");
   });
 
-  it("shows the invalid agenda separately without an approval control", () => {
-    D.summary = v2Summary();
+  it("lists what is waiting on the owner with the mailbox command to answer", () => {
     show();
-
-    const agenda = screen.getByTestId("daily-agenda-decision");
-    expect(agenda).toHaveTextContent("amend required");
-    expect(agenda).toHaveTextContent("This agenda cannot be approved");
-    expect(within(agenda).queryByRole("button", { name: /approve/i })).toBeNull();
-    expect(within(agenda).getByRole("button", { name: "Request corrected draft" })).toBeEnabled();
-    expect(within(agenda).getByRole("button", { name: "Ask to skip" })).toBeEnabled();
-    const provenance = within(agenda).getByText("Revision, superseded proposal titles, and source").closest("details");
-    expect(provenance).not.toHaveAttribute("open");
+    const waiting = screen.getByTestId("daily-waiting-on-you");
+    expect(within(waiting).getByRole("heading", { name: "Waiting on you" })).toBeInTheDocument();
+    expect(screen.getByTestId(`daily-waiting-${PLAN}:d5`)).toHaveTextContent("plan decision");
+    expect(screen.getByTestId(`daily-waiting-${PLAN}:d5`)).toHaveTextContent(
+      "--kind answer --to claude --in-reply-to claude-81a020b8a67564fb");
+    expect(screen.getByTestId("daily-waiting-claude-18ae939243e70e7d")).toHaveTextContent("Two authority rulings");
   });
 
-  it("turns the AMEND action into a corrected-draft request, not approval", async () => {
-    D.summary = v2Summary();
+  it("gives an accurate one-line reason when change requests are unavailable", () => {
+    const base = summary();
+    const relay = { status: "offline", detail: "Mailbox is unavailable or stale.", observed_at: now, source: "Oracle oversight mailbox heartbeat" };
+    D.summary = summary({ agents: { ...base.agents, oracle: { ...base.agents.oracle, relay },
+      pi_client: { ...base.agents.pi_client, relay } } });
+    show();
+    expect(screen.getByTestId("daily-decisions-readonly")).toHaveTextContent(
+      "Change requests are unavailable: the Oracle Pi relay is offline (Mailbox is unavailable or stale).");
+    expect(within(screen.getByTestId("daily-work-card-d2")).getByRole("button", { name: "Ask to modify" })).toBeDisabled();
+    expect(screen.getByTestId("daily-ops-relay")).toHaveTextContent("Owner relay: offline — Mailbox is unavailable or stale.");
+
+    D.summary = summary({ capabilities: { ...base.capabilities, decision_write_available: false } });
+    show();
+    expect(screen.getAllByTestId("daily-decisions-readonly")[1]).toHaveTextContent(
+      "no authenticated Oracle relay is configured");
+  });
+
+  it("queues a per-item request bound to the plan of record", async () => {
     sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
     show();
-    const agenda = screen.getByTestId("daily-agenda-decision");
-
-    fireEvent.click(within(agenda).getByRole("button", { name: "Request corrected draft" }));
+    fireEvent.click(within(screen.getByTestId("daily-work-card-d2")).getByRole("button", { name: "Ask to modify" }));
     const editor = screen.getByTestId("daily-decision-editor");
-    fireEvent.change(within(editor).getByLabelText("Required change"), {
-      target: { value: "Keep only the three current dependency-ordered steps." },
-    });
+    fireEvent.change(within(editor).getByLabelText("Required change"), { target: { value: "Wait for d1." } });
     fireEvent.click(within(editor).getByRole("button", { name: "Queue modification request" }));
-
     await waitFor(() => expect(D.postDecision).toHaveBeenCalledWith({
-      accessKey: "owner-secret",
-      requestId: "11111111-1111-4111-8111-111111111111",
-      targetKind: "agenda",
-      targetId: "agenda-decision-1044",
-      action: "modify",
-      expectedPlanRevision: "1044a9c5ff6b617a7f7fce104019202fd77d38bdb2294ff8749100ed331e9621",
-      note: "Keep only the three current dependency-ordered steps.",
-    }));
-    expect(within(editor).getByText(/No execution is implied/)).toBeInTheDocument();
-    expect(within(agenda).queryByRole("button", { name: /approve/i })).toBeNull();
-  });
-
-  it("focuses a card request and queues only an exact-revision advisory", async () => {
-    D.summary = v2Summary();
-    sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
-    show();
-    const card = screen.getByTestId("daily-work-card-build-v2-runner");
-
-    fireEvent.click(within(card).getByRole("button", { name: "Ask to modify" }));
-    const editor = screen.getByTestId("daily-decision-editor");
-    await waitFor(() => expect(editor).toHaveFocus());
-    const submit = within(editor).getByRole("button", { name: "Queue modification request" });
-    expect(submit).toBeDisabled();
-    const note = within(editor).getByLabelText("Required change");
-    expect(note).toHaveAttribute("maxlength", "3000");
-    fireEvent.change(note, {
-      target: { value: "Keep the runner bounded to the accepted replay contract." },
-    });
-    expect(submit).toBeEnabled();
-    fireEvent.click(submit);
-
-    await waitFor(() => expect(D.postDecision).toHaveBeenCalledWith({
-      accessKey: "owner-secret",
-      requestId: "11111111-1111-4111-8111-111111111111",
-      targetKind: "work_card",
-      targetId: "build-v2-runner",
-      action: "modify",
-      expectedPlanRevision: "1044a9c5ff6b617a7f7fce104019202fd77d38bdb2294ff8749100ed331e9621",
-      note: "Keep the runner bounded to the accepted replay contract.",
+      accessKey: "owner-secret", requestId: "11111111-1111-4111-8111-111111111111",
+      targetKind: "work_card", targetId: "d2", action: "modify", expectedPlanRevision: PLAN,
+      note: "Wait for d1.",
     }));
     expect(await within(editor).findByText(/Request queued/)).toHaveTextContent("No execution is implied");
-    expect(submit).toBeDisabled();
-    fireEvent.click(submit);
-    expect(D.postDecision).toHaveBeenCalledTimes(1);
-    expect(D.post).not.toHaveBeenCalled();
   });
 
   it("does not apply a late request result to a different card editor", async () => {
-    D.summary = v2Summary();
     sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
     let resolveRequest: ((value: Record<string, unknown>) => void) | undefined;
     D.postDecision.mockReturnValueOnce(new Promise(resolve => { resolveRequest = resolve; }));
     show();
-
-    const first = screen.getByTestId("daily-work-card-build-v2-runner");
-    fireEvent.click(within(first).getByRole("button", { name: "Ask to modify" }));
+    fireEvent.click(within(screen.getByTestId("daily-work-card-d2")).getByRole("button", { name: "Ask to modify" }));
     let editor = screen.getByTestId("daily-decision-editor");
-    fireEvent.change(within(editor).getByLabelText("Required change"), {
-      target: { value: "Change the first card." },
-    });
+    fireEvent.change(within(editor).getByLabelText("Required change"), { target: { value: "Change d2." } });
     fireEvent.click(within(editor).getByRole("button", { name: "Queue modification request" }));
-    expect(within(editor).getByRole("button", { name: "Sending…" })).toBeDisabled();
-    fireEvent.submit(editor.querySelector("form") as HTMLFormElement);
-    expect(D.postDecision).toHaveBeenCalledTimes(1);
-
-    const second = screen.getByTestId("daily-work-card-verify-v2-replay");
-    fireEvent.click(within(second).getByRole("button", { name: "Ask to skip" }));
+    fireEvent.click(within(screen.getByTestId("daily-work-card-d4")).getByRole("button", { name: "Ask to skip" }));
     editor = screen.getByTestId("daily-decision-editor");
-    expect(within(editor).getByRole("heading", {
-      name: "Ask to skip · Check that results can be reproduced",
-    })).toBeInTheDocument();
-    expect(within(editor).getByRole("button", { name: "Queue skip request" })).toBeEnabled();
-
     await act(async () => {
-      resolveRequest?.({
-        request_id: "11111111-1111-4111-8111-111111111111", status: "queued",
-        accepted_at: now, duplicate: false, target_kind: "work_card",
-        target_id: "build-v2-runner", action: "modify",
-        expected_plan_revision: "1044a9c5ff6b617a7f7fce104019202fd77d38bdb2294ff8749100ed331e9621",
-        execution_available: false,
-      });
+      resolveRequest?.({ request_id: "11111111-1111-4111-8111-111111111111", status: "queued", accepted_at: now,
+        duplicate: false, target_kind: "work_card", target_id: "d2", action: "modify",
+        expected_plan_revision: PLAN, execution_available: false });
       await Promise.resolve();
     });
-
     expect(within(editor).queryByText(/Request queued/)).toBeNull();
     expect(within(editor).getByRole("button", { name: "Queue skip request" })).toBeEnabled();
-    expect(D.postDecision).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps a request local and focuses owner access until the tab is unlocked", async () => {
-    D.summary = v2Summary();
+  it("shows no active focus with the last closure and the exploratory intake", () => {
     show();
-    const card = screen.getByTestId("daily-work-card-build-v2-runner");
-
-    fireEvent.click(within(card).getByRole("button", { name: "Ask to skip" }));
-    const editor = screen.getByTestId("daily-decision-editor");
-    expect(within(editor).getByRole("button", { name: "Queue skip request" })).toBeDisabled();
-    fireEvent.click(within(editor).getByRole("button", { name: "Open owner access controls ↓" }));
-    await waitFor(() => expect(screen.getByLabelText(/Owner access key/)).toHaveFocus());
-    expect(D.postDecision).not.toHaveBeenCalled();
+    expect(screen.getByRole("heading", { name: "Research focus" })).toBeInTheDocument();
+    expect(screen.getByTestId("daily-focus-none")).toHaveTextContent("No active focus");
+    expect(screen.getByText("exploratory arXiv intake")).toBeInTheDocument();
+    const closure = screen.getByTestId("daily-focus-closure");
+    expect(closure).toHaveTextContent("killed · Does payoff assistance improve strategic planning?");
+    expect(closure).toHaveTextContent("payoff-assistance · closed Sep 19");
+    expect(closure).toHaveTextContent("Development closed for opportunity cost");
+    expect(screen.queryByText(/could not be verified/)).toBeNull();
   });
 
-  it("keeps decision controls read-only when only the chat router can write", () => {
-    const candidate = v2Summary() as Record<string, unknown>;
-    candidate.capabilities = {
-      ...(candidate.capabilities as Record<string, unknown>),
-      decision_write_available: false,
-    };
-    D.summary = candidate;
-    sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
+  it("shows a selected focus and an invalid focus source honestly", () => {
+    D.summary = summary({ research_focus: { status: "selected", observed_at: now, focus_id: "f1",
+      title: "Does coordination scale?", stage: "needs_clean_refinement", next_action: "Refine the hypothesis.",
+      intake_policy: "focus_before_new_topics", selected_at: now } });
+    const { unmount } = show();
+    expect(screen.getByText("Does coordination scale?")).toBeInTheDocument();
+    expect(screen.getByText("Refine the hypothesis.")).toBeInTheDocument();
+    expect(screen.getByText("focus before new topics")).toBeInTheDocument();
+    unmount();
+    D.summary = summary({ research_focus: { status: "source_invalid", observed_at: now, reason: "FocusError" } });
     show();
-
-    expect(screen.getByTestId("daily-decisions-readonly")).toHaveTextContent(
-      "Decision requests are read-only",
-    );
-    const card = screen.getByTestId("daily-work-card-build-v2-runner");
-    expect(within(card).getByRole("button", { name: "Ask to modify" })).toBeDisabled();
-    expect(screen.queryByTestId("daily-decision-editor")).toBeNull();
-
-    fireEvent.change(screen.getByLabelText("Message to Oracle"), {
-      target: { value: "The separate chat route still works." },
-    });
-    expect(screen.getByRole("button", { name: "Queue for Oracle" })).toBeEnabled();
-    expect(D.postDecision).not.toHaveBeenCalled();
+    expect(screen.getByTestId("daily-focus-invalid")).toHaveTextContent("The research focus source is invalid: FocusError");
   });
 
-  it("keeps decision controls read-only while Oracle is degraded", () => {
-    const candidate = v2Summary() as Record<string, unknown>;
-    const agents = candidate.agents as Record<string, Record<string, unknown>>;
-    candidate.agents = {
-      ...agents,
-      oracle: { ...agents.oracle, status: "degraded", detail: "Review scope is unavailable." },
-    };
-    D.summary = candidate;
-    sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
+  it("lists live accomplishments and main merges with goal ids highlighted", () => {
     show();
-
-    const card = screen.getByTestId("daily-work-card-build-v2-runner");
-    expect(within(card).getByRole("button", { name: "Ask to skip" })).toBeDisabled();
-    expect(screen.getByTestId("daily-decisions-readonly")).toBeInTheDocument();
-    expect(D.postDecision).not.toHaveBeenCalled();
+    expect(screen.getByRole("heading", { name: "Accomplished · last 7 days" })).toBeInTheDocument();
+    expect(screen.getByText("2026-09-20 d1 (G7.1): Lane precheck")).toBeInTheDocument();
+    expect(screen.getByText("Evidence: 2cbe6dbe8a39")).toBeInTheDocument();
+    expect(screen.getByText("focus closed")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "System improvements · merged to main, last 7 days" })).toBeInTheDocument();
+    expect(screen.getByText("Mark G0.2 done (focus-selection CLI)")).toBeInTheDocument();
+    expect(screen.getByText("G0.2", { selector: "span" })).toBeInTheDocument();
+    expect(screen.getByText("main f5ee462351aa")).toBeInTheDocument();
+    expect(screen.queryByText(/recorded Sep/)).toBeNull();
   });
 
-  it("rejects a v2 agenda that is not bound to the exact displayed revision", () => {
-    const candidate = v2Summary() as Record<string, unknown>;
-    candidate.agenda_decision = {
-      ...(candidate.agenda_decision as Record<string, unknown>),
-      revision: "different-revision",
-    };
-    D.summary = candidate;
+  it("keeps more than four improvements behind the existing disclosure", () => {
+    D.summary = summary({ improvements: Array.from({ length: 6 }, (_, index) => ({
+      sha: `abcdef${index}`, at: now, subject: `Merged change ${index + 1}`, goals: [] })) });
     show();
-
-    expect(screen.getByTestId("daily-ops-fallback")).toHaveTextContent("Daily synthesis unavailable");
-    expect(screen.queryByTestId("daily-decision-cards")).toBeNull();
+    expect(screen.getByText("Merged change 4")).toBeInTheDocument();
+    const more = screen.getByText("Show 2 more recorded items");
+    fireEvent.click(more);
+    expect(screen.getByText("Merged change 6")).toBeInTheDocument();
   });
 
-  it("rejects future agenda dispositions that v2 cannot authorize", () => {
-    const candidate = v2Summary() as Record<string, unknown>;
-    candidate.agenda_decision = {
-      ...(candidate.agenda_decision as Record<string, unknown>),
-      disposition: "ready_for_review",
-    };
-    D.summary = candidate;
-    show();
-
-    expect(screen.getByTestId("daily-ops-fallback")).toHaveTextContent("Daily synthesis unavailable");
-    expect(screen.queryByText(/ready for review/i)).toBeNull();
-  });
-
-  it("does not call unreviewed sealed tasks superseded", () => {
-    const candidate = v2Summary() as Record<string, unknown>;
-    candidate.agenda_decision = {
-      ...(candidate.agenda_decision as Record<string, unknown>),
-      disposition: "review_required",
-    };
-    D.summary = candidate;
-    show();
-
-    expect(screen.getByText("Revision, sealed proposal titles, and source")).toBeInTheDocument();
-    expect(screen.queryByText("Revision, superseded proposal titles, and source")).toBeNull();
-  });
-
-  it("summarizes the day and shows the main thesis exactly once", () => {
+  it("shows slim agent cards: status, one Now line and times, no plan list or prose", () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-09-20T12:00:00Z"));
+    vi.setSystemTime(new Date("2026-09-20T08:00:30Z"));
+    const relay = { status: "offline", detail: "Mailbox is unavailable or stale.", observed_at: now, source: "Oracle oversight mailbox heartbeat" };
+    D.summary = summary({
+      agents: {
+        oracle: { label: "Oracle", role: "Steward (daily loop)", status: "working", detail: "Live run observed in /proc.",
+          observed_at: now, source: "/proc oracle-daily", activity: "daily-loop phase work for 2026-09-20",
+          activity_at: "2026-09-20T07:30:00Z", since: "2026-09-20T07:30:00Z", relay },
+        pi_client: { label: "Pi client", role: "Owner's interactive Oracle client", status: "idle",
+          detail: "1 interactive Pi process(es).", observed_at: now, source: "/proc interactive pi",
+          activity: null, activity_at: null, since: "2026-09-20T06:00:00Z", relay },
+        nara: { label: "Nara research runner", role: "Research runner", status: "working",
+          detail: "Nara service is active.", observed_at: now, source: "nara-daemon.service",
+          activity: "lane: building Lab state packet", activity_at: "2026-09-20T07:58:00Z", since: "2026-09-20T07:58:00Z" },
+        meta_oracle: { label: "Meta-oracle (Claude)", role: "Reviewer", status: "idle", detail: "No live run.",
+          observed_at: now, source: "/proc meta_oracle_run.sh", activity: "last meta-oracle mode code for 2026-09-20 ended completed",
+          activity_at: "2026-09-20T07:41:00Z", since: "2026-09-20T07:41:00Z" },
+      },
+    });
+    sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
     show();
-    expect(screen.getByText("Goals for today")).toBeInTheDocument();
-    expect(screen.getByText("Recently accomplished")).toBeInTheDocument();
-    expect(screen.getByText("System improvements")).toBeInTheDocument();
-    expect(screen.getAllByText("Does payoff assistance improve strategic planning?")).toHaveLength(1);
-    expect(screen.getByText("Oracle client")).toBeInTheDocument();
-    expect(screen.getByText("Observed runner")).toBeInTheDocument();
-    expect(screen.getByText(/queued request is not approval/i)).toBeInTheDocument();
-    expect(screen.getByText(/Daily notes last updated Sep 20/)).toBeInTheDocument();
-    expect(screen.queryByTestId("daily-notes-stale")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Message to Oracle"), { target: { value: "Status?" } });
+
+    expect(screen.getByTestId("daily-ops-agent-oracle-now")).toHaveTextContent("Now: daily-loop phase work for 2026-09-20");
+    expect(screen.getByTestId("daily-ops-agent-pi-now")).toHaveTextContent("Now: idle since Sep 20, 06:00 AM UTC (2 h ago)");
+    expect(screen.getByTestId("daily-ops-agent-nara-now")).toHaveTextContent("Now: lane: building Lab state packet");
+    expect(screen.getByTestId("daily-ops-agent-meta-now")).toHaveTextContent(
+      "Now: idle since Sep 20, 07:41 AM UTC (19 min ago) · last meta-oracle mode code for 2026-09-20 ended completed");
+    const oracle = screen.getByTestId("daily-ops-agent-oracle");
+    expect(oracle).toHaveTextContent("Observed just now");
+    expect(oracle).not.toHaveTextContent("Live run observed");
+    expect(oracle).not.toHaveTextContent("Today's plan");
+    expect(oracle).not.toHaveTextContent("Owner message relay");
+    // The activity card is working, but owner messaging follows the offline relay.
+    expect(screen.getByRole("button", { name: "Queue for Oracle" })).toBeDisabled();
+  });
+
+  it("builds the Now line from facts, not prose", () => {
+    expect(nowLine({ status: "offline", activity: null, since: null })).toBe("offline");
+    expect(nowLine({ status: "active", activity: null, since: null })).toBe("active");
+  });
+
+  it("refuses a retired v2 hand-curated brief and falls back to the research view", () => {
+    D.summary = { ...summary(), schema_version: "daily-ops-summary/v2" };
+    show();
+    expect(screen.getByTestId("daily-ops-fallback")).toHaveTextContent("Daily synthesis unavailable");
   });
 
   it("identifies the temporary bounded responder without implying full Oracle authority", () => {
@@ -473,89 +431,6 @@ describe("DailyOpsPanel", () => {
     expect(screen.getByText(/Oracle bounded UI responder is unavailable; your draft is kept here/i)).toBeInTheDocument();
   });
 
-  it("dates authored notes while retaining a fresh agenda task after rollover", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-09-21T00:01:00Z"));
-    D.summary = summary({
-      generated_at: "2026-09-20T23:59:00Z",
-      goals: [
-        ...summary().goals,
-        {
-          id: "pending-agenda-current",
-          title: "Review the current sealed proposal",
-          detail: "This task was projected after the authored notes and still awaits owner review.",
-          source: "sealed pending agenda",
-          observed_at: "2026-09-21T00:00:30Z",
-          status: "awaiting_owner",
-          owner: "oracle",
-        },
-      ],
-    });
-
-    show();
-
-    expect(screen.getByTestId("daily-notes-stale")).toHaveTextContent(
-      "Authored daily notes are from Sep 20, 2026 UTC. Their statuses reflect that update.",
-    );
-    expect(screen.getByTestId("daily-notes-stale")).toHaveTextContent(
-      "The current sealed agenda, thesis, and agent observations update separately.",
-    );
-    expect(screen.getByRole("heading", { name: "Recorded goals and current agenda" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Accomplishments recorded Sep 20, 2026" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Improvements recorded Sep 20, 2026" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Goals for today" })).toBeNull();
-    expect(screen.getByText("Close the instrument gap")).toBeInTheDocument();
-    expect(screen.getByText("Review the current sealed proposal")).toBeInTheDocument();
-    expect(screen.getByText((_, element) =>
-      element?.textContent === "oracle · Sep 21, 12:00 AM UTC")).toBeInTheDocument();
-    expect(screen.getAllByText("Does payoff assistance improve strategic planning?")).toHaveLength(1);
-  });
-
-  it("keeps daily goals beyond the first four available inline", () => {
-    D.summary = summary({
-      goals: Array.from({ length: 6 }, (_, index) => ({
-        id: `goal-${index + 1}`,
-        title: `Daily goal ${index + 1}`,
-        detail: `Source-bound detail ${index + 1}.`,
-        source: "verified planner projection",
-        observed_at: now,
-        status: index > 2 ? "awaiting_owner" : "in_progress",
-        owner: "oracle",
-      })),
-    });
-    show();
-
-    expect(screen.getByText("Daily goal 4")).toBeInTheDocument();
-    const more = screen.getByText("Show 2 more recorded items");
-    expect(more.closest("details")).not.toHaveAttribute("open");
-    fireEvent.click(more);
-    expect(more.closest("details")).toHaveAttribute("open");
-    expect(screen.getByText("Daily goal 5")).toBeInTheDocument();
-    expect(screen.getByText("Daily goal 6")).toBeInTheDocument();
-  });
-
-  it("retains a valid backend-boundary agenda goal behind a compact detail disclosure", () => {
-    const boundaryTitle = "T".repeat(512);
-    const boundaryDetail = "D".repeat(4096);
-    D.summary = summary({
-      goals: [{
-        id: `g${"a".repeat(199)}`,
-        title: boundaryTitle,
-        detail: boundaryDetail,
-        source: "sealed pending agenda",
-        observed_at: now,
-        status: "awaiting_owner",
-        owner: "oracle",
-      }],
-    });
-    show();
-
-    expect(screen.getByText(boundaryTitle)).toBeInTheDocument();
-    const disclosure = screen.getByText("Full recorded detail").closest("details");
-    expect(disclosure).not.toHaveAttribute("open");
-    expect(screen.getByText(boundaryDetail)).toBeInTheDocument();
-  });
-
   it("queues a revision-bound plan change without claiming delivery", async () => {
     show();
     fireEvent.change(screen.getByLabelText(/Owner access key/), { target: { value: "owner-secret" } });
@@ -568,7 +443,7 @@ describe("DailyOpsPanel", () => {
       requestId: "11111111-1111-4111-8111-111111111111",
       intent: "change_request",
       text: "Move the verifier review ahead of new topic intake.",
-      expectedPlanRevision: "plan-revision-20260920-0800",
+      expectedPlanRevision: PLAN,
     }));
     expect(await screen.findByText(/Request queued/)).toHaveTextContent("No acknowledgment or execution is implied");
     expect(screen.queryByText(/delivered/i)).toBeNull();
@@ -659,18 +534,18 @@ describe("DailyOpsPanel", () => {
   });
 
   it("keeps plan changes disabled when no revision can be bound", () => {
-    D.summary = summary({ current_plan_revision: null });
+    D.summary = summary({ current_plan_revision: null, daily_plan: null });
     show();
     fireEvent.change(screen.getByLabelText(/Owner access key/), { target: { value: "owner-secret" } });
     fireEvent.click(screen.getByRole("button", { name: "Unlock for this tab" }));
     fireEvent.click(screen.getByRole("button", { name: "Request a plan change" }));
     fireEvent.change(screen.getByLabelText("Message to Oracle"), { target: { value: "Change the agenda." } });
     expect(screen.getByRole("button", { name: "Queue for Oracle" })).toBeDisabled();
-    expect(screen.getByText(/No current plan revision is available/)).toBeInTheDocument();
+    expect(screen.getByText(/No plan of record is available/)).toBeInTheDocument();
   });
 
   it("shows an honest read-only state when the router cannot write", () => {
-    D.summary = summary({ capabilities: { auth_required: true, write_available: false, targets: ["oracle"], intents: ["question", "change_request"], nara_interaction: "ask_oracle_about_nara" } });
+    D.summary = summary({ capabilities: { auth_required: true, write_available: false, targets: ["oracle"], intents: ["question", "change_request"], nara_interaction: "ask_oracle_about_nara", decision_write_available: false, decision_actions: [] } });
     D.messages = messages({ writable: false });
     show();
     expect(screen.getByTestId("daily-ops-readonly")).toHaveTextContent("authenticated Oracle router is not available");
@@ -703,61 +578,6 @@ describe("DailyOpsPanel", () => {
     expect(sessionStorage.getItem("oracle-lab-owner-access-key")).toBeNull();
     expect(screen.getByTestId("daily-ops-locked")).toBeInTheDocument();
     expect(screen.queryByText("What is blocking the study?")).toBeNull();
-  });
-
-  it("shows who is active, what each agent is doing, and the day's plan", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-09-20T08:00:30Z"));
-    const relay = { status: "offline", detail: "Mailbox is unavailable or stale.", observed_at: now, source: "Oracle oversight mailbox heartbeat" };
-    D.summary = summary({
-      agents: {
-        oracle: {
-          label: "Oracle", role: "Steward (daily loop)", status: "working",
-          detail: "Running daily-loop phase work for 2026-09-20.", observed_at: now,
-          source: "/proc oracle-daily", activity: "#56 note: READY FOR REVIEW: d3",
-          activity_at: "2026-09-20T07:55:00Z", since: "2026-09-20T07:30:00Z",
-          items: [{ id: "d1", goal: "G7.1", owner: "oracle", title: "Lane precheck" },
-            { id: "d2", goal: "G0.2", owner: "nara", title: "Lab state packet" }],
-          relay,
-        },
-        pi_client: {
-          label: "Pi client", role: "Owner's interactive Oracle client", status: "idle",
-          detail: "1 interactive Pi process(es); no session write in the last 10 min.", observed_at: now,
-          source: "/proc interactive pi", activity: null, activity_at: null, since: "2026-09-20T06:00:00Z", relay,
-        },
-        nara: {
-          label: "Nara research runner", role: "Research runner", status: "working",
-          detail: "Nara service is active.", observed_at: now, source: "nara-daemon.service",
-          activity: "Lane (claimed): Lab state packet", activity_at: "2026-09-20T07:58:00Z",
-          since: "2026-09-20T07:58:00Z",
-        },
-        meta_oracle: {
-          label: "Meta-oracle (Claude)", role: "Reviewer", status: "idle",
-          detail: "No live run. Last meta-oracle mode code for 2026-09-20 ended completed.", observed_at: now,
-          source: "/proc meta_oracle_run.sh", activity: "#55 review amend re READY FOR REVIEW: d1",
-          activity_at: "2026-09-20T07:40:00Z", since: "2026-09-20T07:41:00Z",
-        },
-      },
-    });
-    sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
-    show();
-    fireEvent.change(screen.getByLabelText("Message to Oracle"), { target: { value: "Status?" } });
-
-    const oracle = screen.getByTestId("daily-ops-agent-oracle");
-    expect(oracle).toHaveTextContent("working");
-    expect(oracle).toHaveTextContent("Now: #56 note: READY FOR REVIEW: d3 · 5 min ago");
-    expect(oracle).toHaveTextContent("Working since");
-    expect(oracle).toHaveTextContent("Today's plan · 2 items");
-    expect(oracle).toHaveTextContent("d2 · G0.2 · nara: Lab state packet");
-    expect(oracle).toHaveTextContent("Owner message relay: offline — Mailbox is unavailable or stale.");
-    expect(oracle).toHaveTextContent("Observed just now");
-    expect(screen.getByTestId("daily-ops-agent-pi")).toHaveTextContent("Idle since");
-    expect(screen.getByTestId("daily-ops-agent-nara")).toHaveTextContent("Now: Lane (claimed): Lab state packet");
-    const meta = screen.getByTestId("daily-ops-agent-meta");
-    expect(meta).toHaveTextContent("Reviewer");
-    expect(meta).toHaveTextContent("Latest: #55 review amend");
-    // The activity card is working, but owner messaging follows the offline relay.
-    expect(screen.getByRole("button", { name: "Queue for Oracle" })).toBeDisabled();
   });
 
   it("marks an agent card stale when its observation stopped refreshing", () => {

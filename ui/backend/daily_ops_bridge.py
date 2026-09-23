@@ -7,13 +7,11 @@ Mailbox receipts attest to delivery/visible assistant turns, not task success.
 from __future__ import annotations
 
 import fcntl
-import hashlib
 import hmac
 import json
 import logging
 import os
 import stat
-import subprocess
 import threading
 import time
 import uuid
@@ -24,17 +22,14 @@ from pathlib import Path
 from fastapi import HTTPException, Request
 
 from .daily_ops import (
-    MAX_SUMMARY_BYTES,
-    SUMMARY_SCHEMA,
     _decision_payload,
     _read_regular,
     _request_payload,
     _unique_object,
     _validate_summary,
 )
-from .daily_ops_agenda import read_pending_agenda
-from .daily_ops_agents import list_processes, observe as observe_agents
-from .daily_ops_work_plan import read_work_plan
+from .daily_ops_agents import list_processes, observe as observe_agents, observe_nara_service
+from .daily_ops_live import build as build_live, current_plan
 
 CANONICAL_INSTANCE = "canonical_oracle"
 BOUNDED_INSTANCE = "bounded_ui_responder"
@@ -238,8 +233,9 @@ class DailyOpsBridge:
         self.requests = self.private / "requests"
         self.requests.mkdir(mode=0o700, exist_ok=True)
         _private_directory(self.requests)
-        self.planner = Path(config["planner_latest"]) if config.get("planner_latest") else None
-        self.work_plan = self.state / "daily_ops_work_plan.json"
+        # ``planner_latest`` (the sealed oracle-daily-planning agenda) stays an
+        # accepted config key but is no longer read: the daily plan file under
+        # run_state/daily_plans/ is the one plan of record.
         self._mutex = threading.RLock()
         self._last_refresh = 0.0
         self._nara_checked = 0.0
@@ -412,31 +408,19 @@ class DailyOpsBridge:
         return False
 
     def _plan_revision(self) -> str | None:
-        if self.planner is None:
-            return None
-        return read_pending_agenda(self.planner, None)["revision"]
-
-    def _decision_projection(self) -> tuple[dict, dict]:
-        """Load the exact agenda plus focus-bound reviewer projection."""
-        focus = self._focus()
-        agenda = (
-            read_pending_agenda(self.planner, focus.get("observed_at"))
-            if self.planner is not None else
-            {"agenda_id": None, "revision": None, "decision": None, "warnings": []}
-        )
-        reviewed = read_work_plan(
-            self.work_plan,
-            agenda=agenda,
-            focus_receipt_sha256=focus.get("source_receipt_sha256"),
-        )
-        return agenda, reviewed
+        """The plan of record's id (``<date>[-rN]``), which change requests bind to."""
+        try:
+            current = current_plan(self.repo_root)
+        except (OSError, ValueError, KeyError, TypeError):
+            return None  # an unreadable plan binds nothing; change requests then fail 409
+        return current[0] if current else None
 
     @staticmethod
     def _decision_message(payload: dict) -> str:
         target = (
-            f"agenda {payload['target_id']}"
+            f"daily plan {payload['target_id']}"
             if payload["target_kind"] == "agenda" else
-            f"routine work card {payload['target_id']}"
+            f"daily plan item {payload['target_id']}"
         )
         action = payload["action"]
         if action == "modify":
@@ -451,9 +435,9 @@ class DailyOpsBridge:
             )
         return (
             f"{request}\n"
-            f"This owner request is bound to sealed revision "
+            f"This owner request is bound to plan revision "
             f"{payload['expected_plan_revision']}. It requests an amendment only: do "
-            "not treat it as approval, a sealed replacement, execution authority, or "
+            "not treat it as approval, a replacement plan, execution authority, or "
             "an immediate change of task status. Return a concise proposed change."
         )
 
@@ -471,22 +455,17 @@ class DailyOpsBridge:
         # consulting mutable display projections on retries.
         if not (self.requests / (payload["request_id"] + ".json")).exists():
             try:
-                agenda, reviewed = self._decision_projection()
+                current = current_plan(self.repo_root)
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 raise HTTPException(503, "owner decision projection is unavailable") from exc
-            if payload["expected_plan_revision"] != agenda.get("revision"):
-                raise HTTPException(409, "agenda revision changed or expired; refresh before requesting changes")
+            if current is None or payload["expected_plan_revision"] != current[0]:
+                raise HTTPException(409, "plan revision changed; refresh before requesting changes")
+            plan_id, plan = current
             if payload["target_kind"] == "agenda":
-                target = reviewed.get("agenda_decision")
+                valid = payload["target_id"] == plan_id and payload["action"] in {"modify", "skip"}
             else:
-                target = next(
-                    (card for card in reviewed.get("work_cards", [])
-                     if card.get("id") == payload["target_id"]),
-                    None,
-                )
-            if (not isinstance(target, dict)
-                    or target.get("id") != payload["target_id"]
-                    or payload["action"] not in target.get("actions", [])):
+                valid = payload["target_id"] in {item["id"] for item in plan["items"]}
+            if not valid:
                 raise HTTPException(409, "owner decision target or action is no longer current")
         receipt = self.route(message)
         return {
@@ -789,39 +768,10 @@ class DailyOpsBridge:
                          "status": status, "text": text[:4000], "in_reply_to": ident})
         return sorted(rows, key=lambda row: (row["created_at"], row["request_id"]))[-100:]
 
-    def _focus(self) -> dict:
-        pointer = _read(self.state / "active_research_focus.json", 4096)
-        sha = pointer.get("receipt_sha256")
-        if (pointer.get("schema_version") != "research-focus/v1" or not isinstance(sha, str)
-                or len(sha) != 64 or any(c not in "0123456789abcdef" for c in sha)):
-            raise ValueError("invalid research focus pointer")
-        raw = _read_regular(self.state / "research_focus" / (sha + ".json"), 16_384)
-        if hashlib.sha256(raw).hexdigest() != sha:
-            raise ValueError("research focus digest mismatch")
-        value = json.loads(raw, object_pairs_hook=_unique_object)
-        return {"focus_id": value["focus_id"], "title": value["title"],
-                "status": "blocked" if value.get("stage") == "blocked" else "selected",
-                "stage": "Development — no inherited scientific credit",
-                "next_action": value["next_action"], "next_gate": value["next_gate"],
-                "blockers": value["blockers"], "source_receipt_sha256": sha,
-                "observed_at": _iso(datetime.fromisoformat(value["selected_at"].replace("Z", "+00:00")))}
-
     def _observe_nara(self) -> dict:
         if self._nara_status is not None and time.monotonic() - self._nara_checked < 30:
             return self._nara_status
-        status, detail = "unknown", "Nara service could not be observed."
-        try:
-            result = subprocess.run(
-                ["/usr/bin/systemctl", "--user", "show", "nara-daemon.service", "--property=ActiveState", "--value"],
-                capture_output=True, text=True, timeout=1, check=False,
-            )
-            if result.returncode == 0:
-                status = "online" if result.stdout.strip() == "active" else "offline"
-                detail = "Nara service is active. Research execution still follows its registered gates." if status == "online" else "Nara service is not active."
-        except (OSError, subprocess.SubprocessError):
-            pass
-        self._nara_status = {"label": "Nara research runner", "status": status, "detail": detail,
-                             "observed_at": _iso(_now()), "source": "nara-daemon.service state"}
+        self._nara_status = observe_nara_service(_now())
         self._nara_checked = time.monotonic()
         return self._nara_status
 
@@ -829,35 +779,9 @@ class DailyOpsBridge:
         with self._locked():
             if time.monotonic() - self._last_refresh < 2:
                 return
-            summary = _read(self.state / "daily_ops_brief.json", MAX_SUMMARY_BYTES)
-            _validate_summary(summary)
-            # ``generated_at`` is the curated daily-notes timestamp.  Preserve
-            # it so a fresh runtime projection cannot make old goals look newly
-            # authored.  Dynamic sources below carry their own observation time.
-            try:
-                summary["research_focus"] = self._focus()
-            except (OSError, ValueError, KeyError, TypeError):
-                summary["research_focus"] = None
-                summary["warnings"] = (summary["warnings"] + ["Current research focus could not be verified."])[-16:]
-            agenda = read_pending_agenda(
-                self.planner, (summary["research_focus"] or {}).get("observed_at"),
-            ) if self.planner is not None else {
-                "agenda_id": None, "revision": None, "decision": None, "warnings": [],
-            }
-            reviewed = read_work_plan(
-                self.work_plan,
-                agenda=agenda,
-                focus_receipt_sha256=(summary["research_focus"] or {}).get(
-                    "source_receipt_sha256",
-                ),
-            )
-            summary["schema_version"] = SUMMARY_SCHEMA
-            summary["current_plan_revision"] = agenda["revision"]
-            summary["work_cards"] = reviewed["work_cards"]
-            summary["agenda_decision"] = reviewed["agenda_decision"]
-            summary["warnings"] = (
-                summary["warnings"] + agenda["warnings"] + reviewed["warnings"]
-            )[-16:]
+            # Every section is re-derived from its live producer; the retired
+            # hand-curated brief, sealed agenda and reviewed work plan are not read.
+            summary = build_live(self.repo_root, _now())
             status = self._mailbox_status()
             worker_status = self._bounded_worker_status()
             observation = _iso(_now()) if status is None else status["updated_at"]
@@ -918,12 +842,17 @@ class DailyOpsBridge:
             except (OSError, ValueError, KeyError, TypeError, AttributeError):
                 logging.getLogger(__name__).exception("live agent observation failed")
                 summary["warnings"] = (summary["warnings"] + [
-                    "Live agent observation failed; agent cards show the curated brief.",
+                    "Live agent observation failed; agent status is unknown.",
                 ])[-16:]
+                unknown = {"status": "unknown", "detail": "Live observation failed.",
+                           "observed_at": _iso(_now()), "source": "live agent observation"}
+                summary["agents"] = {
+                    "oracle": {"label": self.responder_label, **unknown},
+                    "pi_client": {"label": self.client_label, **unknown},
+                    "nara": {"label": "Nara research runner", **unknown},
+                }
             summary["agents"]["oracle"]["relay"] = relay
             summary["agents"]["pi_client"]["relay"] = relay
-            # Authored scientific claims keep their own original observed_at. A
-            # fresh projection timestamp is never new scientific evidence.
             _validate_summary(summary)
             rows = self._message_rows()
             _write(self.state / "daily_ops_summary.json", _json_bytes(summary))

@@ -10,7 +10,6 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from backend.daily_ops import (
-    LEGACY_SUMMARY_SCHEMA,
     MESSAGES_SCHEMA,
     SUMMARY_SCHEMA,
     _private_cache_headers,
@@ -18,91 +17,51 @@ from backend.daily_ops import (
 )
 
 NOW = "2026-09-20T08:30:00Z"
-REVISION = "agenda-20260920-r3"
+REVISION = "2026-09-20-r3"
 
 
 def _summary():
-    base = {
-        "detail": "Bounded, source-linked operator summary.",
-        "source": "verified runtime projection",
-        "observed_at": NOW,
-    }
-    card = {
-        "id": "runner", "title": "Complete the v2 runner",
-        "what": "Build the versioned runner and deterministic replay path.",
-        "benefit": "Makes a fresh shakedown technically possible and auditable.",
-        "cost": {"summary": "4–8 engineering hours; 0 model/GPU hours.",
-                 "kind": "estimate", "basis": "Reviewer planning estimate."},
-        "conviction": {"score": 9, "kind": "estimate",
-                       "basis": "Worth-doing judgment, not a scientific probability."},
-        "worth_time": {"recommendation": "do_now",
-                       "basis": "Closes the selected thesis's missing runner seam."},
-        "status": "authorized", "owner": "codex", "depends_on": [],
-        "source": "exact-revision semantic review", "observed_at": NOW,
-        "approval_required": False,
-        "actions": ["modify", "skip", "reprioritize"],
-    }
+    agent = {"source": "live observation", "observed_at": NOW, "detail": "No live run."}
     return {
         "schema_version": SUMMARY_SCHEMA,
         "generated_at": NOW,
         "current_plan_revision": REVISION,
-        "goals": [{
-            "id": "goal-1", "title": "Close the selected thesis gate",
-            "status": "in_progress", "owner": "oracle", **base,
-        }],
-        "accomplishments": [{
-            "id": "done-1", "title": "Replayed the calibration",
-            "status": "complete", **base,
-        }],
-        "improvements": [{
-            "id": "improvement-1", "title": "Bounded Oracle context",
-            "status": "verified", **base,
-        }],
-        "research_focus": {
-            "focus_id": "payoff-assistance",
-            "title": "Exact payoff assistance and strategic planning",
-            "status": "selected", "stage": "excluded calibration",
-            "next_action": "Repair the tool contract and run a fresh calibration.",
-            "next_gate": {
-                "from": "excluded calibration replayed",
-                "to": "registered study ready",
-                "artifact": "fresh calibration receipt",
-                "status": "pending", "owner": "lab",
-            },
-            "blockers": ["tool contract rejects benign assistant text"],
-            "source_receipt_sha256": "a" * 64,
-            "observed_at": NOW,
+        "daily_plan": {
+            "id": REVISION, "date": "2026-09-20", "revision": "r3",
+            "path": "run_state/daily_plans/2026-09-20-r3.json", "sha256": "a" * 64,
+            "written_at": NOW, "is_current": True,
+            "week_alignment": "Moves G0 first.",
+            "bottlenecks": ["Nothing can select the next focus."],
+            "review": {"note_msg_id": "oracle-0000000000000001", "sha_matches": True,
+                       "verdict": "amend", "review_msg_id": "claude-0000000000000002",
+                       "reviewed_at": NOW, "summary": "Accept d2.", "accepted_items": ["d2"]},
         },
+        "research_focus": {"status": "none", "observed_at": NOW, "last_closure": {
+            "focus_id": "payoff-assistance", "title": "Payoff assistance", "disposition": "killed",
+            "closed_at": NOW, "reason": "Closed for opportunity cost.", "closure_sha256": "b" * 64}},
+        "work_items": [{
+            "id": "d1", "goal": "G7.1", "owner": "oracle", "lane": "oracle_dev", "repo": "a_bgt_rsi",
+            "title": "Lane precheck", "why_today": "Retro finding.", "acceptance": "Tests pass.",
+            "depends_on": [], "status": "merged", "detail": "Merge oracle/2026-09-20-d1",
+            "evidence_msg_id": None, "evidence_sha": "2cbe6dbe8a39", "evidence_at": NOW,
+        }],
+        "waiting_on_you": [{
+            "kind": "question", "id": "claude-0000000000000003", "title": "Two rulings",
+            "asked_by": "claude", "asked_at": NOW, "msg_id": "claude-0000000000000003",
+            "cli": "python -m orchestrator.oracle_mailbox post --kind answer",
+        }],
+        "accomplishments": [{"id": "2026-09-20:d1", "kind": "merged", "title": "d1 merged",
+                             "at": NOW, "evidence": "2cbe6dbe8a39"}],
+        "improvements": [{"sha": "2cbe6dbe8a39", "at": NOW, "subject": "Merge d1 (G7.1)",
+                          "goals": ["G7.1"]}],
         "agents": {
-            "oracle": {
-                "label": "Oracle steward", "status": "working",
-                "detail": "Reviewing the selected thesis gate.",
-                "source": base["source"], "observed_at": NOW,
-            },
-            "pi_client": {
-                "label": "Pi client for Oracle", "status": "online",
-                "detail": "Connected to Oracle after compaction.",
-                "source": base["source"], "observed_at": NOW,
-            },
-            "nara": {
-                "label": "Nara runner", "status": "idle",
-                "detail": "Waiting on the selected research gate.",
-                "source": base["source"], "observed_at": NOW,
-            },
+            "oracle": {"label": "Oracle steward", "status": "working", **agent,
+                       "activity": "daily-loop phase plan for 2026-09-20", "since": NOW},
+            "pi_client": {"label": "Pi client for Oracle", "status": "idle", **agent},
+            "nara": {"label": "Nara runner", "status": "idle", **agent},
         },
         "warnings": [],
-        "work_cards": [card],
-        "agenda_decision": {
-            "id": "agenda-20260920-r3", "agenda_id": "oracle-agenda-r3",
-            "revision": REVISION, "title": "Request a corrected draft",
-            "what": "Replace two stale tasks while preserving the selected thesis.",
-            "reason": "Exact-revision semantic review found stale task content.",
-            "disposition": "amend_required", "approval_required": False,
-            "approve_enabled": False, "execution_available": False,
-            "actions": ["modify", "skip"],
-            "task_titles": ["Complete the v2 runner"],
-            "source": "exact-revision semantic review", "observed_at": NOW,
-        },
+        "sources": {"plan": NOW, "mailbox": NOW, "focus": NOW, "git": None},
     }
 
 
@@ -243,32 +202,49 @@ def test_valid_summary_is_source_linked_and_explicit_about_agents(tmp_path):
     assert body["current_plan_revision"] == REVISION
     assert body["agents"]["pi_client"]["label"] == "Pi client for Oracle"
     assert body["capabilities"]["write_available"] is True
-    assert body["work_cards"][0]["conviction"]["score"] == 9
-    assert body["agenda_decision"]["approve_enabled"] is False
+    assert body["work_items"][0]["status"] == "merged"
+    assert body["daily_plan"]["review"]["verdict"] == "amend"
 
 
-def test_legacy_v1_summary_remains_readable_during_atomic_rollout(tmp_path):
+@pytest.mark.parametrize("schema", ["daily-ops-summary/v1", "daily-ops-summary/v2"])
+def test_retired_hand_curated_summaries_are_refused_not_shown(tmp_path, schema):
     value = _summary()
-    value["schema_version"] = LEGACY_SUMMARY_SCHEMA
-    value.pop("work_cards")
-    value.pop("agenda_decision")
+    value["schema_version"] = schema
     _write_summary(tmp_path, value)
+    with pytest.raises(HTTPException) as caught:
+        _endpoint(_endpoints(tmp_path), "/api/daily-ops/summary", "GET")()
+    assert caught.value.status_code == 503
 
-    body = _endpoint(_endpoints(tmp_path), "/api/daily-ops/summary", "GET")()
 
-    assert body["schema_version"] == LEGACY_SUMMARY_SCHEMA
-    assert "work_cards" not in body
-    assert "agenda_decision" not in body
+def test_without_a_relay_the_summary_is_derived_live_not_read_from_disk(tmp_path):
+    stale = _summary()
+    stale["generated_at"] = "2026-09-01T00:00:00Z"
+    _write_summary(tmp_path, stale)
+    live = _summary()
+    app = FastAPI()
+    register(app, state_dir=tmp_path, live_summary=lambda: live)
+    endpoint = next(route.endpoint for route in app.routes
+                    if getattr(route, "path", "") == "/api/daily-ops/summary")
+    body = endpoint()
+    assert body["generated_at"] == NOW and body["source_sha256"] is None
+    live["agents"]["nara"]["status"] = "speaking_for_itself"
+    with pytest.raises(HTTPException) as caught:
+        endpoint()
+    assert caught.value.status_code == 503
 
 
 @pytest.mark.parametrize("mutate", [
     lambda value: value.update({"surprise": "unbound"}),
-    lambda value: value.update({"current_plan_revision": " bad "}),
+    lambda value: value.update({"current_plan_revision": "other-plan"}),
     lambda value: value["agents"]["nara"].update(status="speaking_for_itself"),
-    lambda value: value["research_focus"].update(source_receipt_sha256="not-a-hash"),
-    lambda value: value["work_cards"][0]["conviction"].update(score=90),
-    lambda value: value["agenda_decision"].update(revision="different-revision"),
-    lambda value: value["agenda_decision"].update(approve_enabled=True),
+    lambda value: value["agents"]["oracle"].update(items=[]),
+    lambda value: value["research_focus"].update(status="blocked"),
+    lambda value: value["work_items"][0].update(status="done"),
+    lambda value: value["work_items"][0].update(extra="x"),
+    lambda value: value["daily_plan"]["review"].update(verdict="approve"),
+    lambda value: value["waiting_on_you"][0].update(kind="decision"),
+    lambda value: value["improvements"][0].update(goals=["not a goal"]),
+    lambda value: value["sources"].update(plan="yesterday"),
 ])
 def test_invalid_summary_is_explicit_503(tmp_path, mutate):
     value = _summary()

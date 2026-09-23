@@ -42,7 +42,7 @@ def _observe(repo, processes=(), sessions=None, service=SERVICE):
                    pi_sessions=sessions or repo / "no-sessions")
 
 
-def test_running_oracle_phase_is_working_with_plan_and_latest_mailbox_row(tmp_path):
+def test_running_oracle_phase_is_one_now_line_without_plan_items_or_mailbox_prose(tmp_path):
     repo = _repo(tmp_path)
     started = int((NOW - timedelta(minutes=30)).timestamp())
     (repo / "logs" / "oracle_daily" / f"2026-09-23-work-{started}.log").write_text("")
@@ -61,15 +61,13 @@ def test_running_oracle_phase_is_working_with_plan_and_latest_mailbox_row(tmp_pa
     oracle = cards["oracle"]
     assert oracle["status"] == "working"
     assert oracle["since"] == _iso(NOW - timedelta(minutes=30))
-    assert "work for 2026-09-23" in oracle["detail"] and "2026-09-23-r2.json: 2 item(s)" in oracle["detail"]
-    assert [item["id"] for item in oracle["items"]] == ["d1", "d2"]
-    assert oracle["items"][0]["title"] == "Build d1 now"
-    assert oracle["activity"] == "#3 note: READY FOR REVIEW: d1"
-    assert oracle["activity_at"] == _iso(NOW - timedelta(minutes=5))
+    assert oracle["activity"] == "daily-loop phase work for 2026-09-23"
+    assert "items" not in oracle and "READY FOR REVIEW" not in json.dumps(oracle)
+    assert len(oracle["detail"]) < 80
     meta = cards["meta_oracle"]
-    assert meta["activity"] == "#2 review amend re PLAN READY: Fix d1."
-    assert meta["status"] == "unknown"
+    assert meta["status"] == "unknown" and meta["activity"] is None
     assert _agents(cards)
+    assert not _agents({**cards, "oracle": {**oracle, "items": []}})
 
 
 def test_bash_c_text_is_not_a_live_run_and_run_log_decides_idle_or_failed(tmp_path):
@@ -89,9 +87,9 @@ def test_bash_c_text_is_not_a_live_run_and_run_log_decides_idle_or_failed(tmp_pa
 
     assert cards["oracle"]["status"] == "failed"
     assert cards["oracle"]["since"] == _iso(NOW - timedelta(hours=1))
-    assert "close for 2026-09-23 ended failed" in cards["oracle"]["detail"]
+    assert cards["oracle"]["activity"] == "last daily-loop phase close for 2026-09-23 ended failed"
     assert cards["meta_oracle"]["status"] == "idle"
-    assert "code for 2026-09-23" in cards["meta_oracle"]["detail"]
+    assert cards["meta_oracle"]["activity"] == "last meta-oracle mode code for 2026-09-23 ended completed"
 
 
 def test_meta_oracle_live_run_is_working(tmp_path):
@@ -143,16 +141,16 @@ def test_nara_claimed_lane_item_wins_over_cycle_topic(tmp_path):
 
     idle = _observe(repo)["nara"]
     assert idle["status"] == "idle"
-    assert idle["activity"].startswith("Last cycle (executed): Braess")
+    assert idle["activity"].startswith("research cycle (executed): Braess")
     assert len(idle["activity"]) < 200
-    assert "wake" in idle["detail"] and "cycle:executed" in idle["detail"]
+    assert idle["since"] == _iso(NOW - timedelta(minutes=9)) and idle["detail"] == "Nara service is active."
 
     claim = _mail(2, "nara", "receipt", {"state": "claimed"}, reply=item["msg_id"], minutes=4)
     _jsonl(repo / "run_state" / "oracle_nara_mailbox.jsonl", [item, claim])
     working = _observe(repo)["nara"]
     assert working["status"] == "working"
-    assert working["activity"] == "Lane (claimed): Lab state packet"
-    assert "Lane last receipt: claimed for Lab state packet" in working["detail"]
+    assert working["activity"] == "lane: building Lab state packet"
+    assert working["since"] == _iso(NOW - timedelta(minutes=4))
 
     done = _mail(3, "nara", "receipt", {"state": "validated"}, reply=item["msg_id"], minutes=1)
     _jsonl(repo / "run_state" / "oracle_nara_mailbox.jsonl", [item, claim, done])

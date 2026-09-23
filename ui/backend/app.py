@@ -9,6 +9,7 @@ import json
 import os
 import socket
 import subprocess
+from functools import partial
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -23,6 +24,7 @@ from .chat_seam import register as register_chat_seam
 from .coordinator import register as register_coordinator
 from .daily_ops import register as register_daily_ops
 from .daily_ops_bridge import configured_bridge
+from .daily_ops_live import live_summary as _live_daily_summary
 from .doc_titles import register as register_doc_titles
 from .experiments import register as register_experiments
 from .finding_detail import register as register_finding_detail
@@ -141,7 +143,8 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
                daily_ops_authorizer=None,
                daily_ops_router=None,
                daily_ops_decision_router=None,
-               daily_ops_refresher=None):
+               daily_ops_refresher=None,
+               daily_ops_live_summary=None):
     app = FastAPI(title="UI backend — orchestrator dashboard", version=_GIT_SHA)
     # Permissive CORS for local dev (Vite serves the SPA on another port).
     app.add_middleware(CORSMiddleware, allow_origins=["*"],
@@ -284,6 +287,7 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
         message_router=daily_ops_router,
         decision_router=daily_ops_decision_router,
         projection_refresher=daily_ops_refresher,
+        live_summary=daily_ops_live_summary,
     )
 
     # 2026-08-14 work order A+C: loop-alert flag + ideas-board read seams.
@@ -415,4 +419,7 @@ app = create_app(
     daily_ops_router=_daily_bridge.route if _daily_bridge else None,
     daily_ops_decision_router=_daily_bridge.route_decision if _daily_bridge else None,
     daily_ops_refresher=_daily_bridge.refresh if _daily_bridge else None,
+    # Without a relay, the Now panel is still derived live (never a stale file).
+    daily_ops_live_summary=None if _daily_bridge else partial(
+        _live_daily_summary, _env_path("UI_LOOP_V0_REPO", DEFAULT_LOOP_V0_REPO)),
 )

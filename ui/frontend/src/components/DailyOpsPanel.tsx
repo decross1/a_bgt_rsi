@@ -6,34 +6,32 @@ import {
   getDailyOpsSummary,
   postDailyOpsDecision,
   postDailyOpsMessage,
+  type DailyOpsDecisionAction,
   type DailyOpsIntent,
   type DailyOpsMessageRow,
 } from "../api/dailyOps";
 import { refreshPoll, usePolled } from "../api/pollhub";
 import DailyDecisionCards, {
-  type DailyAgendaDecision,
   type DailyDecisionRequest,
+  type DailyWaitingItem,
   type DailyWorkCard,
-  type EvidenceKind,
+  type WorkStatus,
 } from "./DailyDecisionCards";
 import { ResearchOpsCard } from "./ResearchOpsCard";
 
 const SUMMARY_KEY = "daily_ops_summary";
 const MESSAGES_KEY = "daily_ops_messages";
 const OWNER_KEY = "oracle-lab-owner-access-key";
-const STATUS = new Set(["planned", "in_progress", "blocked", "done", "awaiting_owner"]);
-const IMPROVEMENT_STATUS = new Set(["proposed", "implemented", "verified", "blocked"]);
 const AGENT_STATUS = new Set(["online", "active", "working", "idle", "waiting", "degraded", "stale", "failed", "offline", "unknown"]);
 const MESSAGE_STATUS = new Set(["queued", "delivered", "acknowledged", "failed"]);
-const WORK_CARD_STATUS = new Set(["authorized", "in_progress", "blocked", "done", "draft"]);
-const EVIDENCE_KIND = new Set(["estimate", "measured", "unrated"]);
-const WORTH_TIME = new Set(["do_now", "after_dependency", "hold", "unrated"]);
-const WORK_ACTION = new Set(["modify", "skip", "reprioritize"]);
-const AGENDA_ACTION = new Set(["modify", "skip"]);
-const AGENDA_DISPOSITION = new Set([
-  "amend_required", "review_required",
+const WORK_STATUS = new Set<string>([
+  "not_started", "awaiting_review", "held", "building", "validated", "failed", "withdrawn", "expired",
+  "amend_requested", "accepted", "rejected", "merged", "waiting_on_you", "answered",
 ]);
-const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
+const WORK_ACTION = new Set(["modify", "skip", "reprioritize"]);
+const ACCOMPLISHMENT_KIND = new Set(["merged", "validated", "focus_closed", "day_closed"]);
+/** A producer quiet this long is shown as idle since its last write, not as current. */
+const QUIET_MS = 12 * 3600_000;
 
 const record = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
@@ -41,231 +39,239 @@ const bounded = (value: unknown, limit = 4096): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= limit;
 const timestamp = (value: unknown): value is string =>
   bounded(value, 64) && Number.isFinite(Date.parse(value));
+const nullableText = (value: unknown, limit: number): string | null | undefined =>
+  value === null || value === undefined ? null : bounded(value, limit) ? value : undefined;
+const nullableTime = (value: unknown): string | null | undefined =>
+  value === null || value === undefined ? null : timestamp(value) ? value : undefined;
 
 type WorkItem = {
   id: string;
   title: string;
   detail: string;
   status: string;
-  owner?: string;
+  tags: string[];
   observedAt: string;
 };
 
+type PlanReview = {
+  verdict: string | null;
+  noteMsgId: string;
+  reviewMsgId: string | null;
+  reviewedAt: string | null;
+  summary: string | null;
+  shaMatches: boolean;
+  acceptedItems: string[];
+};
+
+type DailyPlan = {
+  id: string;
+  date: string;
+  revision: string;
+  path: string;
+  writtenAt: string;
+  isCurrent: boolean;
+  weekAlignment: string | null;
+  bottlenecks: string[];
+  review: PlanReview | null;
+};
+
+type Closure = {
+  focusId: string | null;
+  title: string | null;
+  disposition: string | null;
+  closedAt: string | null;
+  reason: string | null;
+};
+
 type Focus = {
-  focusId: string;
-  title: string;
-  status: string;
-  stage: string;
-  nextAction: string;
-  nextGate: { from: string; to: string; artifact: string; status: string; owner: string };
-  blockers: string[];
-  observedAt: string;
+  status: "selected" | "none" | "source_invalid";
+  focusId: string | null;
+  title: string | null;
+  stage: string | null;
+  nextAction: string | null;
+  intakePolicy: string | null;
+  selectedAt: string | null;
+  reason: string | null;
+  lastClosure: Closure | null;
 };
 
 type AgentRelay = { status: string; detail: string; source: string };
 
-type PlanItem = { id: string; goal: string; owner: string; title: string };
-
-type AgentState = AgentRelay & {
+type AgentState = {
   label: string;
+  status: string;
+  source: string;
   observedAt: string;
   role: string | null;
   activity: string | null;
-  activityAt: string | null;
   since: string | null;
-  items: PlanItem[];
   // Owner-message relay health (the oversight mailbox); gates the composer only.
   relay: AgentRelay;
 };
 
+type Sources = { plan: string | null; mailbox: string | null; focus: string | null; git: string | null };
+
 type Summary = {
   available: boolean;
-  notesUpdatedAt: string;
-  goals: WorkItem[];
+  generatedAt: string;
+  plan: DailyPlan | null;
+  focus: Focus;
+  workCards: DailyWorkCard[];
+  waiting: DailyWaitingItem[];
   accomplishments: WorkItem[];
   improvements: WorkItem[];
-  focus: Focus | null;
   agents: { oracle: AgentState; piClient: AgentState; nara: AgentState; metaOracle: AgentState | null } | null;
   warnings: string[];
-  authRequired: boolean;
+  sources: Sources;
   writeAvailable: boolean;
   currentPlanRevision: string | null;
-  workCards: DailyWorkCard[] | null;
-  agendaDecision: DailyAgendaDecision | null;
   decisionWriteAvailable: boolean;
-  decisionActions: string[];
 };
 
-const safeId = (value: unknown): value is string =>
-  typeof value === "string" && SAFE_ID.test(value);
-
-function uniqueStrings(value: unknown, limit: number, valid: (item: unknown) => item is string): string[] | null {
-  if (!Array.isArray(value) || value.length > limit || !value.every(valid)) return null;
-  const items = value as string[];
-  return new Set(items).size === items.length ? items : null;
+function strings(value: unknown, limit: number, size: number): string[] | null {
+  return Array.isArray(value) && value.length <= limit && value.every(item => bounded(item, size))
+    ? value as string[] : null;
 }
 
-function evidence(value: unknown): { kind: EvidenceKind; basis: string } | null {
-  if (!record(value) || !bounded(value.kind, 32) || !EVIDENCE_KIND.has(value.kind) ||
-      !bounded(value.basis, 512)) return null;
-  return { kind: value.kind as EvidenceKind, basis: value.basis };
-}
-
-function workCards(value: unknown): DailyWorkCard[] | null {
-  if (!Array.isArray(value) || value.length > 3) return null;
-  const seen = new Set<string>();
-  const parsed: DailyWorkCard[] = [];
-  for (const item of value) {
-    if (!record(item) || !safeId(item.id) || seen.has(item.id) ||
-        !bounded(item.title, 512) || !bounded(item.what, 4096) || !bounded(item.benefit, 4096) ||
-        !record(item.cost) || !bounded(item.cost.summary, 512) ||
-        !record(item.conviction) || !record(item.worth_time) ||
-        !bounded(item.worth_time.recommendation, 32) || !WORTH_TIME.has(item.worth_time.recommendation) ||
-        !bounded(item.worth_time.basis, 512) || !bounded(item.status, 32) ||
-        !WORK_CARD_STATUS.has(item.status) || !["codex", "oracle", "nara", "lab"].includes(String(item.owner)) ||
-        !bounded(item.source, 512) || !timestamp(item.observed_at) || item.approval_required !== false) return null;
-    const cost = evidence(item.cost);
-    const conviction = evidence(item.conviction);
-    const score = item.conviction.score;
-    if (!cost || !conviction || !(
-      (conviction.kind === "unrated" && score === null) ||
-      (conviction.kind !== "unrated" && typeof score === "number" && Number.isInteger(score) && score >= 0 && score <= 10)
-    )) return null;
-    const dependsOn = uniqueStrings(item.depends_on, 3, safeId);
-    const actions = uniqueStrings(item.actions, 3,
-      (action): action is string => typeof action === "string" && WORK_ACTION.has(action));
-    if (!dependsOn || !actions || dependsOn.some(dependency => !seen.has(dependency))) return null;
-    parsed.push({
-      id: item.id, title: item.title, what: item.what, benefit: item.benefit,
-      cost: { summary: item.cost.summary, ...cost },
-      conviction: { score: score as number | null, ...conviction },
-      worthTime: {
-        recommendation: item.worth_time.recommendation as DailyWorkCard["worthTime"]["recommendation"],
-        basis: item.worth_time.basis,
-      },
-      status: item.status as DailyWorkCard["status"],
-      owner: item.owner as DailyWorkCard["owner"],
-      dependsOn,
-      source: item.source,
-      observedAt: item.observed_at,
-      actions: actions as DailyWorkCard["actions"],
-    });
-    seen.add(item.id);
-  }
-  return parsed;
-}
-
-function agendaDecision(value: unknown, currentRevision: string | null): DailyAgendaDecision | null | undefined {
+function planReview(value: unknown): PlanReview | null | undefined {
   if (value === null) return null;
-  if (!record(value) || !safeId(value.id) || !safeId(value.agenda_id) ||
-      !bounded(value.revision, 200) || value.revision !== currentRevision ||
-      !bounded(value.title, 512) || !bounded(value.what, 4096) || !bounded(value.reason, 4096) ||
-      !bounded(value.disposition, 32) || !AGENDA_DISPOSITION.has(value.disposition) ||
-      value.approval_required !== false || value.approve_enabled !== false ||
-      value.execution_available !== false || !bounded(value.source, 512) ||
-      !timestamp(value.observed_at)) return undefined;
-  const actions = uniqueStrings(value.actions, 2,
-    (action): action is string => typeof action === "string" && AGENDA_ACTION.has(action));
-  const taskTitles = uniqueStrings(value.task_titles, 3,
-    (title): title is string => bounded(title, 512));
-  if (!actions || !taskTitles) return undefined;
-  return {
-    id: value.id,
-    agendaId: value.agenda_id,
-    revision: value.revision,
-    title: value.title,
-    what: value.what,
-    reason: value.reason,
-    disposition: value.disposition as DailyAgendaDecision["disposition"],
-    approveEnabled: false,
-    actions: actions as DailyAgendaDecision["actions"],
-    taskTitles,
-    source: value.source,
-    observedAt: value.observed_at,
-  };
+  if (!record(value) || !bounded(value.note_msg_id, 80) || typeof value.sha_matches !== "boolean") return undefined;
+  const verdict = nullableText(value.verdict, 16);
+  const reviewMsgId = nullableText(value.review_msg_id, 80);
+  const reviewedAt = nullableTime(value.reviewed_at);
+  const summary = nullableText(value.summary, 400);
+  const acceptedItems = strings(value.accepted_items, 16, 40);
+  if (verdict === undefined || reviewMsgId === undefined || reviewedAt === undefined ||
+      summary === undefined || acceptedItems === null) return undefined;
+  return { verdict, noteMsgId: value.note_msg_id, reviewMsgId, reviewedAt, summary,
+    shaMatches: value.sha_matches, acceptedItems };
 }
 
-function workItems(value: unknown, kind: "goal" | "accomplishment" | "improvement"): WorkItem[] {
-  if (!Array.isArray(value)) return [];
-  const allowed = kind === "goal" ? STATUS : kind === "improvement" ? IMPROVEMENT_STATUS : new Set(["complete"]);
-  return value.slice(0, 16).flatMap((item): WorkItem[] => {
-    if (!record(item) || !bounded(item.id, 200) || !bounded(item.title, 512) ||
-        !bounded(item.detail, 4096) || !bounded(item.status, 40) || !allowed.has(item.status) ||
-        !timestamp(item.observed_at)) return [];
-    const owner = kind === "goal" && bounded(item.owner, 32) ? item.owner : undefined;
-    return [{ id: item.id, title: item.title, detail: item.detail, status: item.status,
-      owner, observedAt: item.observed_at }];
-  });
+function dailyPlan(value: unknown, revision: string | null): DailyPlan | null | undefined {
+  if (value === null) return revision === null ? null : undefined;
+  if (!record(value) || !bounded(value.id, 64) || value.id !== revision || !bounded(value.date, 10) ||
+      !bounded(value.revision, 12) || !bounded(value.path, 200) || !timestamp(value.written_at) ||
+      typeof value.is_current !== "boolean") return undefined;
+  const weekAlignment = nullableText(value.week_alignment, 1200);
+  const bottlenecks = strings(value.bottlenecks, 5, 400);
+  const review = planReview(value.review);
+  if (weekAlignment === undefined || bottlenecks === null || review === undefined) return undefined;
+  return { id: value.id, date: value.date, revision: value.revision, path: value.path,
+    writtenAt: value.written_at, isCurrent: value.is_current, weekAlignment, bottlenecks, review };
 }
 
 function focus(value: unknown): Focus | null {
-  if (!record(value) || !record(value.next_gate) || !bounded(value.focus_id, 200) ||
-      !bounded(value.title, 512) || !bounded(value.status, 32) || !bounded(value.stage, 512) ||
-      !bounded(value.next_action, 4096) || !timestamp(value.observed_at) ||
-      !bounded(value.next_gate.from, 512) || !bounded(value.next_gate.to, 512) ||
-      !bounded(value.next_gate.artifact, 512) || !bounded(value.next_gate.status, 32) ||
-      !bounded(value.next_gate.owner, 512)) return null;
+  if (!record(value) || !["selected", "none", "source_invalid"].includes(String(value.status))) return null;
+  const text = (key: string, limit = 1200) => nullableText(value[key], limit) ?? null;
+  const closure = record(value.last_closure) ? {
+    focusId: nullableText(value.last_closure.focus_id, 120) ?? null,
+    title: nullableText(value.last_closure.title, 300) ?? null,
+    disposition: nullableText(value.last_closure.disposition, 40) ?? null,
+    closedAt: nullableTime(value.last_closure.closed_at) ?? null,
+    reason: nullableText(value.last_closure.reason, 1200) ?? null,
+  } : null;
   return {
-    focusId: value.focus_id,
-    title: value.title,
-    status: value.status,
-    stage: value.stage,
-    nextAction: value.next_action,
-    nextGate: {
-      from: value.next_gate.from,
-      to: value.next_gate.to,
-      artifact: value.next_gate.artifact,
-      status: value.next_gate.status,
-      owner: value.next_gate.owner,
-    },
-    blockers: Array.isArray(value.blockers)
-      ? value.blockers.filter((item): item is string => bounded(item, 512)).slice(0, 16)
-      : [],
-    observedAt: value.observed_at,
+    status: value.status as Focus["status"], focusId: text("focus_id"), title: text("title"),
+    stage: text("stage"), nextAction: text("next_action"), intakePolicy: text("intake_policy"),
+    selectedAt: nullableTime(value.selected_at) ?? null, reason: text("reason") ?? text("closure_error"),
+    lastClosure: closure,
   };
 }
 
-const optionalText = (value: unknown, limit: number): string | null | undefined =>
-  value === undefined || value === null ? null : bounded(value, limit) ? value : undefined;
-const optionalTime = (value: unknown): string | null | undefined =>
-  value === undefined || value === null ? null : timestamp(value) ? value : undefined;
+function workCards(value: unknown, actions: DailyOpsDecisionAction[]): DailyWorkCard[] | null {
+  if (!Array.isArray(value) || value.length > 12) return null;
+  const cards: DailyWorkCard[] = [];
+  for (const item of value) {
+    if (!record(item) || !bounded(item.id, 40) || !bounded(item.title, 300) || !bounded(item.goal, 300) ||
+        !bounded(item.owner, 300) || !bounded(item.lane, 300) || !bounded(item.repo, 300) ||
+        !bounded(item.detail, 400) || !WORK_STATUS.has(String(item.status))) return null;
+    const whyToday = nullableText(item.why_today, 1200);
+    const acceptance = nullableText(item.acceptance, 1200);
+    const evidenceMsgId = nullableText(item.evidence_msg_id, 80);
+    const evidenceSha = nullableText(item.evidence_sha, 40);
+    const evidenceAt = nullableTime(item.evidence_at);
+    const dependsOn = strings(item.depends_on, 8, 40);
+    if (whyToday === undefined || acceptance === undefined || evidenceMsgId === undefined ||
+        evidenceSha === undefined || evidenceAt === undefined || dependsOn === null) return null;
+    cards.push({ id: item.id, goal: item.goal, owner: item.owner, lane: item.lane, repo: item.repo,
+      title: item.title, whyToday, acceptance, dependsOn, status: item.status as WorkStatus,
+      detail: item.detail, evidenceMsgId, evidenceSha, evidenceAt, actions });
+  }
+  return cards;
+}
 
-function planItems(value: unknown): PlanItem[] | null {
-  if (value === undefined) return [];
-  if (!Array.isArray(value) || value.length > 16) return null;
-  const items = value.map(item => record(item) && bounded(item.id, 512) && bounded(item.goal, 512) &&
-    bounded(item.owner, 512) && bounded(item.title, 512)
-    ? { id: item.id, goal: item.goal, owner: item.owner, title: item.title } : null);
-  return items.every(item => item !== null) ? items as PlanItem[] : null;
+function waiting(value: unknown): DailyWaitingItem[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 16).flatMap((item): DailyWaitingItem[] => {
+    if (!record(item) || !["question", "owner_decision"].includes(String(item.kind)) || !bounded(item.id, 120) ||
+        !bounded(item.title, 300) || !bounded(item.asked_by, 60) || !bounded(item.cli, 600)) return [];
+    const askedAt = nullableTime(item.asked_at);
+    const msgId = nullableText(item.msg_id, 80);
+    if (askedAt === undefined || msgId === undefined) return [];
+    return [{ kind: item.kind as DailyWaitingItem["kind"], id: item.id, title: item.title,
+      askedBy: item.asked_by, askedAt, msgId, cli: item.cli }];
+  });
+}
+
+const ACCOMPLISHMENT_LABEL: Record<string, string> = {
+  merged: "merged", validated: "validated", focus_closed: "focus closed", day_closed: "day closed",
+};
+
+function accomplishments(value: unknown): WorkItem[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 16).flatMap((item): WorkItem[] =>
+    record(item) && bounded(item.id, 120) && ACCOMPLISHMENT_KIND.has(String(item.kind)) &&
+    bounded(item.title, 400) && timestamp(item.at) && bounded(item.evidence, 120)
+      ? [{ id: item.id, title: item.title, detail: `Evidence: ${item.evidence}`,
+        status: ACCOMPLISHMENT_LABEL[String(item.kind)], tags: [], observedAt: item.at }]
+      : []);
+}
+
+function improvements(value: unknown): WorkItem[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 40).flatMap((item): WorkItem[] => {
+    const goals = record(item) ? strings(item.goals, 6, 12) : null;
+    return record(item) && bounded(item.sha, 40) && timestamp(item.at) && bounded(item.subject, 240) && goals
+      ? [{ id: item.sha, title: item.subject, detail: `main ${item.sha}`, status: "merged", tags: goals,
+        observedAt: item.at }]
+      : [];
+  });
 }
 
 function agent(value: unknown): AgentState | null {
   if (!record(value) || !bounded(value.label, 512) || !bounded(value.status, 32) ||
-      !AGENT_STATUS.has(value.status) || !bounded(value.detail, 4096) || !timestamp(value.observed_at) ||
-      !bounded(value.source, 512)) return null;
-  const role = optionalText(value.role, 512);
-  const activity = optionalText(value.activity, 512);
-  const activityAt = optionalTime(value.activity_at);
-  const since = optionalTime(value.since);
-  const items = planItems(value.items);
+      !AGENT_STATUS.has(value.status) || !timestamp(value.observed_at) || !bounded(value.source, 512)) return null;
+  const role = nullableText(value.role, 512);
+  const activity = nullableText(value.activity, 512);
+  const since = nullableTime(value.since);
   const relay = value.relay;
-  if (role === undefined || activity === undefined || activityAt === undefined || since === undefined ||
-      items === null) return null;
+  if (role === undefined || activity === undefined || since === undefined) return null;
   if (relay !== undefined && relay !== null && (!record(relay) || !bounded(relay.status, 32) ||
       !AGENT_STATUS.has(relay.status) || !bounded(relay.detail, 4096) || !bounded(relay.source, 512))) return null;
-  const own = { status: value.status, detail: value.detail, source: value.source };
-  return { label: value.label, ...own, observedAt: value.observed_at, role, activity, activityAt, since, items,
+  const own = { status: value.status, detail: bounded(value.detail, 4096) ? value.detail : value.status, source: value.source };
+  return { label: value.label, status: value.status, source: value.source, observedAt: value.observed_at,
+    role, activity, since,
     relay: record(relay) ? { status: relay.status as string, detail: relay.detail as string, source: relay.source as string } : own };
 }
 
 export function admitDailyOpsSummary(value: unknown): Summary | null {
-  if (!record(value) || !["daily-ops-summary/v1", "daily-ops-summary/v2"].includes(String(value.schema_version)) ||
+  if (!record(value) || value.schema_version !== "daily-ops-summary/v3" ||
       typeof value.available !== "boolean" || !timestamp(value.generated_at) ||
       !record(value.capabilities) || value.capabilities.auth_required !== true ||
       typeof value.capabilities.write_available !== "boolean" ||
+      typeof value.capabilities.decision_write_available !== "boolean" ||
       !Array.isArray(value.capabilities.targets) || !value.capabilities.targets.includes("oracle") ||
       !Array.isArray(value.capabilities.intents) || !value.capabilities.intents.includes("question") ||
-      !value.capabilities.intents.includes("change_request")) return null;
+      !value.capabilities.intents.includes("change_request") || !record(value.sources)) return null;
+  const currentPlanRevision = value.current_plan_revision === null || bounded(value.current_plan_revision, 64)
+    ? value.current_plan_revision as string | null : undefined;
+  if (currentPlanRevision === undefined) return null;
+  const plan = dailyPlan(value.daily_plan, currentPlanRevision);
+  const researchFocus = focus(value.research_focus);
+  const actions = (Array.isArray(value.capabilities.decision_actions) ? value.capabilities.decision_actions : [])
+    .filter((action): action is DailyOpsDecisionAction => typeof action === "string" && WORK_ACTION.has(action));
+  const cards = workCards(value.work_items, actions);
+  if (plan === undefined || researchFocus === null || cards === null) return null;
   const agents = record(value.agents) ? {
     oracle: agent(value.agents.oracle),
     piClient: agent(value.agents.pi_client),
@@ -273,41 +279,26 @@ export function admitDailyOpsSummary(value: unknown): Summary | null {
     // Optional fourth card; an absent or invalid one hides only that card.
     metaOracle: agent(value.agents.meta_oracle),
   } : null;
-  const completeAgents = agents && agents.oracle && agents.piClient && agents.nara
-    ? { oracle: agents.oracle, piClient: agents.piClient, nara: agents.nara, metaOracle: agents.metaOracle }
-    : null;
-  const currentPlanRevision = value.current_plan_revision === null || bounded(value.current_plan_revision, 200)
-    ? value.current_plan_revision as string | null
-    : null;
-  const isV2 = value.schema_version === "daily-ops-summary/v2";
-  const cards = isV2 ? workCards(value.work_cards) : null;
-  const decision = isV2 ? agendaDecision(value.agenda_decision, currentPlanRevision) : null;
-  const decisionActions = isV2
-    ? uniqueStrings(value.capabilities.decision_actions, 3,
-      (action): action is string => typeof action === "string" && WORK_ACTION.has(action))
-    : [];
-  if (isV2 && (cards === null || decision === undefined ||
-      typeof value.capabilities.decision_write_available !== "boolean" || decisionActions === null ||
-      cards.some(card => card.actions.some(action => !decisionActions.includes(action))) ||
-      (decision?.actions.some(action => !decisionActions.includes(action)) ?? false))) return null;
+  const source = (key: string) => nullableTime((value.sources as Record<string, unknown>)[key]) ?? null;
   return {
     available: value.available,
-    notesUpdatedAt: value.generated_at,
-    goals: workItems(value.goals, "goal"),
-    accomplishments: workItems(value.accomplishments, "accomplishment"),
-    improvements: workItems(value.improvements, "improvement"),
-    focus: focus(value.research_focus),
-    agents: completeAgents,
+    generatedAt: value.generated_at,
+    plan,
+    focus: researchFocus,
+    workCards: cards,
+    waiting: waiting(value.waiting_on_you),
+    accomplishments: accomplishments(value.accomplishments),
+    improvements: improvements(value.improvements),
+    agents: agents && agents.oracle && agents.piClient && agents.nara
+      ? { oracle: agents.oracle, piClient: agents.piClient, nara: agents.nara, metaOracle: agents.metaOracle }
+      : null,
     warnings: Array.isArray(value.warnings)
       ? value.warnings.filter((item): item is string => bounded(item, 512)).slice(0, 16)
       : [],
-    authRequired: true,
+    sources: { plan: source("plan"), mailbox: source("mailbox"), focus: source("focus"), git: source("git") },
     writeAvailable: value.capabilities.write_available,
     currentPlanRevision,
-    workCards: cards,
-    agendaDecision: decision ?? null,
-    decisionWriteAvailable: isV2 && value.capabilities.decision_write_available === true,
-    decisionActions: decisionActions ?? [],
+    decisionWriteAvailable: value.capabilities.decision_write_available === true,
   };
 }
 
@@ -332,19 +323,6 @@ function timeLabel(value: string): string {
   }) + " UTC";
 }
 
-function dayLabel(value: string): string {
-  return new Date(value).toLocaleDateString("en-US", {
-    timeZone: "UTC", month: "short", day: "numeric", year: "numeric",
-  });
-}
-
-export function isCurrentUtcDay(value: string, now = Date.now()): boolean {
-  const observed = new Date(value);
-  const current = new Date(now);
-  return observed.getUTCFullYear() === current.getUTCFullYear() &&
-    observed.getUTCMonth() === current.getUTCMonth() &&
-    observed.getUTCDate() === current.getUTCDate();
-}
 
 function phrase(value: string): string {
   return value.replaceAll("_", " ");
@@ -371,11 +349,11 @@ export function makeRequestId(): string {
 }
 
 function statusStyle(status: string): React.CSSProperties {
-  if (["done", "complete", "verified", "online", "active", "acknowledged"].includes(status))
+  if (["done", "merged", "validated", "online", "active", "acknowledged", "accepted", "focus closed", "day closed"].includes(status))
     return { color: "var(--status-ok)", background: "var(--status-ok-bg)" };
-  if (["blocked", "degraded", "failed", "stale", "awaiting_owner"].includes(status))
+  if (["blocked", "degraded", "failed", "stale", "amend", "reject", "invalid"].includes(status))
     return { color: "var(--status-warn)", background: "var(--status-warn-bg)" };
-  if (["working", "in_progress", "delivered"].includes(status))
+  if (["working", "delivered", "awaiting review"].includes(status))
     return { color: "var(--status-info)", background: "var(--status-info-bg)" };
   return { color: "var(--status-idle)", background: "var(--status-idle-bg)" };
 }
@@ -386,13 +364,14 @@ function Status({ value }: { value: string }) {
 
 function ItemRows({ items }: { items: WorkItem[] }) {
   return <>{items.map(item => <li key={item.id} className="border-l-2 border-[var(--border-2)] pl-3">
-      <div className="flex flex-wrap items-center gap-2"><span className="font-medium">{item.title}</span><Status value={item.status} /></div>
+      <div className="flex flex-wrap items-center gap-2"><span className="font-medium">{item.title}</span><Status value={item.status} />
+        {item.tags.map(tag => <span key={tag} className="rounded bg-[var(--accent-muted)] px-1.5 py-0.5 font-mono text-[11px] font-semibold text-[var(--accent)]">{tag}</span>)}</div>
       <p className="mt-1 text-sm text-[var(--fg-muted)]">{preview(item.detail)}</p>
       {item.detail.length > 280 && <details className="mt-1 text-xs text-[var(--fg-muted)]">
         <summary className="cursor-pointer text-[var(--accent)]">Full recorded detail</summary>
         <p className="mt-1 whitespace-pre-wrap">{item.detail}</p>
       </details>}
-      <p className="mt-1 text-xs text-[var(--fg-muted)]">{item.owner ? `${phrase(item.owner)} · ` : ""}{timeLabel(item.observedAt)}</p>
+      <p className="mt-1 text-xs text-[var(--fg-muted)]">{timeLabel(item.observedAt)}</p>
     </li>)}</>;
 }
 
@@ -419,9 +398,25 @@ function ago(value: string): string {
 }
 
 const SINCE_LABEL: Record<string, string> = {
-  working: "Working since", active: "Session written", idle: "Idle since",
-  failed: "Failed at", stale: "Last seen", waiting: "Waiting since", online: "Since",
+  working: "working since", active: "active since", idle: "idle since",
+  failed: "failed at", stale: "last seen", waiting: "waiting since", online: "since", offline: "offline since",
 };
+
+/** One "Now" line: what the agent runs right now, or since when it has been quiet. */
+export function nowLine(state: { status: string; activity: string | null; since: string | null }): string {
+  if (["working", "active"].includes(state.status)) return state.activity ?? phrase(state.status);
+  const quiet = state.since ? `${SINCE_LABEL[state.status] ?? "since"} ${timeLabel(state.since)} (${ago(state.since)})`
+    : phrase(state.status);
+  return state.activity ? `${quiet} · ${state.activity}` : quiet;
+}
+
+/** Source age for a section; a quiet producer reads "idle since …", never as current. */
+function SourceAge({ label, at }: { label: string; at: string | null }) {
+  if (!at) return <p className="mt-1 text-xs text-[var(--fg-muted)]">Source: {label} · no record yet</p>;
+  const quiet = Date.now() - Date.parse(at) > QUIET_MS;
+  return <p className={`mt-1 text-xs ${quiet ? "text-[var(--status-warn)]" : "text-[var(--fg-muted)]"}`}>
+    Source: {label} · {quiet ? `producer idle since ${timeLabel(at)}` : `updated ${ago(at)}`}</p>;
+}
 
 function AgentStrip({ agents }: { agents: NonNullable<Summary["agents"]> }) {
   const cards = [
@@ -437,25 +432,7 @@ function AgentStrip({ agents }: { agents: NonNullable<Summary["agents"]> }) {
       return <div key={key} className="rounded border border-[var(--border-1)] p-3" data-testid={`daily-ops-agent-${key}`}>
       <div className="flex flex-wrap items-center gap-2"><span className="font-semibold">{state.label}</span><Status value={state.status} /></div>
       <p className="mt-1 text-xs uppercase tracking-wide text-[var(--fg-muted)]">{state.role ?? role}</p>
-      {state.activity && <p className="mt-2 text-sm">
-        <span className="font-medium">{state.status === "working" ? "Now: " : "Latest: "}</span>{state.activity}
-        {state.activityAt && <span className="text-xs text-[var(--fg-muted)]"> · {ago(state.activityAt)}</span>}
-      </p>}
-      {state.since && <p className="mt-1 text-xs text-[var(--fg-muted)]">
-        {SINCE_LABEL[state.status] ?? "Last change"} {timeLabel(state.since)} ({ago(state.since)})</p>}
-      <p className="mt-2 text-sm text-[var(--fg-muted)]">{preview(state.detail, 240)}</p>
-      {state.detail.length > 240 && <details className="mt-1 text-xs text-[var(--fg-muted)]">
-        <summary className="cursor-pointer text-[var(--accent)]">Full recorded detail</summary>
-        <p className="mt-1 whitespace-pre-wrap">{state.detail}</p>
-      </details>}
-      {state.items.length > 0 && <details className="mt-2 text-xs" data-testid={`daily-ops-agent-${key}-plan`}>
-        <summary className="cursor-pointer text-[var(--accent)]">Today's plan · {state.items.length} item{state.items.length === 1 ? "" : "s"}</summary>
-        <ul className="mt-1 space-y-1">{state.items.map(item => <li key={item.id}>
-          <span className="font-medium">{item.id}</span> · {item.goal} · {item.owner}: {preview(item.title, 160)}
-        </li>)}</ul>
-      </details>}
-      {state.relay.source !== state.source && <p className="mt-2 text-xs text-[var(--fg-muted)]">
-        Owner message relay: {phrase(state.relay.status)} — {preview(state.relay.detail, 160)}</p>}
+      <p className="mt-2 text-sm" data-testid={`daily-ops-agent-${key}-now`}><span className="font-medium">Now: </span>{nowLine(state)}</p>
       <p className={`mt-1 text-xs ${stale ? "text-[var(--status-warn)]" : "text-[var(--fg-muted)]"}`}>
         {stale ? "Stale: observed " : "Observed "}{ago(state.observedAt)}</p>
     </div>;
@@ -514,8 +491,6 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
   const [submit, setSubmit] = useState<SubmitState>({ kind: "idle" });
   const [retryableRequest, setRetryableRequest] = useState<RetryableRequest | null>(null);
 
-  const notesAreCurrent = summary ? isCurrentUtcDay(summary.notesUpdatedAt) : true;
-  const notesDay = summary ? dayLabel(summary.notesUpdatedAt) : "";
   const responderLabel = summary?.agents?.oracle.label ?? "Oracle";
   const clientLabel = summary?.agents?.piClient.label ?? "Pi client";
   const relay = summary?.agents?.oracle.relay;
@@ -548,11 +523,17 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
     text.trim().length <= 4096 && changeBound && oracleReady && submit.kind !== "submitting";
   const decisionRouteAvailable = summary?.decisionWriteAvailable === true &&
     Boolean(summary.currentPlanRevision) && oracleReady;
+  // One accurate line for why per-item requests are unavailable.
+  const readonlyReason = !summary?.currentPlanRevision
+    ? "Change requests are unavailable: no plan of record is readable."
+    : summary.decisionWriteAvailable !== true
+      ? "Change requests are unavailable: no authenticated Oracle relay is configured for this backend."
+      : `Change requests are unavailable: the Oracle Pi relay is ${relay ? phrase(relay.status) : "unobserved"}${relay ? ` (${relay.detail.replace(/\.$/, "")})` : ""}. Use the mailbox commands under Waiting on you.`;
   const decisionCanRequest = decisionRouteAvailable && accessKey.length > 0;
   const decisionBlockedReason = !accessKey
     ? "Unlock owner access below before sending a request."
     : !summary?.currentPlanRevision
-      ? "No exact agenda revision is available for a source-bound request."
+      ? "No plan of record is available for a plan-bound request."
       : !summary.decisionWriteAvailable
         ? "The authenticated decision-request route is read-only."
         : !oracleReady
@@ -662,50 +643,65 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
       </div>
       <div className="flex flex-wrap items-center gap-3">
         <a href="#daily-oracle" className="text-sm text-[var(--accent)]">Ask or change the plan ↓</a>
-        <span className="rounded border border-[var(--border-2)] px-2 py-1 text-xs text-[var(--fg-muted)]">Daily notes last updated {timeLabel(summary.notesUpdatedAt)}</span>
+        <span className="rounded border border-[var(--border-2)] px-2 py-1 text-xs text-[var(--fg-muted)]" data-testid="daily-plan-badge">
+          {summary.plan ? `Plan of record ${summary.plan.date} ${summary.plan.revision} · written ${timeLabel(summary.plan.writtenAt)}` : "No plan of record"}</span>
       </div>
     </div>
-
-    {!notesAreCurrent && <div role="status" data-testid="daily-notes-stale"
-      className="mt-4 rounded border border-[var(--status-warn)] bg-[var(--status-warn-bg)] p-3 text-sm">
-      <span className="font-semibold">Authored daily notes are from {notesDay} UTC.</span>{" "}
-      Their statuses reflect that update. The current sealed agenda, thesis, and agent observations update separately.
-    </div>}
 
     {summary.warnings.length > 0 && <div role="status" className="mt-4 rounded border border-[var(--status-warn)] bg-[var(--status-warn-bg)] p-3 text-sm">
       {summary.warnings.map(warning => <p key={warning}>{warning}</p>)}
     </div>}
 
-    <div className={`mt-4 grid gap-4 ${summary.workCards === null ? "lg:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)]" : ""}`}>
-      {summary.workCards === null ? <section aria-labelledby="daily-goals-heading" className="rounded border border-[var(--border-1)] p-4">
-        <h3 id="daily-goals-heading" className="text-base font-semibold">{notesAreCurrent ? "Goals for today" : "Recorded goals and current agenda"}</h3>
-        <ItemList items={summary.goals} empty="No daily goals are recorded in this snapshot." />
-      </section> : <div className="rounded border border-[var(--border-1)] p-4">
-        <DailyDecisionCards cards={summary.workCards} agenda={summary.agendaDecision}
-          requestAvailable={decisionRouteAvailable} canRequest={decisionCanRequest} blockedReason={decisionBlockedReason}
+    <section aria-labelledby="daily-plan-heading" data-testid="daily-plan" className="mt-4 rounded border border-[var(--border-1)] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 id="daily-plan-heading" className="text-base font-semibold">{summary.plan ? `Today's plan · ${summary.plan.date} ${summary.plan.revision}` : "Today's plan"}</h3>
+        {summary.plan && <Status value={summary.plan.review?.verdict ?? "awaiting review"} />}
+      </div>
+      {summary.plan ? <>
+        {!summary.plan.isCurrent && <p role="status" data-testid="daily-plan-stale" className="mt-2 rounded border border-[var(--status-warn)] bg-[var(--status-warn-bg)] p-2 text-sm">
+          The newest plan is for {summary.plan.date}; Oracle has not written a plan for today yet.</p>}
+        {summary.plan.weekAlignment && <p className="mt-2 text-sm"><span className="font-semibold">Week alignment:</span> {preview(summary.plan.weekAlignment, 360)}</p>}
+        {summary.plan.bottlenecks.length > 0 && <div className="mt-2 text-sm"><p className="font-semibold">Bottlenecks</p>
+          <ul className="mt-1 list-disc space-y-1 pl-5">{summary.plan.bottlenecks.map(item => <li key={item}>{item}</li>)}</ul></div>}
+        <p className="mt-2 text-sm" data-testid="daily-plan-review">{summary.plan.review
+          ? summary.plan.review.verdict
+            ? <>Meta-oracle review: <span className="font-semibold">{summary.plan.review.verdict}</span>{summary.plan.review.acceptedItems.length > 0 ? ` · accepted ${summary.plan.review.acceptedItems.join(", ")}` : ""} · {summary.plan.review.reviewMsgId}{summary.plan.review.shaMatches ? "" : " · reviewed a different file version"}</>
+            : `PLAN READY ${summary.plan.review.noteMsgId} is awaiting the meta-oracle review.`
+          : "No PLAN READY note names this plan file, so it has no meta-oracle review."}</p>
+        {summary.plan.review?.summary && <details className="mt-1 text-xs text-[var(--fg-muted)]"><summary className="cursor-pointer text-[var(--accent)]">Review summary</summary><p className="mt-1">{summary.plan.review.summary}</p></details>}
+      </> : <p className="mt-2 text-sm text-[var(--fg-muted)]">No readable plan under run_state/daily_plans/.</p>}
+      <SourceAge label={summary.plan?.path ?? "run_state/daily_plans/"} at={summary.sources.plan} />
+    </section>
+
+    <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+      <div className="rounded border border-[var(--border-1)] p-4">
+        <DailyDecisionCards cards={summary.workCards} waiting={summary.waiting}
+          requestAvailable={decisionRouteAvailable} readonlyReason={readonlyReason}
+          canRequest={decisionCanRequest} blockedReason={decisionBlockedReason}
           onRequireAccess={requireOwnerAccess} onRequest={requestDecision} />
-      </div>}
+        <SourceAge label="lab mailbox + git main" at={summary.sources.mailbox} />
+      </div>
       <section aria-labelledby="daily-focus-heading" className="rounded border border-[var(--group-research)] p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 id="daily-focus-heading" className="text-base font-semibold">Main research thesis</h3>
-          {summary.focus && <Status value={summary.focus.status} />}
+          <h3 id="daily-focus-heading" className="text-base font-semibold">Research focus</h3>
+          <Status value={summary.focus.status === "source_invalid" ? "invalid" : summary.focus.status === "none" ? "no focus" : "selected"} />
         </div>
-        {summary.focus ? <>
+        {summary.focus.status === "selected" ? <>
           <p className="mt-2 text-lg font-semibold leading-snug">{summary.focus.title}</p>
-          <p className="mt-1 text-xs uppercase tracking-wide text-[var(--fg-muted)]">{phrase(summary.focus.stage)}</p>
-          <div className="mt-3 rounded bg-[var(--surface-2)] p-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-[var(--fg-muted)]">Next gate</p>
-            <p className="mt-1 font-medium">{phrase(summary.focus.nextGate.from)} → {phrase(summary.focus.nextGate.to)}</p>
-            <p className="mt-1 text-sm">{summary.focus.nextGate.artifact}</p>
-            <p className="mt-1 text-xs text-[var(--fg-muted)]">{summary.focus.nextGate.owner} · {phrase(summary.focus.nextGate.status)}</p>
-          </div>
-          <p className="mt-3 text-sm"><span className="font-semibold">Next:</span> {preview(summary.focus.nextAction, 360)}</p>
-          {summary.focus.nextAction.length > 360 && <details className="mt-1 text-xs text-[var(--fg-muted)]"><summary className="cursor-pointer text-[var(--accent)]">Full next action</summary><p className="mt-1 whitespace-pre-wrap">{summary.focus.nextAction}</p></details>}
-          {summary.focus.blockers.length > 0 && <details className="mt-2 text-xs text-[var(--status-warn)]">
-            <summary className="cursor-pointer">{summary.focus.blockers.length} recorded blocker{summary.focus.blockers.length === 1 ? "" : "s"} · {preview(summary.focus.blockers[0], 180)}</summary>
-            <ul className="mt-1 list-disc space-y-1 pl-5">{summary.focus.blockers.map(blocker => <li key={blocker}>{blocker}</li>)}</ul>
-          </details>}
-        </> : <p className="mt-2 text-sm text-[var(--fg-muted)]">No source-bound main thesis is available.</p>}
+          {summary.focus.stage && <p className="mt-1 text-xs uppercase tracking-wide text-[var(--fg-muted)]">{phrase(summary.focus.stage)}</p>}
+          {summary.focus.nextAction && <p className="mt-3 text-sm"><span className="font-semibold">Next:</span> {preview(summary.focus.nextAction, 360)}</p>}
+          {summary.focus.intakePolicy && <p className="mt-2 text-sm"><span className="font-semibold">Intake:</span> {phrase(summary.focus.intakePolicy)}</p>}
+        </> : summary.focus.status === "none" ? <>
+          <p className="mt-2 text-lg font-semibold" data-testid="daily-focus-none">No active focus</p>
+          <p className="mt-1 text-sm"><span className="font-semibold">New topics:</span> exploratory arXiv intake</p>
+          {summary.focus.lastClosure && <div className="mt-3 rounded bg-[var(--surface-2)] p-3 text-sm" data-testid="daily-focus-closure">
+            <p className="text-xs font-semibold uppercase tracking-wide text-[var(--fg-muted)]">Last closure</p>
+            <p className="mt-1 font-medium">{summary.focus.lastClosure.disposition} · {summary.focus.lastClosure.title ?? summary.focus.lastClosure.focusId}</p>
+            <p className="mt-1 text-xs text-[var(--fg-muted)]">{summary.focus.lastClosure.focusId}{summary.focus.lastClosure.closedAt ? ` · closed ${timeLabel(summary.focus.lastClosure.closedAt)}` : ""}</p>
+            {summary.focus.lastClosure.reason && <p className="mt-1">{preview(summary.focus.lastClosure.reason, 240)}</p>}
+          </div>}
+        </> : <p className="mt-2 text-sm text-[var(--status-warn)]" data-testid="daily-focus-invalid">The research focus source is invalid: {summary.focus.reason ?? "unreadable"}. No focus is shown.</p>}
+        <SourceAge label="orchestrator.research_focus" at={summary.sources.focus} />
         <div className="mt-3 flex flex-wrap gap-4 text-sm">
           <Link to="/ladder?research_scope=active" className="text-[var(--accent)]">Open thesis workspace →</Link>
           <Link to="/cycles" className="text-[var(--accent)]">Trace coordinator work →</Link>
@@ -715,12 +711,14 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
 
     <div className="mt-4 grid gap-4 md:grid-cols-2">
       <section aria-labelledby="daily-accomplishments-heading" className="rounded border border-[var(--border-1)] p-4">
-        <h3 id="daily-accomplishments-heading" className="text-base font-semibold">{notesAreCurrent ? "Recently accomplished" : `Accomplishments recorded ${notesDay}`}</h3>
-        <ItemList items={summary.accomplishments} empty="No recent accomplishment is recorded in this snapshot." />
+        <h3 id="daily-accomplishments-heading" className="text-base font-semibold">Accomplished · last 7 days</h3>
+        <ItemList items={summary.accomplishments} empty="Nothing merged, validated or closed in the last 7 days." />
+        <SourceAge label="daily plans, lab mailbox, focus closures" at={summary.accomplishments[0]?.observedAt ?? summary.sources.mailbox} />
       </section>
       <section aria-labelledby="daily-improvements-heading" className="rounded border border-[var(--border-1)] p-4">
-        <h3 id="daily-improvements-heading" className="text-base font-semibold">{notesAreCurrent ? "System improvements" : `Improvements recorded ${notesDay}`}</h3>
-        <ItemList items={summary.improvements} empty="No recent system improvement is recorded in this snapshot." />
+        <h3 id="daily-improvements-heading" className="text-base font-semibold">System improvements · merged to main, last 7 days</h3>
+        <ItemList items={summary.improvements} empty="Nothing merged to main in the last 7 days." />
+        <SourceAge label="git log --first-parent main" at={summary.sources.git} />
       </section>
     </div>
 
@@ -739,7 +737,8 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
     <section id="daily-oracle" aria-labelledby="daily-owner-heading" className="mt-4 scroll-mt-20 rounded border border-[var(--border-1)] bg-[var(--surface-2)] p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div><h3 id="daily-owner-heading" className="text-base font-semibold">Ask {responderLabel} or request an agenda change</h3>
-          <p className="mt-1 text-sm text-[var(--fg-muted)]">Requests enter the {responderLabel} mailbox. A queued request is not approval, execution, or a scientific verdict.</p></div>
+          <p className="mt-1 text-sm text-[var(--fg-muted)]">Requests enter the {responderLabel} mailbox. A queued request is not approval, execution, or a scientific verdict.</p>
+          {relay && <p className="mt-1 text-xs text-[var(--fg-muted)]" data-testid="daily-ops-relay">Owner relay: {phrase(relay.status)} — {preview(relay.detail, 160)}</p>}</div>
         <Link to="/channel" className="text-sm text-[var(--accent)]">Lab event channel (separate) →</Link>
       </div>
 
@@ -806,7 +805,7 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
             {submit.kind === "submitting" ? "Queueing…" : `Queue for ${responderLabel}`}
           </button>
           {intent === "change_request" && <span className={`text-xs ${summary.currentPlanRevision ? "text-[var(--fg-muted)]" : "text-[var(--status-warn)]"}`}>
-            {summary.currentPlanRevision ? `Bound to plan ${shortRevision(summary.currentPlanRevision)}` : "No current plan revision is available; change requests stay disabled."}
+            {summary.currentPlanRevision ? `Bound to plan ${shortRevision(summary.currentPlanRevision)}` : "No plan of record is available; change requests stay disabled."}
           </span>}
         </div>
         {!oracleReady && <p role="status" className="mt-2 text-sm text-[var(--status-warn)]">

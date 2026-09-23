@@ -1,5 +1,5 @@
-import hashlib
 import json
+import os
 import subprocess
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -9,13 +9,14 @@ import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
+from backend import daily_ops_agents as agents_module
 from backend import daily_ops_bridge as bridge_module
 from backend.daily_ops_bridge import DailyOpsBridge
 
 SESSION = "01a0bbce-8fe5-7290-8ea6-2f247da2115e"
 WORKER_SESSION = "4143e484-35c9-497c-8edf-c01be99fb373"
 NOW = datetime(2026, 9, 20, 9, 0, tzinfo=timezone.utc)
-REVISION = "b" * 64
+REVISION = "2026-09-20"
 WORKER_DEADLINE = datetime(2026, 9, 20, 16, 2, 48, tzinfo=timezone.utc)
 WORKER_ADMISSION_DEADLINE = WORKER_DEADLINE - timedelta(seconds=630)
 
@@ -35,106 +36,33 @@ def _json(path: Path, value, *, mode=0o600):
     path.chmod(mode)
 
 
-def _brief():
-    base = {"detail": "Verified source-linked state.", "source": "test receipt",
-            "observed_at": _iso()}
-    return {
-        "schema_version": "daily-ops-summary/v1", "generated_at": _iso(),
-        "current_plan_revision": None,
-        "goals": [{"id": "gate", "title": "Close the next gate",
-                   "status": "in_progress", "owner": "oracle", **base}],
-        "accomplishments": [{"id": "done", "title": "Bounded context",
-                             "status": "complete", **base}],
-        "improvements": [{"id": "memory", "title": "Targeted recall",
-                          "status": "verified", **base}],
-        "research_focus": {
-            "focus_id": "payoff-assistance", "title": "Payoff assistance",
-            "status": "selected", "stage": "calibration",
-            "next_action": "Repair and replay the tool contract.",
-            "next_gate": {"from": "calibration", "to": "registration",
-                          "artifact": "fresh receipt", "status": "pending",
-                          "owner": "lab"},
-            "blockers": ["fresh replay required"],
-            "source_receipt_sha256": "a" * 64, "observed_at": _iso(),
-        },
-        "agents": {
-            "oracle": {"label": "Oracle", "status": "unknown", **base},
-            "pi_client": {"label": "Pi client", "status": "unknown", **base},
-            "nara": {"label": "Nara runner", "status": "idle", **base},
-        },
-        "warnings": [],
-    }
-
-
-def _install_focus_and_work_plan(relay):
-    focus = {
-        "schema_version": "research-focus-selection/v1",
-        "focus_id": "payoff-assistance", "title": "Payoff assistance",
-        "stage": "blocked", "next_action": "Complete the v2 runner.",
-        "next_gate": {"from": "core", "to": "shakedown",
-                      "artifact": "runner receipt", "status": "blocked",
-                      "owner": "lab"},
-        "blockers": ["runner missing"], "selected_at": _iso(),
-    }
-    raw = (json.dumps(focus, sort_keys=True, separators=(",", ":")) + "\n").encode()
-    sha = hashlib.sha256(raw).hexdigest()
-    directory = relay["state"] / "research_focus"
-    directory.mkdir(exist_ok=True)
-    (directory / (sha + ".json")).write_bytes(raw)
-    _json(relay["state"] / "active_research_focus.json", {
-        "schema_version": "research-focus/v1", "receipt_sha256": sha,
-    })
+def _install_plan(root: Path, items=None, name="2026-09-20.json"):
+    """A daily plan of record in the real contract shape (docs/META_ORACLE_DAILY_LOOP.md §3)."""
+    plans = root / "run_state" / "daily_plans"
+    plans.mkdir(parents=True, exist_ok=True)
     plan = {
-        "schema_version": "daily-ops-work-plan/v1",
-        "agenda_id": "oracle-test-agenda", "revision": REVISION,
-        "focus_receipt_sha256": sha, "observed_at": _iso(),
-        "disposition": "amend_required",
-        "decision_title": "Correction needed before agenda review",
-        "decision_summary": "Request a corrected replacement for the stale proposal.",
-        "decision_reason": "Two tasks use unrelated or inherited evidence.",
-        "source": "exact-revision semantic review",
-        "cards": [{
-            "id": "runner", "title": "Complete the v2 runner",
-            "what": "Build the runner and deterministic replay path.",
-            "benefit": "Makes an auditable shakedown possible without claiming science.",
-            "cost": {"summary": "Estimated 4–8 engineering hours.",
-                     "kind": "estimate", "basis": "Reviewer planning estimate."},
-            "conviction": {"score": 9, "kind": "estimate",
-                           "basis": "Worth-doing judgment, not probability."},
-            "worth_time": {"recommendation": "do_now",
-                           "basis": "Closes the missing runner seam."},
-            "status": "authorized", "owner": "codex", "depends_on": [],
-        }],
+        "date": name[:10], "week_alignment": "G0 first.",
+        "bottlenecks": [{"what": "Nothing selects the next focus.", "evidence": "x",
+                         "cost_of_leaving_it": "y"}],
+        "items": items or [
+            {"id": "d1", "owner": "oracle", "lane": "oracle_dev", "goal": "G7.1",
+             "repo": "a_bgt_rsi", "title": "Lane precheck", "why_today": "Retro finding.",
+             "allowed_write_paths": ["orchestrator/nara_lane.py"], "acceptance": "Tests pass.",
+             "depends_on": [], "flash_minutes": 10},
+            {"id": "d2", "owner": "nara", "lane": "nara_dev", "goal": "G7.1",
+             "repo": "a_bgt_rsi", "title": "Lab state packet", "why_today": "Stops drift.",
+             "allowed_write_paths": ["tools/lab_state_packet.py"], "acceptance": "Tests pass.",
+             "depends_on": ["d1"], "flash_minutes": 10},
+        ],
     }
-    _json(relay["state"] / "daily_ops_work_plan.json", plan)
-    return sha
+    (plans / name).write_text(json.dumps(plan))
+    return plan
 
 
 @pytest.fixture()
 def relay(tmp_path, monkeypatch):
     monkeypatch.setattr(bridge_module, "_now", lambda: NOW)
-    # The sealed SQLite reader has its own integration/tamper suite. Relay
-    # tests isolate its validated projection interface from mailbox behavior.
-    def pending_agenda(latest, _focus):
-        revision = json.loads(Path(latest).read_text())["revision_sha256"]
-        agenda_id = "oracle-test-agenda"
-        return {
-            "agenda_id": agenda_id,
-            "revision": revision,
-            "decision": {
-                "id": f"agenda-{revision[:16]}", "agenda_id": agenda_id,
-                "revision": revision, "title": "Review the proposed agenda",
-                "what": "Review the exact sealed proposal.",
-                "reason": "A semantic review is required before any signoff.",
-                "disposition": "review_required", "approval_required": False,
-                "approve_enabled": False, "execution_available": False,
-                "actions": ["modify", "skip"], "task_titles": ["Test task"],
-                "source": "verified sealed test proposal", "observed_at": _iso(),
-            },
-            "warnings": [],
-        }
-
-    monkeypatch.setattr(bridge_module, "read_pending_agenda", pending_agenda)
+    _install_plan(tmp_path)
     state = _private(tmp_path / "state")
     private = _private(tmp_path / "private")
     mailbox = _private(tmp_path / "mailbox")
@@ -149,14 +77,8 @@ def relay(tmp_path, monkeypatch):
         "pending_count": 0, "updated_at": _iso(),
         "capabilities": {"review_scope": True, "durable_review_scope": True},
     })
+    # The retired sealed-agenda path stays an accepted config key and is never read.
     planner = private / "planner.json"
-    _json(planner, {
-        "schema_version": "oracle-daily-proposal-cycle/v1",
-        "revision_sha256": REVISION,
-        "expires_at": _iso(NOW + timedelta(hours=12)),
-        "execution_enabled": False,
-    })
-    _json(state / "daily_ops_brief.json", _brief())
     config = {
         "private_root": str(private), "mailbox_root": str(mailbox),
         "session_id": SESSION, "allowed_origins": ["http://10.0.0.73:5173"],
@@ -279,30 +201,32 @@ def test_route_writes_one_advisory_envelope_and_idempotent_duplicate(relay):
     assert len(list((relay["mailbox"] / "inbox").glob("*.json"))) == 1
 
 
-def test_refresh_projects_concise_cards_without_turning_tasks_into_owner_blocks(relay):
-    _install_focus_and_work_plan(relay)
+def test_refresh_projects_the_live_plan_not_the_retired_curated_sources(relay):
+    # Retired hand-curated sources may still exist on disk; none of them is read.
+    _json(relay["state"] / "daily_ops_brief.json", {"schema_version": "daily-ops-summary/v1"})
+    _json(relay["state"] / "daily_ops_work_plan.json", {"cards": []})
 
     relay["bridge"].refresh()
     summary = json.loads((relay["state"] / "daily_ops_summary.json").read_text())
 
-    assert summary["schema_version"] == "daily-ops-summary/v2"
-    assert [goal["id"] for goal in summary["goals"]] == ["gate"]
-    assert [card["id"] for card in summary["work_cards"]] == ["runner"]
-    assert summary["work_cards"][0]["status"] == "authorized"
-    assert summary["work_cards"][0]["approval_required"] is False
-    assert summary["agenda_decision"]["disposition"] == "amend_required"
-    assert summary["agenda_decision"]["approval_required"] is False
-    assert summary["agenda_decision"]["approve_enabled"] is False
-    assert summary["agenda_decision"]["execution_available"] is False
+    assert summary["schema_version"] == "daily-ops-summary/v3"
+    assert summary["generated_at"] == _iso()
+    assert summary["current_plan_revision"] == REVISION
+    assert summary["daily_plan"]["bottlenecks"] == ["Nothing selects the next focus."]
+    assert summary["daily_plan"]["review"] is None
+    assert [(i["id"], i["status"]) for i in summary["work_items"]] == [
+        ("d1", "not_started"), ("d2", "not_started")]
+    assert summary["research_focus"]["status"] == "none"
+    assert not any("could not be verified" in warning for warning in summary["warnings"])
+    assert "goals" not in summary and "work_cards" not in summary
 
 
-def test_route_decision_queues_exact_revision_advice_and_is_idempotent(relay):
-    _install_focus_and_work_plan(relay)
+def test_route_decision_queues_plan_bound_advice_and_is_idempotent(relay):
     payload = {
         "request_id": str(uuid.uuid4()), "target_kind": "agenda",
-        "target_id": f"agenda-{REVISION[:16]}", "action": "modify",
+        "target_id": REVISION, "action": "modify",
         "expected_plan_revision": REVISION,
-        "note": "Use the reviewed three-card direction for a corrected draft.",
+        "note": "Drop d2 until d1 merges.",
     }
 
     first = relay["bridge"].route_decision(payload)
@@ -314,24 +238,22 @@ def test_route_decision_queues_exact_revision_advice_and_is_idempotent(relay):
     assert first == {
         "request_id": payload["request_id"], "status": "queued",
         "accepted_at": _iso(), "duplicate": False,
-        "target_kind": "agenda", "target_id": payload["target_id"],
+        "target_kind": "agenda", "target_id": REVISION,
         "action": "modify", "expected_plan_revision": REVISION,
         "execution_available": False,
     }
     assert second["duplicate"] is True
     assert envelope["authority"] == "advisory_only"
     assert envelope["approval_required"] is False
-    assert "Request a corrected draft" in envelope["text"]
+    assert f"Request a corrected draft for daily plan {REVISION}" in envelope["text"]
     assert "do not treat it as approval" in envelope["text"]
-    assert "sealed replacement" in envelope["text"]
-    assert "future agenda signoff or agenda execution" in envelope["text"]
+    assert f"bound to plan revision {REVISION}" in envelope["text"]
 
 
 def test_maximum_decision_note_fits_existing_message_and_envelope_bounds(relay):
-    _install_focus_and_work_plan(relay)
     payload = {
         "request_id": str(uuid.uuid4()), "target_kind": "work_card",
-        "target_id": "runner", "action": "modify",
+        "target_id": "d2", "action": "modify",
         "expected_plan_revision": REVISION, "note": "x" * 3000,
     }
 
@@ -341,21 +263,22 @@ def test_maximum_decision_note_fits_existing_message_and_envelope_bounds(relay):
     envelope = json.loads((
         relay["mailbox"] / "inbox" / ("owner-ui-" + payload["request_id"] + ".json")
     ).read_text())
+    assert "daily plan item d2" in envelope["text"]
     assert len(envelope["text"].encode("utf-8")) <= bridge_module.MAX_ENVELOPE_TEXT_BYTES
 
 
 @pytest.mark.parametrize("mutation", [
-    lambda value: value.update(expected_plan_revision="c" * 64),
-    lambda value: value.update(target_id="missing-card"),
+    lambda value: value.update(expected_plan_revision="2026-09-19"),
+    lambda value: value.update(target_id="d9"),
     lambda value: value.update(action="reprioritize", target_kind="agenda", priority="now"),
+    lambda value: value.update(target_kind="agenda", target_id="2026-09-19"),
 ])
 def test_route_decision_rejects_stale_or_unsupported_target_before_queue(
     relay, mutation,
 ):
-    _install_focus_and_work_plan(relay)
     payload = {
         "request_id": str(uuid.uuid4()), "target_kind": "work_card",
-        "target_id": "runner", "action": "skip",
+        "target_id": "d1", "action": "skip",
         "expected_plan_revision": REVISION,
     }
     mutation(payload)
@@ -368,20 +291,14 @@ def test_route_decision_rejects_stale_or_unsupported_target_before_queue(
     assert list(relay["bridge"].requests.glob("*.json")) == []
 
 
-def test_curated_cards_drop_out_after_focus_change(relay):
-    _install_focus_and_work_plan(relay)
-    pointer = json.loads((relay["state"] / "active_research_focus.json").read_text())
-    pointer["receipt_sha256"] = "f" * 64
-    _json(relay["state"] / "active_research_focus.json", pointer)
-
-    relay["bridge"].refresh()
-    summary = json.loads((relay["state"] / "daily_ops_summary.json").read_text())
-
-    assert summary["research_focus"] is None
-    assert summary["work_cards"] == []
-    assert summary["agenda_decision"]["approve_enabled"] is False
-    assert "Current research focus could not be verified." in summary["warnings"]
-    assert any("do not match" in warning for warning in summary["warnings"])
+def test_a_newer_plan_revision_retires_the_old_binding(relay, tmp_path):
+    _install_plan(tmp_path, name="2026-09-20-r2.json")
+    assert relay["bridge"]._plan_revision() == "2026-09-20-r2"
+    with pytest.raises(HTTPException) as caught:
+        relay["bridge"].route(_payload(intent="change_request", revision=REVISION))
+    assert caught.value.status_code == 409
+    (tmp_path / "run_state" / "daily_plans" / "2026-09-20-r2.json").write_text("{broken")
+    assert relay["bridge"]._plan_revision() is None
 
 
 def test_bounded_responder_requires_ready_empty_worker_and_projects_honest_identity(relay):
@@ -990,17 +907,16 @@ def test_live_mailbox_states_are_observed_without_calling_work_offline(relay, st
     assert summary["agents"]["pi_client"]["relay"]["status"] == expected
 
 
-def test_refresh_preserves_curated_notes_timestamp_across_day_rollover(relay):
-    brief = _brief()
-    prior_day = _iso(NOW - timedelta(days=1))
-    brief["generated_at"] = prior_day
-    _json(relay["state"] / "daily_ops_brief.json", brief)
+def test_refresh_generated_at_is_the_projection_time_and_plan_keeps_its_own(relay, tmp_path):
+    written = (NOW - timedelta(days=1)).timestamp()
+    os.utime(tmp_path / "run_state" / "daily_plans" / "2026-09-20.json", (written, written))
 
     _force_refresh(relay)
     summary = json.loads((relay["state"] / "daily_ops_summary.json").read_text())
 
-    assert summary["generated_at"] == prior_day
-    assert summary["goals"][0]["status"] == "in_progress"
+    assert summary["generated_at"] == _iso()
+    assert summary["daily_plan"]["written_at"] == _iso(NOW - timedelta(days=1))
+    assert summary["sources"]["plan"] == _iso(NOW - timedelta(days=1))
     assert summary["agents"]["nara"]["observed_at"] == _iso()
 
 
@@ -1032,7 +948,7 @@ def test_nara_observation_uses_fixed_systemd_query_and_cache(relay, monkeypatch)
         calls.append((argv, kwargs))
         return subprocess.CompletedProcess(argv, 0, "active\n", "")
 
-    monkeypatch.setattr(bridge_module.subprocess, "run", run)
+    monkeypatch.setattr(agents_module.subprocess, "run", run)
     first = relay["bridge"]._observe_nara()
     second = relay["bridge"]._observe_nara()
     assert first == second
@@ -1043,36 +959,24 @@ def test_nara_observation_uses_fixed_systemd_query_and_cache(relay, monkeypatch)
     ], {"capture_output": True, "text": True, "timeout": 1, "check": False})]
 
 
-def test_focus_projection_is_bound_to_active_pointer_digest(relay):
-    focus = {
-        "schema_version": "research-focus-selection/v1",
-        "focus_id": "fresh-focus", "title": "Fresh selected thesis",
-        "stage": "blocked", "next_action": "Produce the fresh receipt.",
-        "next_gate": {"from": "calibration", "to": "registration",
-                      "artifact": "bound receipt", "status": "blocked",
-                      "owner": "lab"},
-        "blockers": ["receipt missing"], "selected_at": _iso(),
-    }
-    raw = (json.dumps(focus, sort_keys=True, separators=(",", ":")) + "\n").encode()
-    sha = hashlib.sha256(raw).hexdigest()
-    directory = relay["state"] / "research_focus"
-    directory.mkdir()
-    (directory / (sha + ".json")).write_bytes(raw)
-    _json(relay["state"] / "active_research_focus.json", {
-        "schema_version": "research-focus/v1", "receipt_sha256": sha,
-    })
-
+def test_focus_comes_from_project_focus_and_its_failure_is_shown(relay, monkeypatch):
+    from backend import daily_ops_live
+    monkeypatch.setattr(daily_ops_live, "_project_focus", lambda repo: {
+        "status": "selected", "focus_id": "fresh-focus", "title": "Fresh thesis",
+        "stage": "needs_clean_refinement", "next_action": "Refine it.",
+        "intake_policy": "focus_before_new_topics", "selected_at": "2026-09-20T08:00:00+00:00"})
     _force_refresh(relay)
-    summary = json.loads((relay["state"] / "daily_ops_summary.json").read_text())
-    assert summary["research_focus"]["focus_id"] == "fresh-focus"
-    assert summary["research_focus"]["status"] == "blocked"
-    assert summary["research_focus"]["source_receipt_sha256"] == sha
+    focus = json.loads((relay["state"] / "daily_ops_summary.json").read_text())["research_focus"]
+    assert (focus["status"], focus["focus_id"], focus["intake_policy"]) == (
+        "selected", "fresh-focus", "focus_before_new_topics")
+    assert focus["selected_at"] == "2026-09-20T08:00:00Z"
 
-    (directory / (sha + ".json")).write_bytes(raw + b" ")
+    def broken(repo):
+        raise RuntimeError("receipt hash differs")
+    monkeypatch.setattr(daily_ops_live, "_project_focus", broken)
     _force_refresh(relay)
-    summary = json.loads((relay["state"] / "daily_ops_summary.json").read_text())
-    assert summary["research_focus"] is None
-    assert "Current research focus could not be verified." in summary["warnings"]
+    focus = json.loads((relay["state"] / "daily_ops_summary.json").read_text())["research_focus"]
+    assert focus["status"] == "source_invalid" and "receipt hash differs" in focus["reason"]
 
 
 def test_projection_is_bounded_to_fifty_requests_and_one_hundred_rows(relay):

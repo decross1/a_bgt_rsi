@@ -7,41 +7,38 @@ import {
   type DailyOpsDecisionTarget,
 } from "../api/dailyOps";
 
-export type EvidenceKind = "estimate" | "measured" | "unrated";
-export type WorkCardStatus = "authorized" | "in_progress" | "blocked" | "done" | "draft";
+/** Live status of one plan item, derived from the lab mailbox and git (daily_ops_live.py). */
+export type WorkStatus =
+  | "not_started" | "awaiting_review" | "held" | "building" | "validated" | "failed"
+  | "withdrawn" | "expired" | "amend_requested" | "accepted" | "rejected" | "merged"
+  | "waiting_on_you" | "answered";
 
 export type DailyWorkCard = {
   id: string;
+  goal: string;
+  owner: string;
+  lane: string;
+  repo: string;
   title: string;
-  what: string;
-  benefit: string;
-  cost: { summary: string; kind: EvidenceKind; basis: string };
-  conviction: { score: number | null; kind: EvidenceKind; basis: string };
-  worthTime: {
-    recommendation: "do_now" | "after_dependency" | "hold" | "unrated";
-    basis: string;
-  };
-  status: WorkCardStatus;
-  owner: "codex" | "oracle" | "nara" | "lab";
+  whyToday: string | null;
+  acceptance: string | null;
   dependsOn: string[];
-  source: string;
-  observedAt: string;
+  status: WorkStatus;
+  detail: string;
+  evidenceMsgId: string | null;
+  evidenceSha: string | null;
+  evidenceAt: string | null;
   actions: DailyOpsDecisionAction[];
 };
 
-export type DailyAgendaDecision = {
+export type DailyWaitingItem = {
+  kind: "question" | "owner_decision";
   id: string;
-  agendaId: string;
-  revision: string;
   title: string;
-  what: string;
-  reason: string;
-  disposition: "amend_required" | "review_required";
-  approveEnabled: boolean;
-  actions: Exclude<DailyOpsDecisionAction, "reprioritize">[];
-  taskTitles: string[];
-  source: string;
-  observedAt: string;
+  askedBy: string;
+  askedAt: string | null;
+  msgId: string | null;
+  cli: string;
 };
 
 export type DailyDecisionRequest = {
@@ -90,12 +87,19 @@ function requestId(): string {
   return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
 }
 
+const statusLabel: Record<WorkStatus, string> = {
+  not_started: "not started", awaiting_review: "awaiting review", held: "held", building: "building",
+  validated: "validated", failed: "failed", withdrawn: "withdrawn", expired: "expired",
+  amend_requested: "amend requested", accepted: "accepted", rejected: "rejected", merged: "merged",
+  waiting_on_you: "waiting on you", answered: "answered",
+};
+
 function badgeStyle(value: string): React.CSSProperties {
-  if (value === "done")
+  if (["merged", "validated", "accepted", "answered"].includes(value))
     return { color: "var(--status-ok)", background: "var(--status-ok-bg)" };
-  if (["blocked", "amend_required", "review_required"].includes(value))
+  if (["held", "failed", "rejected", "amend_requested", "waiting_on_you", "expired"].includes(value))
     return { color: "var(--status-warn)", background: "var(--status-warn-bg)" };
-  if (["authorized", "in_progress"].includes(value))
+  if (["building", "awaiting_review"].includes(value))
     return { color: "var(--status-info)", background: "var(--status-info-bg)" };
   return { color: "var(--status-idle)", background: "var(--status-idle-bg)" };
 }
@@ -116,40 +120,30 @@ function WorkCard({ card, requestAvailable, openEditor }: {
   requestAvailable: boolean;
   openEditor: (target: EditorTarget, trigger: HTMLButtonElement) => void;
 }) {
+  const evidence = [card.evidenceSha && `sha ${card.evidenceSha}`, card.evidenceMsgId].filter(Boolean).join(" · ");
   return <article data-testid={`daily-work-card-${card.id}`}
     className="rounded border border-[var(--border-1)] bg-[var(--surface-1)] p-3">
     <div className="flex flex-wrap items-start justify-between gap-2">
       <div className="min-w-0">
-        <p className="text-xs font-semibold uppercase tracking-wide text-[var(--fg-muted)]">{phrase(card.owner)}</p>
+        <p className="text-xs font-semibold uppercase tracking-wide text-[var(--fg-muted)]">
+          {card.id} · {card.goal} · {phrase(card.lane)}</p>
         <h4 className="mt-1 text-base font-semibold leading-snug">{card.title}</h4>
       </div>
-      <div className="flex flex-wrap gap-1.5"><Badge value={card.status} />
-        <Badge value={card.worthTime.recommendation}>{phrase(card.worthTime.recommendation)}</Badge></div>
+      <Badge value={card.status}>{statusLabel[card.status]}</Badge>
     </div>
+    <p className="mt-2 text-sm text-[var(--fg-muted)]" data-testid={`daily-work-card-${card.id}-status`}>{card.detail}</p>
+    {evidence && <p className="mt-1 font-mono text-xs text-[var(--fg-muted)]">
+      {evidence}{card.evidenceAt ? ` · ${timeLabel(card.evidenceAt)}` : ""}</p>}
 
-    <dl className="mt-3 grid gap-3 sm:grid-cols-2">
-      <div className="sm:col-span-2"><dt className="text-xs font-semibold uppercase tracking-wide text-[var(--fg-muted)]">What</dt>
-        <dd className="mt-1 text-sm">{card.what}</dd></div>
-      <div className="sm:col-span-2"><dt className="text-xs font-semibold uppercase tracking-wide text-[var(--fg-muted)]">Benefit</dt>
-        <dd className="mt-1 text-sm">{card.benefit}</dd></div>
-      <div className="rounded bg-[var(--surface-2)] p-2.5"><dt className="text-xs font-semibold uppercase tracking-wide text-[var(--fg-muted)]">Cost</dt>
-        <dd className="mt-1 text-sm font-medium">{card.cost.summary}</dd>
-        <dd className="mt-1 text-xs text-[var(--fg-muted)]">{phrase(card.cost.kind)}</dd></div>
-      <div className="rounded bg-[var(--surface-2)] p-2.5"><dt className="text-xs font-semibold uppercase tracking-wide text-[var(--fg-muted)]">Conviction</dt>
-        <dd className="mt-1 text-sm font-medium">{card.conviction.score === null ? "Unrated" : `${card.conviction.score}/10`}</dd>
-        <dd className="mt-1 text-xs text-[var(--fg-muted)]">{phrase(card.conviction.kind)}</dd></div>
-    </dl>
-
-    <details className="mt-3 text-xs text-[var(--fg-muted)]">
-      <summary className="cursor-pointer text-[var(--accent)]">Basis, dependencies, and source</summary>
+    {(card.whyToday || card.acceptance || card.dependsOn.length > 0) && <details className="mt-3 text-xs text-[var(--fg-muted)]">
+      <summary className="cursor-pointer text-[var(--accent)]">Why today, acceptance, dependencies</summary>
       <dl className="mt-2 grid gap-2">
-        <div><dt className="font-semibold">Cost basis</dt><dd>{card.cost.basis}</dd></div>
-        <div><dt className="font-semibold">Conviction basis</dt><dd>{card.conviction.basis} Conviction measures confidence that this work is worth doing, not the probability of scientific success.</dd></div>
-        <div><dt className="font-semibold">Timing basis</dt><dd>{card.worthTime.basis}</dd></div>
-        <div><dt className="font-semibold">Dependencies</dt><dd>{card.dependsOn.length ? card.dependsOn.join(" → ") : "None"}</dd></div>
-        <div><dt className="font-semibold">Source</dt><dd>{card.source} · {timeLabel(card.observedAt)}</dd></div>
+        {card.whyToday && <div><dt className="font-semibold">Why today</dt><dd>{card.whyToday}</dd></div>}
+        {card.acceptance && <div><dt className="font-semibold">Acceptance</dt><dd>{card.acceptance}</dd></div>}
+        <div><dt className="font-semibold">Owner · repo</dt><dd>{card.owner} · {card.repo}</dd></div>
+        <div><dt className="font-semibold">Depends on</dt><dd>{card.dependsOn.length ? card.dependsOn.join(", ") : "None"}</dd></div>
       </dl>
-    </details>
+    </details>}
 
     {card.actions.length > 0 && <div className="mt-3 flex flex-wrap gap-2" aria-label={`Actions for ${card.title}`}>
       {card.actions.map(action => <button key={action} type="button" disabled={!requestAvailable}
@@ -162,48 +156,29 @@ function WorkCard({ card, requestAvailable, openEditor }: {
   </article>;
 }
 
-function AgendaCard({ agenda, requestAvailable, openEditor }: {
-  agenda: DailyAgendaDecision;
-  requestAvailable: boolean;
-  openEditor: (target: EditorTarget, trigger: HTMLButtonElement) => void;
-}) {
-  return <article data-testid="daily-agenda-decision"
-    className="mt-3 rounded border border-[var(--status-warn)] bg-[var(--status-warn-bg)] p-3">
-    <div className="flex flex-wrap items-start justify-between gap-2">
-      <div><p className="text-xs font-semibold uppercase tracking-wide text-[var(--status-warn)]">Agenda decision</p>
-        <h4 className="mt-1 font-semibold">{agenda.title}</h4></div>
-      <Badge value={agenda.disposition} />
-    </div>
-    <p className="mt-2 text-sm">{agenda.what}</p>
-    <p className="mt-2 text-sm text-[var(--fg-muted)]"><span className="font-semibold text-[var(--fg)]">Why:</span> {agenda.reason}</p>
-    <p id="agenda-approval-state" className="mt-2 text-xs text-[var(--fg-muted)]">
-      This agenda cannot be approved. You can request a corrected draft or ask Oracle to skip it. Neither action executes work.
-    </p>
-    <details className="mt-2 text-xs text-[var(--fg-muted)]">
-      <summary className="cursor-pointer text-[var(--accent)]">Revision, {agenda.disposition === "amend_required"
-        ? "superseded proposal titles"
-        : "sealed proposal titles"}, and source</summary>
-      <p className="mt-2 font-mono">revision {agenda.revision}</p>
-      {agenda.taskTitles.length > 0 && <ul className="mt-2 list-disc space-y-1 pl-5">
-        {agenda.taskTitles.map(title => <li key={title}>{title}</li>)}
-      </ul>}
-      <p className="mt-2">{agenda.source} · {timeLabel(agenda.observedAt)}</p>
-    </details>
-    <div className="mt-3 flex flex-wrap gap-2" aria-label="Agenda actions">
-      {agenda.actions.map(action => <button key={action} type="button" disabled={!requestAvailable}
-        aria-describedby={!requestAvailable ? "daily-decisions-readonly" : undefined}
-        onClick={event => openEditor({ kind: "agenda", id: agenda.id, title: agenda.title, action }, event.currentTarget)}
-        className="rounded border border-[var(--border-2)] px-3 py-1.5 text-sm text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50">
-        {action === "modify" ? "Request corrected draft" : actionLabel[action]}
-      </button>)}
-    </div>
-  </article>;
+function WaitingOnYou({ items }: { items: DailyWaitingItem[] }) {
+  return <section aria-labelledby="daily-waiting-heading" data-testid="daily-waiting-on-you"
+    className="mt-4 rounded border border-[var(--status-warn)] p-3">
+    <h3 id="daily-waiting-heading" className="text-base font-semibold">Waiting on you</h3>
+    {items.length === 0 ? <p className="mt-1 text-sm text-[var(--fg-muted)]">
+      No open owner question in the lab mailbox and no owner decision in today&apos;s plan.</p> :
+      <ul className="mt-2 space-y-3">{items.map(item => <li key={item.id} data-testid={`daily-waiting-${item.id}`}>
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <span className="font-medium">{item.title}</span>
+          <Badge value="waiting_on_you">{item.kind === "question" ? "question" : "plan decision"}</Badge>
+        </div>
+        <p className="mt-1 text-xs text-[var(--fg-muted)]">from {item.askedBy}{item.askedAt ? ` · ${timeLabel(item.askedAt)}` : ""}{item.msgId ? ` · ${item.msgId}` : ""}</p>
+        <p className="mt-1 text-xs text-[var(--fg-muted)]">{item.msgId ? "Answer from the lab checkout:" : "No mailbox question exists for this item; reply with a note:"}</p>
+        <code className="mt-1 block overflow-x-auto whitespace-pre rounded bg-[var(--surface-2)] px-2 py-1 text-xs">{item.cli}</code>
+      </li>)}</ul>}
+  </section>;
 }
 
-export function DailyDecisionCards({ cards, agenda, requestAvailable, canRequest, blockedReason, onRequireAccess, onRequest }: {
+export function DailyDecisionCards({ cards, waiting, requestAvailable, readonlyReason, canRequest, blockedReason, onRequireAccess, onRequest }: {
   cards: DailyWorkCard[];
-  agenda: DailyAgendaDecision | null;
+  waiting: DailyWaitingItem[];
   requestAvailable: boolean;
+  readonlyReason: string;
   canRequest: boolean;
   blockedReason: string | null;
   onRequireAccess: () => void;
@@ -291,22 +266,20 @@ export function DailyDecisionCards({ cards, agenda, requestAvailable, canRequest
     <div className="flex flex-wrap items-end justify-between gap-2">
       <div><h3 id="daily-work-heading" className="text-base font-semibold">Today&apos;s work</h3>
         <p className="mt-1 text-sm text-[var(--fg-muted)]">{cards.length > 0
-          ? cards.every(card => ["authorized", "in_progress"].includes(card.status))
-            ? "These steps are already authorized. No owner approval is needed."
-            : "Review each card's recorded status before changing the plan."
-          : "No reviewed work steps are available."}</p></div>
-      <span className="text-xs text-[var(--fg-muted)]">{cards.length}/3 cards shown</span>
+          ? "Every item of the plan of record, with its live status from the lab mailbox and main."
+          : "The plan of record has no items."}</p></div>
+      <span className="text-xs text-[var(--fg-muted)]">{cards.length} item{cards.length === 1 ? "" : "s"}</span>
     </div>
 
-    {cards.length > 0 ? <div className="mt-3 grid gap-3 xl:grid-cols-3">
+    {cards.length > 0 && <div className="mt-3 grid gap-3 xl:grid-cols-2">
       {cards.map(card => <WorkCard key={card.id} card={card} requestAvailable={requestAvailable} openEditor={openEditor} />)}
-    </div> : <p className="mt-3 text-sm text-[var(--fg-muted)]">No source-bound work cards are available.</p>}
+    </div>}
 
     {!requestAvailable && <p id="daily-decisions-readonly" data-testid="daily-decisions-readonly" className="mt-3 rounded border border-[var(--border-2)] p-2 text-sm text-[var(--fg-muted)]">
-      Decision requests are read-only right now. The work plan remains visible.
+      {readonlyReason}
     </p>}
 
-    {agenda && <AgendaCard agenda={agenda} requestAvailable={requestAvailable} openEditor={openEditor} />}
+    <WaitingOnYou items={waiting} />
 
     {editor && <section ref={editorRef} tabIndex={-1} data-testid="daily-decision-editor"
       aria-labelledby="daily-decision-editor-heading"
