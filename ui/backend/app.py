@@ -408,7 +408,9 @@ _daily_bridge = configured_bridge(
 # ORACLE_DAILY_OPS_CONFIG file and owner.key as the (inert) Pi bridge above.
 # If the Pi bridge ever comes back and is configured, its own decision router
 # is used unchanged and this one is not consulted.
-_lab_owner_router = None if _daily_bridge else configured_lab_mailbox_router(
+# Owner decisions go to the lab mailbox whenever it is configured (owner rule 2026-09-23);
+# the Pi bridge, when present, keeps only the free-text composer.
+_lab_owner_router = configured_lab_mailbox_router(
     os.environ.get("ORACLE_DAILY_OPS_CONFIG"),
     repo_root=_env_path("UI_LOOP_V0_REPO", DEFAULT_LOOP_V0_REPO),
 )
@@ -424,11 +426,11 @@ app = create_app(
     loop_v0_memory=_env_path("UI_LOOP_V0_MEMORY", DEFAULT_LOOP_V0_MEMORY),
     coordinator_run_state=_env_path("UI_COORDINATOR_RUN_STATE", DEFAULT_COORDINATOR_RUN_STATE),
     coordinator_memory=_env_path("UI_COORDINATOR_MEMORY", DEFAULT_COORDINATOR_MEMORY),
-    daily_ops_authorizer=(_daily_bridge.authorize if _daily_bridge
-                          else _lab_owner_router.authorize if _lab_owner_router else None),
+    daily_ops_authorizer=(_lab_owner_router.authorize if _lab_owner_router
+                          else _daily_bridge.authorize if _daily_bridge else None),
     daily_ops_router=_daily_bridge.route if _daily_bridge else None,
-    daily_ops_decision_router=(_daily_bridge.route_decision if _daily_bridge
-                               else _lab_owner_router.route_decision if _lab_owner_router else None),
+    daily_ops_decision_router=(_lab_owner_router.route_decision if _lab_owner_router
+                               else _daily_bridge.route_decision if _daily_bridge else None),
     daily_ops_refresher=_daily_bridge.refresh if _daily_bridge else None,
     # Without a relay, the Now panel is still derived live (never a stale file).
     daily_ops_live_summary=None if _daily_bridge else partial(

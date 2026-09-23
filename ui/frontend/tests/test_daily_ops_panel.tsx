@@ -235,21 +235,21 @@ describe("DailyOpsPanel", () => {
     })));
   });
 
-  it("gives an accurate one-line reason when change requests are unavailable", () => {
+  it("keeps decision buttons live when the old relay is offline, and explains only a missing sign-in", () => {
     const base = summary();
     const relay = { status: "offline", detail: "Mailbox is unavailable or stale.", observed_at: now, source: "Oracle oversight mailbox heartbeat" };
     D.summary = summary({ agents: { ...base.agents, oracle: { ...base.agents.oracle, relay },
       pi_client: { ...base.agents.pi_client, relay } } });
     show();
-    expect(screen.getByTestId("daily-decisions-readonly")).toHaveTextContent(
-      "Change requests are unavailable: Oracle looks offline right now.");
-    expect(within(screen.getByTestId("daily-work-card-d2")).getByRole("button", { name: "Ask to modify" })).toBeDisabled();
+    // Decisions go to the lab mailbox, so a dead Pi relay does not disable them.
+    expect(screen.queryByTestId("daily-decisions-readonly")).toBeNull();
+    expect(within(screen.getByTestId("daily-work-card-d2")).getByRole("button", { name: "Ask to modify" })).toBeEnabled();
     expect(screen.getByTestId("daily-ops-relay")).toHaveTextContent("Owner relay: offline — Mailbox is unavailable or stale.");
 
     D.summary = summary({ capabilities: { ...base.capabilities, decision_write_available: false } });
     show();
-    expect(screen.getAllByTestId("daily-decisions-readonly")[1]).toHaveTextContent(
-      "no authenticated Oracle relay is configured");
+    expect(screen.getByTestId("daily-decisions-readonly")).toHaveTextContent(
+      "Sign-in for owner actions isn't set up on this machine.");
   });
 
   it("queues a per-item request bound to the plan of record", async () => {

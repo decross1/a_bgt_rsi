@@ -531,24 +531,23 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
   const changeBound = intent !== "change_request" || Boolean(summary?.currentPlanRevision);
   const canSubmit = writeAvailable && accessKey.length > 0 && text.trim().length > 0 &&
     text.trim().length <= 4096 && changeBound && oracleReady && submit.kind !== "submitting";
+  // Decisions go to the lab mailbox, not the Pi relay, so they don't wait on the relay.
   const decisionRouteAvailable = summary?.decisionWriteAvailable === true &&
-    Boolean(summary.currentPlanRevision) && oracleReady;
+    Boolean(summary.currentPlanRevision);
   // One accurate line for why per-item requests are unavailable.
   const readonlyReason = !summary?.currentPlanRevision
     ? "Change requests are unavailable: no plan of record is readable."
     : summary.decisionWriteAvailable !== true
-      ? "Change requests are unavailable: no authenticated Oracle relay is configured for this backend."
-      : `Change requests are unavailable: ${responderLabel} looks ${relay ? phrase(relay.status) : "unobserved"} right now. They'll re-enable once ${responderLabel} is healthy again.`;
+      ? "Sign-in for owner actions isn't set up on this machine."
+      : "";
   const decisionCanRequest = decisionRouteAvailable && accessKey.length > 0;
   const decisionBlockedReason = !accessKey
     ? "Unlock owner access below before sending a request."
     : !summary?.currentPlanRevision
       ? "No plan of record is available for a plan-bound request."
       : !summary.decisionWriteAvailable
-        ? "The authenticated decision-request route is read-only."
-        : !oracleReady
-          ? `${responderLabel} is unavailable; requests remain unsent.`
-          : null;
+        ? "Sign-in for owner actions isn't set up on this machine."
+        : null;
 
   function saveAccessKey() {
     const next = keyDraft.trim();
