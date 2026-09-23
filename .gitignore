@@ -142,3 +142,4 @@ run_state/oracle_nara_mailbox.jsonl
 run_state/.oracle_nara_mailbox.lock
 run_state/.nara_lane.lock
 run_state/pause_nara_lane
+run_state/precheck_receipts/

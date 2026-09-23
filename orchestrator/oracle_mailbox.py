@@ -80,6 +80,22 @@ def validate_plan_item(body: dict) -> None:
     if not isinstance(budget, dict) or not all(
             type(budget.get(k, 1)) is int and budget.get(k, 1) > 0 for k in ("attempts", "wall_clock_minutes")):
         raise MailboxError("budget.attempts and budget.wall_clock_minutes must be positive integers")
+    # fixture_sources / fixture_enums (plan 2026-09-24 d3) are optional declarations of
+    # where an item's test fixtures were copied from, so the lane can refuse an item
+    # whose fixture data does not exist in the live files. Validated here (unknown keys
+    # are otherwise accepted silently), checked in nara_lane.admission().
+    sources = body.get("fixture_sources", {})
+    if not isinstance(sources, dict) or not all(
+            isinstance(k, str) and k and isinstance(v, str) and v for k, v in sources.items()):
+        raise MailboxError("fixture_sources must be an object mapping fixture name -> one repo path")
+    enums = body.get("fixture_enums", {})
+    if not isinstance(enums, dict) or not all(
+            isinstance(k, str) and k and isinstance(v, list) and v
+            and all(isinstance(f, str) and f for f in v) for k, v in enums.items()):
+        raise MailboxError("fixture_enums must be an object mapping fixture name -> non-empty list of field names")
+    if set(enums) - set(sources):
+        raise MailboxError("fixture_enums names a fixture with no fixture_sources entry: "
+                           f"{sorted(set(enums) - set(sources))}")
     if not isinstance(body["title"], str) or not isinstance(body["objective"], str):
         raise MailboxError("title and objective must be strings")
     if len(body["objective"]) > 4000 or len(body["title"]) > 200:

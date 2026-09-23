@@ -25,6 +25,14 @@ the cockpit / cron can poll.
     across wakes and escalates by that age. Most gates use 3h/12h; the daily
     registration cap uses 26h/48h because it is expected to hold through the
     next UTC reset.
+  - meta_review_fallbacks(rows, window_hours, now) — how often a cycle ran
+    WITHOUT its conditioning step. The coordinator records a degraded step as an
+    `loop_v0_fallback` event and proceeds anyway; on 2026-09-23 fifteen of those
+    events named `meta_review` and nothing in the loop reported the count, so
+    every cycle that day produced journal output with no conditioning bullets
+    and no signal anywhere (2026-09-23 retro, OTHER LAB INPUTS). Counting them
+    is a measurement, not a finding: a high count is a prompt to look, and the
+    gates stay with the other detectors.
   - write_alert_flag(path, level, reasons, gate=None, now=None) —
     run_state/loop_alert.json {"level": "red"|"amber"|"ok", "reasons": [...],
     "updated_at": iso} plus, when the cycle was held, an ADDITIVE
@@ -613,6 +621,60 @@ def write_alert_flag(path, level: str, reasons: list[str], *,
         json.dump(payload, fh, indent=2)
         fh.write("\n")
     os.replace(tmp, path)
+
+
+# ── meta_review fallbacks (2026-09-23 retro, OTHER LAB INPUTS) ────────────
+
+# What a degraded step looks like in the run log: the coordinator's own record
+# that a step did not deliver and the cycle continued without it. Anything that
+# emits this event_type is counted by name, so a new degraded step shows up in
+# the breakdown without editing this module.
+FALLBACK_EVENT = "loop_v0_fallback"
+
+
+def meta_review_fallbacks(rows: list, window_hours: float,
+                          now: str | datetime) -> dict:
+    """Count `loop_v0_fallback` events whose note names `meta_review` inside the
+    last `window_hours`, and report the newest one.
+
+    `rows` are run-log rows passed in (a coordinator report, or parsed
+    run_state/week1.run.jsonl); the detector never reads the disk and never
+    calls a model, like the other three. `now` is injected — a str or a
+    datetime, as staleness_gap does — so the window is testable.
+
+    Judged rows are those with BOTH a parseable timestamp and a string note;
+    any other row is unknown and is skipped, never counted either way (rule 4).
+    A note is matched case-insensitively on the literal step name, so the two
+    producers in orchestrator/nara.py ("meta_review did not produce conditioning
+    bullets (status=...)" and "meta_review raised TypeError: ...") both count
+    and a fallback from another step does not.
+
+    Returns {"meta_review_fallbacks": int, "last_seen": iso | None}; `last_seen`
+    is the row's timestamp string verbatim, never a reformatted timestamp.
+    """
+    stamp = _parse_ts(now) if isinstance(now, str) else now
+    if stamp is not None and stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    if stamp is None or not isinstance(window_hours, (int, float)):
+        return {"meta_review_fallbacks": 0, "last_seen": None}
+    cutoff = stamp.timestamp() - float(window_hours) * 3600.0
+    count, last_seen, last_at = 0, None, None
+    for row in rows or []:
+        if not isinstance(row, dict) or row.get("event_type") != FALLBACK_EVENT:
+            continue
+        note = row.get("note")
+        at = _parse_ts(row.get("timestamp"))
+        if not isinstance(note, str) or at is None:
+            continue
+        if "meta_review" not in note.lower():
+            continue
+        epoch = at.timestamp()
+        if not cutoff <= epoch <= stamp.timestamp():
+            continue
+        count += 1
+        if last_at is None or epoch > last_at:
+            last_at, last_seen = epoch, row.get("timestamp")
+    return {"meta_review_fallbacks": count, "last_seen": last_seen}
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────

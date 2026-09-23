@@ -106,6 +106,11 @@ def admission(item: dict) -> list[str]:
     budget = body.get("budget") or {}
     if budget.get("attempts", 1) > MAX_ATTEMPTS or budget.get("wall_clock_minutes", 1) > MAX_WALL_MINUTES:
         reasons.append(f"budget exceeds {MAX_ATTEMPTS} attempts / {MAX_WALL_MINUTES} minutes")
+    if not reasons:  # declared fixtures must match the live files (plan 2026-09-24 d3)
+        try:
+            reasons.extend(check_fixtures(item))
+        except FixtureCheckError as exc:
+            reasons.append(f"fixture_sources cannot be checked: {exc}")
     if not reasons and not _prechecked(item):  # last, so it never masks an earlier reason
         sha = test_sha256(acceptance["test_content"])
         reasons.append(f"no green precheck receipt for sha256(test_content) {sha}: run "
@@ -118,11 +123,32 @@ def test_sha256(test_content: str) -> str:
     return hashlib.sha256(test_content.encode()).hexdigest()
 
 
+def _main_lab_root() -> Path:
+    """The main lab checkout: the worktree that owns the shared object database.
+
+    run_state/ lives in the main working tree, and a linked worktree's .git file is
+    a `gitdir:` pointer back to `<main>/.git/worktrees/<name>`, so the shared
+    common dir names the main checkout wherever the lane happens to be invoked
+    from. Receipts are precheck evidence about one exact test, so they belong in
+    the one place the lane's admission() reads them from, not in whichever worktree
+    a precheck happened to run in. Falls back to lane ROOT when git cannot answer.
+    """
+    try:
+        common = Path(_git("rev-parse", "--path-format=absolute", "--git-common-dir").strip())
+    except Exception:
+        return Path(ROOT)
+    root = common.parent if common.name == ".git" else common
+    return root if root.is_dir() else Path(ROOT)
+
+
 def _receipt_dir(root: Path | None = None) -> Path:
-    """Where precheck receipts live, resolved at call time: they are written to
-    run_state/ at runtime, never inside a precheck or Nara worktree. A test that
-    redirects lane ROOT gets receipts under the redirected ROOT."""
-    return (Path(root) if root is not None else Path(ROOT)) / "run_state/precheck_receipts"
+    """Where precheck receipts live: run_state/precheck_receipts/ under the main lab
+    root, resolved at call time, never inside a precheck or Nara worktree. The
+    `root` argument is an explicit override for a caller (or a test) that redirects
+    lane ROOT and wants its own receipts; admission() does not pass one, so the
+    lane always reads the main lab's."""
+    base = Path(root) if root is not None else _main_lab_root()
+    return base / "run_state/precheck_receipts"
 
 
 def receipt_path(sha: str, *, root: Path | None = None) -> Path:
@@ -131,11 +157,22 @@ def receipt_path(sha: str, *, root: Path | None = None) -> Path:
 
 
 def _prechecked(item: dict) -> bool:
-    """True when a green precheck receipt covers this exact test content."""
+    """True when a green precheck receipt covers this exact test content.
+
+    A receipt the repository tracks is not a receipt (plan 2026-09-24 d3): at
+    bef22e3 one was committed onto the gate branch, and a receipt that travels with a
+    branch would pre-admit a test on every checkout, which is the claim the receipt
+    exists to make. `_receipt_dir(ROOT)` is where the author ran the check, so an
+    untracked receipt there counts; the main-lab-root rule lives there, not as a
+    second lookup, because requiring both would refuse every legitimate receipt.
+    """
     acceptance = item["body"]["acceptance"]
-    directory = _receipt_dir()
+    root = Path(ROOT)
+    directory = _receipt_dir(root)
     path = directory / f"{test_sha256(acceptance['test_content'])}.json"
     if path.is_symlink() or not path.is_file():
+        return False
+    if _git_tracked(path, root):
         return False
     try:
         body = json.loads(path.read_text())
@@ -143,6 +180,157 @@ def _prechecked(item: dict) -> bool:
         return False
     return (isinstance(body, dict) and body.get("state") == "green"
             and body.get("test_sha256") == test_sha256(acceptance["test_content"]) == path.stem)
+
+
+def _git_tracked(path: Path, root: Path) -> bool:
+    """True when git tracks `path` in the repository rooted at `root`.
+
+    The pathspec is relative to `-C`, because `git ls-files` prints only paths relative
+    to its own working directory: a pathspec relative to the receipt directory
+    (run_state/precheck_receipts/) asks about a file that does not exist there and
+    always comes back empty, which would read as untracked forever.
+
+    Fails closed: if git cannot answer, the receipt does not count. That can hold an
+    item, which costs one repost; the alternative lets a committed receipt admit an
+    untested item, which is what this check exists to stop.
+    """
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return True
+    try:
+        out = subprocess.run(["git", *GIT_SAFE, "ls-files", "--error-unmatch", "--", str(relative)],
+                             cwd=root, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return True
+    if out.returncode not in (0, 1):  # not a repository, bad pathspec, no git: unknown, so not admitted
+        return True
+    return out.returncode == 0
+
+
+class FixtureCheckError(RuntimeError):
+    pass
+
+
+def _fixture_objects(path: Path) -> list[dict]:
+    """The live rows a fixture is checked against: one object for a JSON file, one per
+    non-blank line for JSONL (the shape of most live lab state).
+
+    Raises FixtureCheckError naming the file when it cannot be read, when a line is
+    unparseable, or when a row is not an object: a shape this check cannot judge is
+    refused, not skipped, because a silently-skipped row is how a gate starts lying.
+    """
+    try:
+        text = path.read_text(errors="replace")
+    except OSError as exc:
+        raise FixtureCheckError(f"cannot read {path}: {exc}") from exc
+    if path.suffix == ".jsonl":
+        rows = []
+        for number, line in enumerate(text.splitlines(), 1):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                raise FixtureCheckError(f"{path} line {number} is not JSON") from None
+            if not isinstance(row, dict):
+                raise FixtureCheckError(f"{path} line {number} is not a JSON object")
+            rows.append(row)
+        return rows
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        raise FixtureCheckError(f"{path} is not parseable JSON") from None
+    if not isinstance(doc, dict):
+        raise FixtureCheckError(f"{path} is a JSON {type(doc).__name__}, not an object")
+    return [doc]
+
+
+def _observed_keys(rows: list[dict], fixture: dict) -> set:
+    """Top-level keys the live file really holds. Where rows carry a `kind` field, the
+    union over rows of the fixture's own kind (rows of another kind legitimately differ
+    in shape); otherwise the union over all rows. A fixture of a kind the file never
+    holds is judged against all rows and refused below, where the real kinds are listed.
+    """
+    kinds = {r["kind"] for r in rows if isinstance(r.get("kind"), str)}
+    kind = fixture.get("kind")
+    if kinds and isinstance(kind, str) and kind in kinds:
+        rows = [r for r in rows if r.get("kind") == kind]
+    return {key for row in rows for key in row}
+
+
+def check_fixtures(item: dict) -> list[str]:
+    """Refuse a plan item whose test fixtures do not match the live files it declares.
+
+    Three days of lane holds came from one authoring defect (retro
+    claude-fd99b8f6159965c4, cause missing_context): a fixture was derived by hand
+    from a live file and got its shape wrong - a key the file does not have, or an
+    enum value it never holds - and the lane found it after a sandbox run, so each
+    mistake cost a posting, a review round and a hold. This refuses it before the
+    sandbox rather than asking me to be careful.
+
+    A plan item declares `fixture_sources` {fixture name: repo-relative live path}
+    and `fixtures` {fixture name: the object its test uses}; `fixture_enums`
+    {fixture name: [field, ...]} names the fields whose values must also occur in the
+    live file. Enum fields are declared, never inferred - a str-valued field is not
+    assumed to be an enum.
+
+    Deliberately loose where looseness costs nothing: a fixture named in no source
+    map is unchecked (synthetic fixtures are fine), nested keys are not compared
+    (top level only - that is where the drift showed), and an enum field the fixture
+    omits is skipped. Sources and enums are shape-checked by
+    mailbox.validate_plan_item(), so they are objects of the right type by here.
+
+    Raises FixtureCheckError on a live file that cannot be read, parsed or judged;
+    otherwise returns the refusal reasons (empty means everything declared is
+    observed).
+    """
+    body = item["body"]
+    sources, enums = body.get("fixture_sources") or {}, body.get("fixture_enums") or {}
+    fixtures = body.get("fixtures", {})
+    if not isinstance(fixtures, dict):
+        return ["fixtures must be an object mapping fixture name -> the object the test uses"]
+    reasons: list[str] = []
+    root = Path(ROOT)
+    for name, rel in sorted(sources.items()):
+        if rel.startswith("/") or ".." in Path(rel).parts:
+            reasons.append(f"fixture_sources.{name} must be a repo-relative path: {rel}")
+            continue
+        live = root / rel
+        try:
+            live.resolve().relative_to(root.resolve())
+        except ValueError:
+            reasons.append(f"fixture_sources.{name} points outside the repo root: {rel}")
+            continue
+        if not live.is_file():
+            reasons.append(f"fixture_sources.{name} names a live file that does not exist: {rel}")
+            continue
+        fixture = fixtures.get(name)
+        if fixture is None:
+            continue
+        if not isinstance(fixture, dict):
+            reasons.append(f"fixtures.{name} must be an object, got {type(fixture).__name__}")
+            continue
+        rows = _fixture_objects(live)
+        observed = _observed_keys(rows, fixture)
+        for key in sorted(set(fixture) - observed):
+            reasons.append(f"fixtures.{name} has a key no live row of {rel} has: {key} "
+                           f"(live keys: {sorted(observed)[:20]})")
+        kinds = {r["kind"] for r in rows if isinstance(r.get("kind"), str)}
+        kind = fixture.get("kind")
+        if kinds and isinstance(kind, str) and kind not in kinds:
+            reasons.append(f"fixtures.{name} has kind {kind!r}, which {rel} never holds "
+                           f"(live kinds: {sorted(kinds)})")
+        for field in sorted(enums.get(name, [])):
+            if field not in fixture:
+                continue
+            value = fixture[field]
+            values = {r[field] for r in rows if field in r and isinstance(r[field], str)}
+            if isinstance(value, str) and value not in values:
+                reasons.append(f"fixtures.{name}.{field}={value!r} is a value the live file {rel} "
+                               f"never holds (live values: {sorted(values)[:20]})")
+    return reasons
+
 
 
 class PrecheckError(RuntimeError):
