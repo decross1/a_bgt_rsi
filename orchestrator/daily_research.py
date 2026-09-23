@@ -128,8 +128,9 @@ def queue_candidates(campaign: dict, *, now: datetime | None = None) -> list[dic
         return []
     topics = all_topics(campaign)
     observed = now or datetime.now(timezone.utc)
-    if sum(_stamp(row["registered_at"]).date() == observed.date()
-           for row in topics if row.get("registered_at")) >= MAX_REGISTRATIONS_PER_UTC_DAY:
+    if MAX_REGISTRATIONS_PER_UTC_DAY > 0 and sum(
+            _stamp(row["registered_at"]).date() == observed.date()
+            for row in topics if row.get("registered_at")) >= MAX_REGISTRATIONS_PER_UTC_DAY:
         return []
     used = {topic.get("registration_source", {}).get("id") for topic in topics}
     hashes = {topic["text_sha256"] for topic in topics}
@@ -161,7 +162,7 @@ def replenish(campaign: dict, loop_rows: list[dict], *,
     registered_today = sum(_stamp(row["registered_at"]).date() == observed.date()
                            for row in all_topics(campaign)
                            if row.get("registered_at"))
-    if registered_today >= MAX_REGISTRATIONS_PER_UTC_DAY:
+    if MAX_REGISTRATIONS_PER_UTC_DAY > 0 and registered_today >= MAX_REGISTRATIONS_PER_UTC_DAY:
         return {"status": "daily_topic_limit", "reason": "three_topics_registered_today"}
     try:
         candidates = queue_candidates(campaign, now=now)

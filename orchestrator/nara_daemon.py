@@ -297,7 +297,8 @@ def _cycle_budget() -> int:
 def _budget_remaining(budget: int) -> bool:
     """Pre-check mirror of the coordinator's daily cap (the coordinator
     re-enforces inside the cycle; a refusal there is a DESIGNED outcome)."""
-    return coordinator._daily_spent() + budget <= coordinator.DAILY_BUDGET_CAP
+    cap = coordinator.DAILY_BUDGET_CAP
+    return cap <= 0 or coordinator._daily_spent() + budget <= cap  # 0 = no daily cap
 
 
 def _run_cycle(budget: int) -> dict:

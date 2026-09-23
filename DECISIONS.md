@@ -4022,3 +4022,21 @@ provides a way to close a focus.
 
 **Reserved number.** D-083 stays reserved for the writer and ownership matrix
 (`docs/ORACLE_NARA_BUILDOUT_PLAN.md` A5).
+
+## D-085 — No daily budget on Nara (owner direction, 2026-09-23)
+
+**Authority.** Derrick, in the primary Claude session on 2026-09-23, verbatim:
+
+> can you remove any "daily" budget from nara...nara is also running on a local
+> open source model (the same one the pi oracle is going through)
+
+**Decision.** Nara's daily limits are off by default: the coordinator's daily cap,
+its clock pacing and per-class shares (`COORDINATOR_DAILY_CAP`, default now 0 =
+none; D-063 had set 60), the daemon's matching pre-check, and the 3-topics-per-UTC-day
+registration limit (`TOPIC_DAILY_CAP`, default 0 = none). Setting either variable
+restores a cap. What still paces Nara: cycle cadence (30-minute daemon heartbeat plus
+the hourly cron), one Flash request at a time, the one-unconsumed-topic rule, and the
+campaign registry's 512-receipt limit (without a daily limit this fills in days, so a
+successor campaign becomes a regular need, not a rare one). Spend is still written to
+`run_state/coordinator_budget.jsonl`. Frontier calls are unaffected: the frontier
+screen runs only on finding promotion. The weekly frontier budget (D-061) is unchanged.

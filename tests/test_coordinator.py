@@ -420,6 +420,7 @@ def test_budget_refusal_still_recomputes_health_alert(monkeypatch, state_files):
     # MUST still recompute health signals (stall/staleness are decoupled from
     # dispatch per P0).
     called = {}
+    monkeypatch.setattr(coord, "DAILY_BUDGET_CAP", 60)  # a configured cap (default is none)
     monkeypatch.setattr(coord, "_daily_spent", lambda: 999)
     monkeypatch.setattr(coord, "_budget_allowance", lambda: 0)
     monkeypatch.setattr(coord.coordinator_cycle_log, "emit_health_signals",
@@ -429,3 +430,15 @@ def test_budget_refusal_still_recomputes_health_alert(monkeypatch, state_files):
     assert report["status"] in ("daily_budget_exhausted", "daily_budget_paced")
     assert "report" in called, "budget refusal must recompute health signals"
     assert called["report"]["status"] == report["status"]
+
+
+def test_no_daily_cap_by_default(monkeypatch):
+    # Owner 2026-09-23: Nara's model is local and free, so no daily budget unless
+    # COORDINATOR_DAILY_CAP configures one; spend is still ledgered.
+    from orchestrator import nara_daemon
+    monkeypatch.setattr(coord, "DAILY_BUDGET_CAP", 0)
+    monkeypatch.setattr(coord, "_daily_spent", lambda **_kw: 999)
+    monkeypatch.setattr(coord, "_daily_spent_by_class", lambda **_kw: {"ideation": 999})
+    assert coord._budget_allowance() is None
+    assert all(v["remaining"] is None for v in coord.activity_budget_state().values())
+    assert nara_daemon._budget_remaining(6)

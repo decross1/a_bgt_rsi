@@ -151,7 +151,9 @@ def test_registered_link_rejects_evidence_started_before_registration(tmp_path):
     ) == "malformed_record"
 
 
-def test_duplicate_source_text_pending_and_daily_caps_are_enforced(tmp_path):
+def test_duplicate_source_text_pending_and_daily_caps_are_enforced(tmp_path, monkeypatch):
+    from orchestrator import research_topic_registry
+    monkeypatch.setattr(research_topic_registry, "MAX_REGISTRATIONS_PER_UTC_DAY", 3)  # a configured cap
     root, registry = _campaign_tree(tmp_path)
     campaign = _load(root, registry)
     first = register_topic(

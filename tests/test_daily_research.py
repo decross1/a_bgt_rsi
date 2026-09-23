@@ -75,6 +75,8 @@ def test_source_identity_dedup_survives_new_ingestion_hash(monkeypatch, tmp_path
 
 
 def test_daily_capacity_resets_without_reusing_sources(monkeypatch, tmp_path):
+    from orchestrator import research_topic_registry
+    monkeypatch.setattr(research_topic_registry, "MAX_REGISTRATIONS_PER_UTC_DAY", 3)  # a configured cap
     source(monkeypatch, [paper("2609.12345")])
     campaign = {"topic_policy": {"mode": "registered_exploratory"}, "_repo_root": tmp_path}
     registered = [{"text_sha256": str(i) * 64, "registered_at": NOW.isoformat(),
@@ -181,3 +183,14 @@ def test_broken_ledger_halts_before_assessing_available_topic(monkeypatch, tmp_p
     )
     assert result["status"] == "topic_source_unavailable"
     assert receipts == [result]
+
+
+def test_no_daily_topic_limit_by_default(monkeypatch, tmp_path):
+    from orchestrator import research_topic_registry
+    monkeypatch.setattr(research_topic_registry, "MAX_REGISTRATIONS_PER_UTC_DAY", 0)
+    source(monkeypatch, [paper("2609.12345")])
+    campaign = {"topic_policy": {"mode": "registered_exploratory"}, "_repo_root": tmp_path}
+    registered = [{"text_sha256": str(i) * 64, "registered_at": NOW.isoformat(),
+                   "registration_source": {"id": f"2609.0000{i}"}} for i in range(3)]
+    monkeypatch.setattr(research_campaign, "all_topics", lambda _c: registered)
+    assert daily_research.queue_candidates(campaign, now=NOW) != []  # three today do not stop a fourth

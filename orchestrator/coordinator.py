@@ -69,9 +69,10 @@ PAUSE_PATH = REPO_ROOT / "run_state" / "pause_coordinator"
 # EXECUTED cycle {date, run_id, spent}; a new execute cycle refuses when
 # today's total would exceed the cap. Dry-runs are never charged.
 BUDGET_LEDGER_PATH = REPO_ROOT / "run_state" / "coordinator_budget.jsonl"
-# D-063 (2026-08-15, owner-ratified): 18 -> 60 for hourly/always-on cadence
-# (24 cycles x ~2.5 avg cost; ~50 min GPU/day). Env-overridable as before.
-DAILY_BUDGET_CAP = int(os.environ.get("COORDINATOR_DAILY_CAP", "60"))
+# D-063 (2026-08-15) set 60 for the hourly cadence. Owner, 2026-09-23: Nara runs
+# on the same free local model as Oracle, so there is no daily cap by default.
+# COORDINATOR_DAILY_CAP=<n> restores one; 0 means none. Spend is still ledgered.
+DAILY_BUDGET_CAP = int(os.environ.get("COORDINATOR_DAILY_CAP", "0"))
 # The cap is a DAY's budget, but first-come-first-served spends it by late
 # morning: the 2026-08-16 cadence (hourly cron + the 30-min daemon heartbeat,
 # both picking the 3-unit run_loop_iteration every time) burned 57/60 across 19
@@ -121,6 +122,9 @@ def activity_budget_state() -> dict[str, dict[str, int]]:
     is another empty cycle on the dashboard)."""
     spent = _daily_spent_by_class()
     out: dict[str, dict[str, int]] = {}
+    if DAILY_BUDGET_CAP <= 0:  # uncapped: report spend, no share or remainder
+        return {cls: {"spent": spent.get(cls, 0), "share": None, "remaining": None}
+                for cls in ACTIVITY_SHARES}
     for cls in ACTIVITY_SHARES:
         share = class_allowance(cls)
         used = spent.get(cls, 0)
@@ -200,6 +204,8 @@ def _budget_allowance(now: datetime | None = None,
     case the whole cap is available immediately (the pre-2026-08-16 behaviour).
     """
     cap = DAILY_BUDGET_CAP if cap is None else cap
+    if cap <= 0:
+        return None  # no daily cap
     if not BUDGET_PACING:
         return cap
     now = now or datetime.now(timezone.utc)
@@ -1374,7 +1380,7 @@ def coordinator_cycle(
     # ledger total PLUS this cycle's potential budget would exceed the cap
     # (conservative refusal; only ACTUAL spend is charged afterwards).
     # Dry-runs are never charged or blocked.
-    if not dry_run:
+    if not dry_run and DAILY_BUDGET_CAP > 0:
         spent_today = _daily_spent()
         allowance = _budget_allowance()
         if spent_today + budget > allowance:
@@ -1541,7 +1547,7 @@ def _coordinator_cycle(
                     and campaign["topic_policy"]["mode"] == "registered_exploratory"
                     and bool(state.get("topic_suggestions")))
     state["plan_origin"] = "registered_daily_queue" if daily_intake else "model_planner"
-    if daily_intake and not dry_run:
+    if daily_intake and not dry_run and DAILY_BUDGET_CAP > 0:
         activity = activity_class("run_loop_iteration")
         if activity_budget_state()[activity]["remaining"] < 3:
             return _record_queue_hold(run_id, state, {
@@ -1657,7 +1663,7 @@ def _coordinator_cycle(
         }
         cost = int(step.get("cost", 0))
         cls = activity_class(name)
-        if cost and cls != "free":
+        if cost and cls != "free" and DAILY_BUDGET_CAP > 0:
             used, allow = class_spent.get(cls, 0), class_allowance(cls)
             if used + cost > allow:
                 executed.append({

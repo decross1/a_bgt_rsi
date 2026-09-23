@@ -25,7 +25,10 @@ REGISTRY_RELATIVE = ("run_state", "research_topic_registry")
 RECEIPT_SCHEMA_VERSION = "research-topic-registration/v1"
 REGISTERED_SOURCE = "campaign_registered"
 SOURCE_KIND = "daily_arxiv_paper"
-MAX_REGISTRATIONS_PER_UTC_DAY = 3
+# Owner, 2026-09-23: no daily topic limit by default (Nara's model is local and
+# free). TOPIC_DAILY_CAP=<n> restores one. The one-unconsumed-topic rule and
+# MAX_RECEIPTS still pace registration.
+MAX_REGISTRATIONS_PER_UTC_DAY = int(os.environ.get("TOPIC_DAILY_CAP", "0"))
 MAX_PENDING_TOPICS = 1
 MAX_RECEIPTS = 512
 MAX_RECEIPT_BYTES = 16_000
@@ -571,7 +574,7 @@ def register_topic(
         repo_root=root,
         now=observed,
     )
-    if sum(
+    if MAX_REGISTRATIONS_PER_UTC_DAY > 0 and sum(
         _parse_timestamp(item["registered_at"], where="topic registration timestamp").date()
         == observed.date()
         for item in registered
