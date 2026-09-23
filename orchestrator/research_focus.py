@@ -22,6 +22,7 @@ import json
 import os
 import re
 import stat
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -50,6 +51,7 @@ FIELDS = {
     "selected_at",
     "selected_by",
     "selection_reason",
+    "selection_authority",
     "stage",
     "next_action",
     "next_gate",
@@ -200,6 +202,7 @@ def _validate(receipt: dict, root: Path) -> dict:
         "source_iteration_id": 120,
         "selected_by": 120,
         "selection_reason": 1800,
+        "selection_authority": 240,
         "next_action": 900,
     }
     for key, maximum in bounds.items():
@@ -350,6 +353,7 @@ def select_focus(
     next_action: str,
     next_gate: dict,
     blockers: list[str],
+    selection_authority: str,
     stage: str = "needs_clean_refinement",
     intake_policy: str = "focus_before_new_topics",
     expected_previous_sha256: str | None = None,
@@ -358,10 +362,10 @@ def select_focus(
 
     D-084 section 4.1 replaced the earlier operator-only rule: a selection is made
     by Oracle after a meta review (the G0.2 row), which is why the `select` CLI
-    requires --selected-by, --authority (a meta-review msg_id) and an explicit
-    receipt expectation, and why this function refuses a stale digest. It never
-    authorizes execution, and it refuses to overwrite a live focus: succession is
-    close_focus, generate, then select (see the lifecycle in D-084 section 5).
+    authorizing review, which _authority_binds() checks and the receipt records as
+    `selection_authority`. It never authorizes execution, and it refuses to overwrite
+    a live focus: succession is close_focus, generate, then select (see the lifecycle
+    in D-084 section 5).
     """
     root = Path(repo_root).resolve()
     state_directory = root / "run_state"
@@ -394,6 +398,7 @@ def select_focus(
             "selected_at": datetime.now(timezone.utc).isoformat(),
             "selected_by": selected_by,
             "selection_reason": reason,
+            "selection_authority": selection_authority,
             "stage": stage,
             "next_action": next_action,
             "next_gate": next_gate,
@@ -542,10 +547,36 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _authority_row(root: Path, authority: str) -> dict:
-    """Resolve --authority against this repo's mailbox: it must be a `review` from a
-    reviewer with verdict=accept. A bare string is not enough - the flag exists to
-    keep the meta review in the path (D-084 4.1), so it is checked, not just required."""
+def _repo_head(root: Path) -> str | None:
+    """The repo's own HEAD sha, for the binding check. `git rev-parse HEAD` would
+    answer from the ambient superproject whenever the root is not itself a checkout
+    (a bare temp directory, or a directory inside one), which both misinforms the
+    check and makes it skip silently when the root is absent - so an unresolvable
+    root is refused rather than treated as "no HEAD to compare"."""
+    try:
+        proc = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], cwd=None,
+                              capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise FocusError(f"cannot resolve the repo HEAD to bind the selection to: {exc}") from None
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip().splitlines()
+        raise FocusError(f"cannot resolve the repo HEAD to bind the selection to: "
+                         f"{(detail[-1] if detail else f'exit {proc.returncode}')[:200]}")
+    return proc.stdout.strip()
+
+
+def _authority_row(root: Path, authority: str, *, focus_id: str, iteration_id: str) -> dict:
+    """Resolve --authority against this repo's mailbox and bind it to THIS selection.
+
+    A review is an accept of something, so an accept alone would let any accepting
+    review in the mailbox authorize any focus, which makes D-084 §4.1's "after a meta
+    review" a formality (review claude-b10f196463dc87ad, finding 1). Four things are
+    checked: the row is a `review` by a reviewer with verdict=accept; the review
+    replies to an oracle note or question that names this focus_id and iteration_id
+    (the §5 'FOCUS SELECTION PROPOSED' note); no existing receipt was already
+    authorized by it; and, on a git checkout, that note was posted at the repo's
+    current HEAD (its `ref`), so one review cannot authorize a later selection.
+    """
     try:
         rows = oracle_mailbox.read(root / "run_state/oracle_nara_mailbox.jsonl")
     except (oracle_mailbox.MailboxError, OSError) as exc:
@@ -562,13 +593,51 @@ def _authority_row(root: Path, authority: str) -> dict:
     verdict = row.get("body", {}).get("verdict") if isinstance(row.get("body"), dict) else None
     if verdict != "accept":
         raise FocusError(f"authority review verdict must be accept, not {verdict!r}")
+    parent = [r for r in rows if r.get("msg_id") == row.get("in_reply_to")]
+    if not parent:
+        raise FocusError(f"authority review replies to {row.get('in_reply_to')!r}, "
+                         "which is not a row in this mailbox")
+    proposal = parent[-1]
+    if proposal.get("actor") != "oracle" or proposal.get("kind") not in ("note", "question"):
+        raise FocusError("authority must reply to an oracle note or question naming the "
+                         f"selection, not actor={proposal.get('actor')!r} "
+                         f"kind={proposal.get('kind')!r}")
+    text = json.dumps(proposal.get("body", {}))
+    if focus_id not in text or iteration_id not in text:
+        raise FocusError(
+            "the note that the authority review replies to does not name this selection: it "
+            f"must mention focus_id {focus_id!r} and iteration_id {iteration_id!r} "
+            "(the §5 'FOCUS SELECTION PROPOSED' note)")
+    body = proposal.get("body") if isinstance(proposal.get("body"), dict) else {}
+    ref = (body.get("ref") or {}).get("head_sha") if isinstance(body.get("ref"), dict) else None
+    head = _repo_head(root)
+    if ref != head:
+        raise FocusError(f"the selection note names head_sha {ref!r} but the repo HEAD is "
+                         f"{head!r}; a review authorizes a selection only at the state it was "
+                         "proposed on - re-propose at the current HEAD")
+    for name in _receipt_names(root):
+        try:
+            prior = _object(_read(root, f"{DIRECTORY}/{name}", 16384))
+        except (OSError, ValueError, RuntimeError):
+            continue
+        if prior.get("selection_authority") == authority:
+            raise FocusError(f"authority {authority!r} already authorized focus "
+                             f"{prior.get('focus_id')!r}; one review, one selection")
     return row
 
 
+def _receipt_names(root: Path) -> list[str]:
+    """Receipt file names in the focus directory, excluding locks and temporaries."""
+    directory = root / DIRECTORY
+    if not directory.is_dir():
+        return []
+    return sorted(p.name for p in directory.iterdir()
+                  if p.suffix == ".json" and not p.name.startswith("."))
+
+
 def run_select(root: Path, args: argparse.Namespace) -> dict:
-    """The `select` subcommand: resolve the authority, then select_focus() under CAS."""
+    """The `select` subcommand: resolve and bind the authority, then select_focus()."""
     expected = None if args.allow_empty_previous else args.expected_receipt
-    row = _authority_row(root, args.authority)
     try:
         next_gate = json.loads(args.next_gate_json)
     except ValueError as exc:
@@ -582,12 +651,13 @@ def run_select(root: Path, args: argparse.Namespace) -> dict:
         # --force is not defined on this subcommand, so an overwrite attempt dies at argparse.
         raise FocusError(f"a focus is already selected ({current.get('focus_id', 'unknown')}); "
                          "close it first - succession is close, generate, then select")
+    row = _authority_row(root, args.authority, focus_id=args.focus_id,
+                         iteration_id=args.iteration_id)
     selected = select_focus(
         root, iteration_id=args.iteration_id, focus_id=args.focus_id, title=args.title,
         reason=args.reason, selected_by=args.selected_by, next_action=args.next_action,
         next_gate=next_gate, blockers=list(args.blocker), stage=args.stage,
-        expected_previous_sha256=expected)
-    selected["authority"] = f"meta review {row['msg_id']} ({row['ts']})"
+        selection_authority=row["msg_id"], expected_previous_sha256=expected)
     return selected
 
 

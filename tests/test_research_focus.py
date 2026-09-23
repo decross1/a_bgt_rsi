@@ -56,6 +56,10 @@ def choose(root, **kw):
             "owner": "Oracle + Codex",
         },
         blockers=["Raw structured hypothesis needs clean refinement."],
+        # Required since the d3 amendments: the review msg_id that authorized this
+        # selection, persisted in the receipt. This test file exercises select_focus's
+        # source binding and CAS, not the CLI's mailbox checks, so it is a fixture.
+        selection_authority="claude-fixture000000000",
         **kw,
     )
 

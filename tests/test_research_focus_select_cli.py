@@ -13,8 +13,11 @@ claude-bfc06cece11638c0.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import pathlib
+import subprocess
 
 import pytest
 
@@ -24,6 +27,15 @@ from orchestrator import research_focus as focus
 from orchestrator import oracle_mailbox as mailbox
 
 
+SELECTED_FOCUS = "focus-payoff-horizon"      # what `select` in select() below asks for
+SELECTED_ITERATION = "iter-2026-09-15-007"   # a review must name both to bind
+
+
+def head_of(root) -> str:
+    """The fixture repo's HEAD sha, recorded by make_selectable at creation."""
+    return (root / "GIT_HEAD_SHA").read_text().strip()
+
+
 @pytest.fixture
 def source(tmp_path, monkeypatch):
     """A temp repo holding one selectable loop-memory record."""
@@ -31,7 +43,24 @@ def source(tmp_path, monkeypatch):
 
 
 def make_selectable(root, monkeypatch):
-    """Give `root` one selectable loop-memory record and stub the campaign matching."""
+    """Give `root` one selectable loop-memory record and stub the campaign matching.
+
+    The repo is a real git checkout at a real commit, so the selector's HEAD binding is
+    exercised rather than skipped; head_of(root) reports that sha (from the git dir, not
+    a file in the tree, since the selector reads the tree) and a fixture note names it as
+    the state it proposes at.
+    """
+    env = {**os.environ, "GIT_AUTHOR_NAME": "f", "GIT_AUTHOR_EMAIL": "f@e",
+           "GIT_AUTHOR_DATE": "2026-09-23T00:00:00+00:00",
+           "GIT_COMMITTER_NAME": "f", "GIT_COMMITTER_EMAIL": "f@e",
+           "GIT_COMMITTER_DATE": "2026-09-23T00:00:00+00:00"}
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True, env=env)
+    (root / "keep.txt").write_text("fixture\n")
+    for cmd in (["add", "-A"], ["-c", "user.name=f", "-c", "user.email=f@e", "commit", "-q", "-m", "fixture"]):
+        subprocess.run(["git", *cmd], cwd=root, check=True, env=env)
+    (root / "GIT_HEAD_SHA").write_text(subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True,
+        check=True).stdout.strip())
     (root / "memory").mkdir()
     row = {
         "iteration_id": "iter-2026-09-15-007",
@@ -50,24 +79,35 @@ def make_selectable(root, monkeypatch):
     return root
 
 
-def post(root, actor, kind, body, in_reply_to=None):
-    """One mailbox row in the repo the selection runs against; returns its msg_id."""
+def post(root, actor, kind, body, in_reply_to=None, head_sha=None):
+    """One mailbox row in the repo the selection runs against; returns its msg_id.
+
+    head_sha goes into body.ref, the shape Oracle's READY/PROPOSED notes use on the
+    live mailbox; the selector binds a selection note to the repo state it names.
+    """
     path = root / "run_state/oracle_nara_mailbox.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
+    if head_sha is not None:
+        body = {**body, "ref": {"repo": "a_bgt_rsi", "head_sha": head_sha}}
     return mailbox.post(actor, kind, body, to="oracle", in_reply_to=in_reply_to, path=path)["msg_id"]
 
 
-def review(root, *, kind="review", verdict="accept", actor="claude"):
-    """A meta-oracle review of a plan item, as the selection authority must be."""
-    item = post(root, "oracle", "plan_item", {
-        "title": "Select a focus", "objective": "Select the successor focus.", "task_class": "tooling",
-        "allowed_write_paths": ["docs/focus.md"],
-        "acceptance": {"test_path": "tests/test_focus.py", "test_content": "def test_x():\n    assert True\n",
-                       "test_argv": ["python", "-m", "pytest", "-q", "tests/test_focus.py"]}},
-        in_reply_to=None)
-    if kind != "review":  # a non-review row cannot carry a verdict, so it replies to the item
-        return post(root, actor, kind, {"text": "ok"}, in_reply_to=item)
-    return post(root, actor, kind, {"verdict": verdict, "text": "ok"}, in_reply_to=item)
+def review(root, *, kind="review", verdict="accept", actor="claude", head_sha=None,
+           focus_id=SELECTED_FOCUS, iteration_id=SELECTED_ITERATION, reply_text=None):
+    """A meta-oracle accept of an Oracle 'FOCUS SELECTION PROPOSED' note - the shape
+    the selector binds to: the review replies to an oracle note naming this focus_id,
+    this iteration_id and this head_sha (review claude-b10f196463dc87ad, amendment 1).
+    head_sha defaults to the repo's current HEAD, i.e. a proposal at the present state.
+    """
+    if head_sha is None:
+        head_sha = head_of(root)
+    proposal = post(root, "oracle", "note", {
+        "title": f"FOCUS SELECTION PROPOSED: {focus_id}", "text": "Propose the successor focus.",
+        "selection": {"focus_id": focus_id, "iteration_id": iteration_id}},
+        in_reply_to=None, head_sha=head_sha)
+    if kind != "review":  # a non-review row cannot carry a verdict, so it replies to the note
+        return post(root, actor, kind, {"text": "ok"}, in_reply_to=proposal)
+    return post(root, actor, kind, {"verdict": verdict, "text": reply_text or "ok"}, in_reply_to=proposal)
 
 
 def select(root, *, expected="EMPTY", authority=None, selected_by="oracle", omit=(), extra=()):
@@ -77,7 +117,7 @@ def select(root, *, expected="EMPTY", authority=None, selected_by="oracle", omit
     previous receipt to compare against and must be declared with
     --allow-empty-previous; pass a sha for a compare-and-swap selection.
     """
-    argv = ["select", "--iteration-id", "iter-2026-09-15-007", "--focus-id", "focus-payoff-horizon",
+    argv = ["select", "--iteration-id", SELECTED_ITERATION, "--focus-id", SELECTED_FOCUS,
             "--title", "Payoff error decomposition", "--reason", "Continue the historical seed.",
             "--next-action", "Freeze the paired study.", "--next-gate-json",
             json.dumps({"from": "research_seed", "to": "study_ready", "artifact": "protocol",
@@ -185,6 +225,85 @@ def test_authority_must_carry_a_reviewers_actor(source):
         select(root, authority=row["msg_id"])
     assert focus.project_focus(root)["status"] == "none"
     assert select(root, authority=accepted)["status"] == "selected"  # the real review still works
+
+
+# --- (b2) the authority must be about THIS selection (review claude-b10f196463dc87ad, amendment 1)
+
+
+def test_an_accept_of_an_unrelated_item_does_not_authorize_a_selection(source):
+    """Before this change the selector checked actor, kind and verdict only, so any
+    accepting review in the mailbox - e.g. of a branch - authorized any focus."""
+    root = source
+    unrelated = post(root, "oracle", "plan_item", {
+        "title": "Build a tool", "objective": "Unrelated work.", "task_class": "tooling",
+        "allowed_write_paths": ["tools/x.py"],
+        "acceptance": {"test_path": "tests/test_x.py", "test_content": "def test_x():\n    assert True\n",
+                       "test_argv": ["python", "-m", "pytest", "-q", "tests/test_x.py"]}},
+        in_reply_to=None)
+    accept = post(root, "claude", "review", {"verdict": "accept", "text": "ship it"}, in_reply_to=unrelated)
+    with pytest.raises(focus.FocusError, match="must reply to an oracle note or question"):
+        select(root, authority=accept)
+    assert focus.project_focus(root)["status"] == "none"
+
+
+def test_an_accept_of_a_note_about_a_different_focus_or_iteration_is_refused(source):
+    root = source
+    with pytest.raises(focus.FocusError, match="does not name this selection"):
+        select(root, authority=review(root, focus_id="focus-some-other-line"))
+    assert focus.project_focus(root)["status"] == "none"
+    with pytest.raises(focus.FocusError, match="does not name this selection"):
+        select(root, authority=review(root, iteration_id="iter-2026-01-01-001"))
+    assert focus.project_focus(root)["status"] == "none"
+
+
+def test_a_selection_note_at_another_repo_head_is_refused(tmp_path, monkeypatch):
+    """One review authorizes a selection at the state it was proposed on: the note
+    carries ref.head_sha and it must equal the repo's HEAD, else re-propose. The
+    owner's 2026-09-22 'kill and propose next' was a fresh note for this reason."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    root = make_selectable(root, monkeypatch)
+    stale = review(root, head_sha="e" * 40)
+    with pytest.raises(focus.FocusError, match="re-propose at the current HEAD"):
+        select(root, authority=stale)
+    assert focus.project_focus(root)["status"] == "none"
+    assert select(root, authority=review(root))["status"] == "selected"
+
+
+def test_a_reused_authority_is_refused(tmp_path, monkeypatch):
+    """The receipt records selection_authority, so a second select under the same
+    review is refused even after closing: one review, one selection."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    root = make_selectable(root, monkeypatch)
+    authority = review(root)
+    first = select(root, authority=authority)
+    assert first["status"] == "selected"
+    focus.close_focus(root, disposition="killed", reason="Probing reuse.",
+                      reopening_conditions=["A named blocker."],
+                      evidence_refs=["run_state/proposal.md"], closed_by="oracle",
+                      authority="D-084 + test", expected_receipt_sha256=first["receipt_sha256"])
+    assert focus.project_focus(root)["status"] == "none"
+    with pytest.raises(focus.FocusError, match="one review, one selection"):
+        select(root, authority=authority)
+    assert focus.project_focus(root)["status"] == "none"
+
+
+# --- (b1) the authority is persisted, not just echoed (review claude-b10f196463dc87ad, amendment 2)
+
+
+def test_the_receipt_on_disk_records_the_authorizing_review(tmp_path, monkeypatch):
+    """close_focus has persisted its authority since G0.1; a selection used to carry it
+    only in the CLI's returned dict, so the audit trail was not on disk."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    root = make_selectable(root, monkeypatch)
+    authority = review(root)
+    result = select(root, authority=authority)
+    on_disk = json.loads((root / focus.DIRECTORY / (result["receipt_sha256"] + ".json")).read_bytes())
+    assert on_disk["selection_authority"] == authority
+    assert focus.project_focus(root)["selection_authority"] == authority
+    assert result["selection_authority"] == authority
 
 
 def test_the_selected_focus_engages_the_hold_the_consumers_actually_report(tmp_path, monkeypatch):
