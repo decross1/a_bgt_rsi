@@ -6,10 +6,11 @@ writes exactly one row via the real orchestrator.oracle_mailbox.post, never a
 second, and only when authorized.
 """
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
@@ -130,9 +131,23 @@ def test_reply_to_a_question_posts_an_answer_in_reply_to_it(repo, config):
     assert answer["to"] == "oracle"
     assert answer["in_reply_to"] == question["msg_id"]
     assert answer["body"]["text"] == "Do the safe thing."
+    retry = router.route_decision({
+        "request_id": "33333333-3333-3333-3333-333333333333",
+        "target_kind": "question", "target_id": question["msg_id"], "action": "reply",
+        "expected_plan_revision": REVISION, "note": "Do the safe thing.",
+    })
+    assert retry["duplicate"] is True
+    assert len(oracle_mailbox.read(mailbox)) == 2  # question + one direct answer
+    with pytest.raises(HTTPException, match="no longer open"):
+        router.route_decision({
+            "request_id": "34333333-3333-3333-3333-333333333333",
+            "target_kind": "question", "target_id": question["msg_id"], "action": "reply",
+            "expected_plan_revision": REVISION, "note": "A second answer.",
+        })
+    assert len(oracle_mailbox.read(mailbox)) == 2
 
 
-def test_approve_on_a_question_posts_a_note_not_an_answer(repo, config):
+def test_approve_on_a_question_posts_a_direct_human_answer(repo, config):
     mailbox = repo / "run_state" / "oracle_nara_mailbox.jsonl"
     question = oracle_mailbox.post("oracle", "question", {"title": "Proceed?"}, to="owner", path=mailbox)
     router = LabMailboxRouter(config, repo_root=repo)
@@ -142,10 +157,11 @@ def test_approve_on_a_question_posts_a_note_not_an_answer(repo, config):
         "expected_plan_revision": REVISION, "note": "",
     })
     rows = oracle_mailbox.read(mailbox)
-    note = rows[-1]
-    assert note["kind"] == "note"
-    assert note["body"]["decision"] == "approve"
-    assert note["body"]["target"] == {"msg_id": question["msg_id"]}
+    answer = rows[-1]
+    assert answer["kind"] == "answer"
+    assert answer["actor"] == "human:derrick"
+    assert answer["in_reply_to"] == question["msg_id"]
+    assert answer["body"]["decision"] == "approve"
 
 
 def test_unauthorized_or_wrong_origin_never_writes(repo, config):
@@ -189,7 +205,7 @@ def test_end_to_end_via_the_http_decision_route(repo, config, monkeypatch):
             "schema_version": "daily-ops-summary/v3", "generated_at": "2026-09-23T00:00:00Z",
             "current_plan_revision": None, "daily_plan": None,
             "research_focus": {"status": "none", "observed_at": "2026-09-23T00:00:00Z"},
-            "work_items": [], "waiting_on_you": [], "accomplishments": [], "improvements": [],
+            "work_items": [], "waiting_on_you": [], "question_updates": [], "accomplishments": [], "improvements": [],
             "agents": {}, "warnings": [], "sources": {"plan": None, "mailbox": None, "focus": None, "git": None},
         },
     )
@@ -213,3 +229,35 @@ def test_end_to_end_via_the_http_decision_route(repo, config, monkeypatch):
     assert response.status_code == 403
     rows = oracle_mailbox.read(repo / "run_state" / "oracle_nara_mailbox.jsonl")
     assert len(rows) == 1
+
+
+def test_http_plan_linked_question_reply_is_a_direct_answer_and_closes_the_card(repo, config):
+    """The plan-card UI targets its actual question, not the plan item id."""
+    path = repo / "run_state" / "daily_plans" / f"{REVISION}.json"
+    plan = json.loads(path.read_text())
+    plan["items"][0]["lane"] = "owner_decision"
+    path.write_text(json.dumps(plan))
+    mailbox = repo / "run_state" / "oracle_nara_mailbox.jsonl"
+    question = oracle_mailbox.post("oracle", "question", {
+        "question": "Choose the safe rollout.", "ref": {"item": "d1"},
+        "options": ["A", "B"],
+    }, to="owner", path=mailbox)
+    router = LabMailboxRouter(config, repo_root=repo)
+    from backend import daily_ops
+    api = FastAPI()
+    daily_ops.register(api, state_dir=repo / "state", owner_authorizer=router.authorize,
+                       decision_router=router.route_decision)
+    endpoint = next(route.endpoint for route in api.routes if route.path == "/api/daily-ops/decisions")
+    receipt = endpoint(_request(), {
+        "request_id": "99999999-9999-9999-9999-999999999999",
+        "target_kind": "question", "target_id": question["msg_id"], "action": "reply",
+        "expected_plan_revision": REVISION, "note": "A",
+    })
+    assert receipt["target_kind"] == "question" and receipt["duplicate"] is False
+    rows = oracle_mailbox.read(mailbox)
+    answer = rows[-1]
+    assert (answer["kind"], answer["actor"], answer["in_reply_to"], answer["body"]["text"]) == (
+        "answer", "human:derrick", question["msg_id"], "A")
+    first_written = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+    items, _ = live.work_items(plan, rows, {}, live._Git(repo), datetime.now(timezone.utc), first_written)
+    assert items[0]["status"] == "answered"

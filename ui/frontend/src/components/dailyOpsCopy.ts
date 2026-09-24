@@ -49,6 +49,7 @@ const WORK_STATUS_SENTENCE: Record<string, string> = {
   expired: "Expired without a decision",
   accepted: "Accepted",
   answered: "Answered",
+  resolved: "Resolved without an owner decision",
 };
 
 /** One plain sentence for a work-item status; `mergedAt`, if given, appends

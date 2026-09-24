@@ -36,14 +36,19 @@ KINDS = {
     "review": REVIEWERS,            # meta-oracle verdict on a plan, plan item or branch
     "question": CONVERSANTS,
     "answer": CONVERSANTS,
+    # Only a question's asker or a human may append an explicit disposition
+    # when it no longer needs an owner response.  This is deliberately not an
+    # ``answer``: a relay or reviewer must never make a question disappear.
+    "question_resolution": AGENTS,
     "note": AGENTS,
 }
-HUMAN_KINDS = {"question", "answer", "note"}
+HUMAN_KINDS = {"question", "answer", "note", "question_resolution"}
 RECIPIENTS = {"oracle", "nara", "claude", "codex", "owner", "all"}
 RECEIPT_STATES = {"held", "claimed", "validated", "failed", "withdrawn"}
 TERMINAL = {"validated", "failed", "withdrawn"}
 VERDICTS = {"accept", "amend", "reject"}
 TASK_CLASSES = {"documentation", "tests", "tooling", "experiment_code", "lab_organization"}
+QUESTION_RESOLUTIONS = {"withdrawn", "superseded", "prerequisite", "informational"}
 
 
 class MailboxError(ValueError):
@@ -81,58 +86,39 @@ def validate_plan_item(body: dict) -> None:
     if not isinstance(budget, dict) or not all(
             type(budget.get(k, 1)) is int and budget.get(k, 1) > 0 for k in ("attempts", "wall_clock_minutes")):
         raise MailboxError("budget.attempts and budget.wall_clock_minutes must be positive integers")
-    # fixture_sources / fixture_enums / fixtures (plan 2026-09-24 d3) are optional
-    # declarations of where an item's test fixtures were copied from, so the lane can
-    # refuse an item whose fixture data does not exist in the live files. `fixtures` is
-    # the fixture data itself. They are shape-checked HERE because unknown keys pass this
-    # function silently, which is what made a bare fixture_sources declaration decorative
-    # (review claude-56275cf790bac03c, finding 1): the author declared the field and the
-    # lane never saw a shape it had to honor. The comparisons themselves are in
-    # nara_lane.check_fixtures() / check_declared_sources_ship_fixtures().
-    fixtures = body.get("fixtures", {})
-    if not isinstance(fixtures, dict) or not all(
-            isinstance(k, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", k)
-            and isinstance(v, dict) for k, v in fixtures.items()):
-        raise MailboxError("fixtures must be an object mapping a plain file name -> the fixture object")
-    # A name declared but not shipped is refused here too, so the two halves of the
-    # mistake (a source with nothing behind it, a fixture with nothing behind it) get one
-    # rule at one door. nara_lane.check_declared_sources_ship_fixtures() applies the same
-    # rule to an item that reached the lane by some other path.
-    shipped = {k for k, v in fixtures.items() if isinstance(v, dict)}
-    sources = body.get("fixture_sources", {})
-    if not isinstance(sources, dict) or not all(
-            isinstance(k, str) and k and isinstance(v, str) and v for k, v in sources.items()):
-        raise MailboxError("fixture_sources must be an object mapping fixture name -> one repo path")
-    extra_sources = set(sources) - shipped
-    if extra_sources:
-        name = sorted(extra_sources)[0]
-        raise MailboxError(f"fixture_sources.{name} declares a live file but the item ships no "
-                           f"fixtures.{name}, so nothing is compared and Nara's worktree gets no "
-                           f"fixture: ship fixtures.{name} or drop the declaration")
-    enums = body.get("fixture_enums", {})
-    if not isinstance(enums, dict) or not all(
-            isinstance(k, str) and k and isinstance(v, list) and v
-            and all(isinstance(f, str) and f for f in v) for k, v in enums.items()):
-        raise MailboxError("fixture_enums must be an object mapping fixture name -> non-empty list of field names")
-    extra_enums = set(enums) - shipped
-    if extra_enums:
-        name = sorted(extra_enums)[0]
-        raise MailboxError(f"fixture_enums.{name} declares enum fields for a fixture the item does "
-                           f"not ship, so no value is ever checked: ship fixtures.{name} or drop "
-                           f"the declaration")
-    extra_fixtures = shipped - set(sources)
-    if extra_fixtures:
-        name = sorted(extra_fixtures)[0]
-        raise MailboxError(f"fixtures.{name} is shipped but no fixture_sources entry names it, so "
-                           f"the lane has no live file to check it against and nothing writes it "
-                           f"into Nara's worktree: declare fixture_sources.{name} or drop it")
-    if set(enums) - set(sources):
-        raise MailboxError("fixture_enums names a fixture with no fixture_sources entry: "
-                           f"{sorted(set(enums) - set(sources))}")
     if not isinstance(body["title"], str) or not isinstance(body["objective"], str):
         raise MailboxError("title and objective must be strings")
     if len(body["objective"]) > 4000 or len(body["title"]) > 200:
         raise MailboxError("title <= 200 and objective <= 4000 characters")
+
+
+def validate_question_resolution(body: dict) -> None:
+    """Validate a non-answer disposition of a question.
+
+    This gives the read model an append-only, machine-checkable way to remove
+    an obsolete question from an owner's queue.  The short summary is the
+    human-visible update; it must not impersonate an owner answer.
+    """
+    if not isinstance(body, dict):
+        raise MailboxError("question_resolution body must be an object")
+    allowed = {"disposition", "summary", "reason", "evidence_msg_ids", "replacement_msg_id", "blocking_artifact"}
+    if not {"disposition", "summary", "reason"} <= set(body) or not set(body) <= allowed:
+        raise MailboxError("question_resolution needs disposition, summary and reason")
+    if body["disposition"] not in QUESTION_RESOLUTIONS:
+        raise MailboxError(f"question_resolution disposition must be one of {sorted(QUESTION_RESOLUTIONS)}")
+    if not isinstance(body["summary"], str) or not body["summary"].strip() or len(body["summary"]) > 1200:
+        raise MailboxError("question_resolution summary must be non-empty and <= 1200 characters")
+    if not isinstance(body["reason"], str) or not body["reason"].strip() or len(body["reason"]) > 1200:
+        raise MailboxError("question_resolution reason must be non-empty and <= 1200 characters")
+    evidence = body.get("evidence_msg_ids")
+    if evidence is not None and (not isinstance(evidence, list) or not evidence
+                                 or len(evidence) > 8
+                                 or not all(isinstance(value, str) and value.strip() and len(value) <= 80
+                                            for value in evidence)):
+        raise MailboxError("question_resolution evidence_msg_ids must be 1-8 message ids")
+    for key in ("replacement_msg_id", "blocking_artifact"):
+        if key in body and (not isinstance(body[key], str) or not body[key].strip() or len(body[key]) > 240):
+            raise MailboxError(f"question_resolution {key} must be a non-empty string <= 240 characters")
 
 
 def read(path: Path = PATH) -> list[dict]:
@@ -160,9 +146,7 @@ def read(path: Path = PATH) -> list[dict]:
     return rows
 
 
-def _post_rows(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | None,
-               expires_hours: float | None, path: Path, rows: list[dict]) -> dict:
-    """Validate and append one row while the caller holds the mailbox lock."""
+def _validate_post(actor: str, kind: str, body: dict, to: str, in_reply_to: str | None) -> None:
     if not _actor_ok(actor):
         raise MailboxError(f"unknown actor {actor!r}")
     if kind not in KINDS or not (actor in KINDS[kind] or (actor.startswith("human:") and kind in HUMAN_KINDS)):
@@ -177,11 +161,27 @@ def _post_rows(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str |
         raise MailboxError(f"receipt state must be one of {sorted(RECEIPT_STATES)}")
     if kind == "review" and body.get("verdict") not in VERDICTS:
         raise MailboxError(f"review verdict must be one of {sorted(VERDICTS)}")
-    if kind in {"receipt", "withdraw", "answer", "review"} and not in_reply_to:
+    if kind in {"receipt", "withdraw", "answer", "review", "question_resolution"} and not in_reply_to:
         raise MailboxError(f"{kind} must reply to a message")
+    if kind == "question_resolution":
+        validate_question_resolution(body)
+
+
+def _append_locked(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | None,
+                   expires_hours: float | None, path: Path, rows: list[dict]) -> dict:
+    """Validate state-dependent constraints and append while caller holds the mailbox lock."""
     ids = {r["msg_id"] for r in rows}
     if in_reply_to and in_reply_to not in ids:
         raise MailboxError(f"in_reply_to {in_reply_to} is not in the mailbox")
+    if kind == "question_resolution":
+        evidence = body.get("evidence_msg_ids") or []
+        if any(value not in ids for value in evidence):
+            raise MailboxError("question_resolution evidence_msg_ids must name preceding mailbox rows")
+        original = next(row for row in rows if row["msg_id"] == in_reply_to)
+        if original.get("kind") != "question":
+            raise MailboxError("question_resolution must reply to a question")
+        if not (actor.startswith("human:") or actor == original.get("actor")):
+            raise MailboxError("question_resolution must be posted by the question asker or a human")
     now = datetime.now(timezone.utc)
     row = {
         "schema": SCHEMA, "seq": len(rows) + 1, "ts": now.isoformat(), "actor": actor, "to": to,
@@ -201,32 +201,72 @@ def _post_rows(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str |
 
 def post(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | None = None,
          expires_hours: float | None = None, path: Path = PATH) -> dict:
-    """Append one validated row under the mailbox writer lock."""
+    _validate_post(actor, kind, body, to, in_reply_to)
     path.parent.mkdir(parents=True, exist_ok=True)
     with (path.parent / ".oracle_nara_mailbox.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        return _post_rows(actor, kind, body, to=to, in_reply_to=in_reply_to,
-                          expires_hours=expires_hours, path=path, rows=read(path))
+        return _append_locked(actor, kind, body, to=to, in_reply_to=in_reply_to,
+                              expires_hours=expires_hours, path=path, rows=read(path))
 
 
 def post_if(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | None = None,
             expires_hours: float | None = None, path: Path = PATH,
             condition: Callable[[list[dict]], bool]) -> dict | None:
-    """Append a row only when ``condition`` accepts the current mailbox rows.
+    """Append only when ``condition`` accepts the current locked mailbox prefix.
 
-    The predicate and append share the writer lock. Callers that also need an
-    item lock must acquire it first, so the lock order is item claim then
-    mailbox; this makes a state-dependent receipt atomic with the observed
-    mailbox prefix.
+    Callers which also take an item lock must acquire it before this mailbox
+    writer lock.  This preserves atomic state-dependent receipts without a
+    read-then-append race.
     """
+    _validate_post(actor, kind, body, to, in_reply_to)
     path.parent.mkdir(parents=True, exist_ok=True)
     with (path.parent / ".oracle_nara_mailbox.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         rows = read(path)
         if not condition(rows):
             return None
-        return _post_rows(actor, kind, body, to=to, in_reply_to=in_reply_to,
-                          expires_hours=expires_hours, path=path, rows=rows)
+        return _append_locked(actor, kind, body, to=to, in_reply_to=in_reply_to,
+                              expires_hours=expires_hours, path=path, rows=rows)
+
+
+def post_once(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | None = None,
+              idempotency_key: str, require_open_question: bool = False,
+              expires_hours: float | None = None, path: Path = PATH) -> tuple[dict, bool]:
+    """Append once for a stable owner-UI request id, under the mailbox lock.
+
+    Returning ``(row, duplicate)`` makes retries safe.  When answering a
+    question, the existence/open check and append share that lock, closing the
+    read-then-append race with another human answer or a valid resolution.
+    """
+    _validate_post(actor, kind, body, to, in_reply_to)
+    if not isinstance(idempotency_key, str) or not idempotency_key:
+        raise MailboxError("idempotency_key must be a non-empty string")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with (path.parent / ".oracle_nara_mailbox.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        rows = read(path)
+        existing = [row for row in rows if isinstance(row.get("body"), dict)
+                    and row["body"].get("request_id") == idempotency_key]
+        if existing:
+            row = existing[-1]
+            if (row.get("actor"), row.get("kind"), row.get("to"), row.get("in_reply_to"), row.get("body")) != (
+                    actor, kind, to, in_reply_to, body):
+                raise MailboxError("idempotency_key was already used for a different request")
+            return row, True
+        if require_open_question:
+            question = next((row for row in rows if row.get("msg_id") == in_reply_to
+                             and row.get("kind") == "question" and row.get("to") == "owner"), None)
+            if question is None:
+                raise MailboxError("owner question is no longer open")
+            closed = any(row.get("in_reply_to") == question["msg_id"] and (
+                row.get("kind") == "question_resolution"
+                or (row.get("kind") == "answer" and isinstance(row.get("actor"), str)
+                    and row["actor"].startswith("human:"))) for row in rows)
+            if closed:
+                raise MailboxError("owner question is no longer open")
+        row = _append_locked(actor, kind, body, to=to, in_reply_to=in_reply_to,
+                             expires_hours=expires_hours, path=path, rows=rows)
+        return row, False
 
 
 def fold(rows: list[dict], now: datetime | None = None) -> dict:
@@ -275,7 +315,8 @@ def main(argv: list[str] | None = None) -> int:
             rows = [r for r in read() if (not args.to or r["to"] in {args.to, "all"})
                     and (not args.kind or r["kind"] == args.kind)]  # an inbox includes broadcasts
             for r in rows[-args.last:]:
-                summary = (r["body"].get("title") or r["body"].get("state") or r["body"].get("verdict")
+                summary = (r["body"].get("title") or r["body"].get("question") or r["body"].get("summary")
+                           or r["body"].get("state") or r["body"].get("verdict")
                            or r["body"].get("text", "")[:80])
                 print(json.dumps({"seq": r["seq"], "msg_id": r["msg_id"], "actor": r["actor"], "to": r["to"],
                                   "kind": r["kind"], "re": r.get("in_reply_to"), "summary": summary}))

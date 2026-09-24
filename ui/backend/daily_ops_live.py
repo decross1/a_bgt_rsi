@@ -23,9 +23,11 @@ Match rules (each is tested):
   newest of those notes and their ``review`` replies decides the verdict;
   "merged" when a local branch head of that name is an ancestor of ``main`` or a
   first-parent ``main`` commit is titled ``Merge oracle/<date>-<id>...``.
-* ``owner_decision`` item -> "waiting on you" unless a ``question`` to the owner
-  inside the window names the item id (``ref.item`` or a whole-word title
-  match) and that question has an ``answer``.
+* ``owner_decision`` item -> actionable only when a real ``question`` to the
+  owner inside the window names the item id (``ref.item`` or a whole-word title
+  match).  Only a direct ``human:*`` answer closes it; an explicit
+  ``question_resolution`` can instead withdraw, supersede or mark a
+  prerequisite without impersonating the owner.
 """
 from __future__ import annotations
 
@@ -57,7 +59,7 @@ CLI = ".venv-chroma/bin/python -m orchestrator.oracle_mailbox post --as human:de
 WORK_STATUSES = {
     "not_started", "awaiting_review", "held", "building", "validated", "failed",
     "withdrawn", "expired", "amend_requested", "accepted", "rejected", "merged",
-    "waiting_on_you", "answered",
+    "waiting_on_you", "answered", "resolved",
 }
 FOLD_STATUS = {"open": "awaiting_review", "held": "held", "claimed": "building",
                "validated": "validated", "failed": "failed", "withdrawn": "withdrawn",
@@ -105,7 +107,104 @@ def _ref(row: dict) -> dict:
 
 
 def _title(row: dict) -> str:
-    return str(_body(row).get("title") or "")
+    body = _body(row)
+    # Questions written by the live loop increasingly use ``question`` rather
+    # than a redundant title.  Keep a real decision visible instead of falling
+    # back to its opaque mailbox id.
+    return str(body.get("title") or body.get("question") or "")
+
+
+QUESTION_RESOLUTIONS = {"withdrawn", "superseded", "prerequisite", "informational"}
+
+
+def _human_answer(question: dict, rows: list[dict]) -> dict | None:
+    """An owner question is answered only by a directly replying human row.
+
+    A relay, reviewer or original asker can add context, but cannot make an
+    owner-facing card look decided.  The mailbox's actor label remains honest
+    attribution rather than authentication.
+    """
+    answers = [row for row in rows if row.get("kind") == "answer"
+               and row.get("in_reply_to") == question.get("msg_id")
+               and isinstance(row.get("actor"), str) and row["actor"].startswith("human:")]
+    return answers[-1] if answers else None
+
+
+def _question_resolution(question: dict, rows: list[dict]) -> dict | None:
+    """Return the latest valid non-owner resolution, never an implied answer."""
+    by_id = {str(row.get("msg_id")): row for row in rows}
+    for row in reversed(rows):
+        if row.get("kind") != "question_resolution" or row.get("in_reply_to") != question.get("msg_id"):
+            continue
+        actor, body = row.get("actor"), _body(row)
+        disposition, summary, reason = body.get("disposition"), body.get("summary"), body.get("reason")
+        if (disposition not in QUESTION_RESOLUTIONS or not isinstance(summary, str) or not summary.strip()
+                or not isinstance(reason, str) or not reason.strip()):
+            continue
+        evidence = body.get("evidence_msg_ids")
+        if evidence is not None and (not isinstance(evidence, list) or not evidence
+                                     or not all(isinstance(value, str) and value in by_id
+                                                and isinstance(by_id[value].get("seq"), int)
+                                                and isinstance(row.get("seq"), int)
+                                                and by_id[value]["seq"] < row["seq"]
+                                                for value in evidence)):
+            continue
+        original = question.get("actor")
+        # Mirror the post-time authority rule.  The hash chain proves ordering,
+        # not identity or semantics, so a forged reviewer row must not hide a
+        # live owner question in this read model.
+        if isinstance(actor, str) and (actor == original or actor.startswith("human:")):
+            return row
+    return None
+
+
+def _question_card(row: dict) -> dict:
+    """Bounded, typed display fields for a genuine owner question."""
+    body = _body(row)
+    question = _clip(body.get("question") or body.get("title") or body.get("text"), 300) or row["msg_id"]
+    context = _clip(body.get("context") or body.get("decision_context") or body.get("why") or body.get("text"), 1200)
+    choices = body.get("options")
+    if not isinstance(choices, list):
+        choices = []
+    return {
+        "title": question,
+        "question": question,
+        "context": context,
+        "choices": [_clip(choice, 300) for choice in choices[:8] if _clip(choice, 300)],
+        "recommendation": _clip(body.get("recommendation"), 600),
+        "consequence": _clip(body.get("consequence") or body.get("impact"), 600),
+    }
+
+
+def question_updates(rows: list[dict]) -> list[dict]:
+    """Recent non-action resolutions of owner questions, newest first.
+
+    These are deliberately separate from ``waiting_on_you``.  A prerequisite
+    explains why work cannot proceed, and a withdrawal explains why the owner
+    need not reply; neither should retain Approve/Decline controls.
+    """
+    found = []
+    for question in rows:
+        if question.get("kind") != "question" or question.get("to") != "owner":
+            continue
+        resolution = _question_resolution(question, rows)
+        if resolution is None:
+            continue
+        body = _body(resolution)
+        card = _question_card(question)
+        found.append({
+            "id": resolution["msg_id"], "question_id": question["msg_id"],
+            "title": card["title"], "question": card["question"],
+            "disposition": body["disposition"], "summary": _clip(body.get("summary"), 1200),
+            "reason": _clip(body.get("reason"), 1200),
+            "blocking_artifact": _clip(body.get("blocking_artifact"), 240),
+            "resolved_by": _clip(str(resolution.get("actor")), 60) or "?",
+            "resolved_at": _stamp(resolution.get("ts")),
+            "evidence_msg_ids": [value for value in body.get("evidence_msg_ids", [])
+                                 if isinstance(value, str)][:8],
+        })
+    found.sort(key=lambda row: row["resolved_at"] or "", reverse=True)
+    return found[:10]
 
 
 def _word(value: str, text: str) -> bool:
@@ -328,7 +427,6 @@ def work_items(plan: dict, rows: list[dict], windows: dict, git: _Git, now: date
     """One row per plan item, and the owner questions those items already claim."""
     oracle_mailbox, _ = _orchestrator()
     folded = oracle_mailbox.fold(rows, now)
-    answered = {row.get("in_reply_to") for row in rows if row.get("kind") == "answer"}
     date = plan["date"]
     ids = [item["id"] for item in plan["items"]]
     window = _window(rows, windows, date, first_written)
@@ -343,13 +441,29 @@ def work_items(plan: dict, rows: list[dict], windows: dict, git: _Git, now: date
             question = _owner_question(item, ids, rows, window)
             if question is not None:
                 claimed[question["msg_id"]] = item["id"]
-            done = question is not None and question["msg_id"] in answered
-            status = "answered" if done else "waiting_on_you"
-            detail = (f"Owner question {question['msg_id']} from {question.get('actor')} "
-                      f"{'answered' if done else 'is open'}."
-                      if question else "No owner question posted for this item; reply with a note.")
-            msg, sha = (question["msg_id"] if question else None), None
-            at = _stamp(question.get("ts")) if question else None
+            answer = _human_answer(question, rows) if question is not None else None
+            resolution = _question_resolution(question, rows) if question is not None else None
+            if answer is not None:
+                status = "answered"
+                detail = f"Owner question {question['msg_id']} has a direct human answer {answer['msg_id']}."
+                msg, at = answer["msg_id"], _stamp(answer.get("ts"))
+            elif resolution is not None:
+                body = _body(resolution)
+                disposition = body["disposition"]
+                status = "held" if disposition == "prerequisite" else "resolved"
+                detail = (f"Question {disposition}: {_clip(body.get('summary'), 240)} "
+                          f"({resolution['msg_id']} from {resolution.get('actor')}).")
+                msg, at = resolution["msg_id"], _stamp(resolution.get("ts"))
+            elif question is not None:
+                status = "waiting_on_you"
+                detail = f"Owner question {question['msg_id']} from {question.get('actor')} is open."
+                msg, at = question["msg_id"], _stamp(question.get("ts"))
+            else:
+                # A plan field alone is not an owner question.  Making it a
+                # card used to create synthetic decisions with no answer path.
+                status = "not_started"
+                detail, msg, at = "No matching owner question has been posted.", None, None
+            sha = None
         else:
             status, detail, msg, sha, at = "not_started", f"No live producer for lane {lane}.", None, None, None
         result.append({
@@ -380,7 +494,6 @@ def _reply_to(row: dict | None) -> str:
 
 def waiting_on_you(plan_id: str | None, items: list[dict], claimed: dict, rows: list[dict],
                    plan_written: str | None) -> list[dict]:
-    answered = {row.get("in_reply_to") for row in rows if row.get("kind") == "answer"}
     by_id = {row["msg_id"]: row for row in rows}
     waiting = []
     for item in items:
@@ -388,20 +501,22 @@ def waiting_on_you(plan_id: str | None, items: list[dict], claimed: dict, rows: 
             continue
         msg = item["evidence_msg_id"]
         question = by_id.get(msg) if msg else None
-        cli = (f"{CLI} --kind answer --to {_reply_to(question)} --in-reply-to {msg} "
-               f"--body '{{\"text\": \"...\"}}'" if msg
-               else f"{CLI} --kind note --to oracle --body '{{\"text\": \"{plan_id} {item['id']}: ...\"}}'")
-        waiting.append({"kind": "owner_decision", "id": f"{plan_id}:{item['id']}", "title": item["title"],
-                        "asked_by": _reply_to(question) if question else "oracle",
-                        "asked_at": item["evidence_at"] or plan_written, "msg_id": msg, "cli": cli})
+        if question is None:  # defensive: a corrupt derived work item is not actionable
+            continue
+        card = _question_card(question)
+        waiting.append({"kind": "owner_decision", "id": f"{plan_id}:{item['id']}", **card,
+                        "asked_by": _reply_to(question), "asked_at": item["evidence_at"] or plan_written,
+                        "msg_id": msg,
+                        "cli": f"{CLI} --kind answer --to {_reply_to(question)} --in-reply-to {msg} "
+                               f"--body '{{\"text\": \"...\"}}'"})
     for row in rows:
-        if (row.get("kind") != "question" or row.get("to") != "owner" or row["msg_id"] in answered
-                or row["msg_id"] in claimed):
+        if (row.get("kind") != "question" or row.get("to") != "owner" or row["msg_id"] in claimed
+                or _human_answer(row, rows) is not None or _question_resolution(row, rows) is not None):
             continue
         to = _reply_to(row)
+        card = _question_card(row)
         waiting.append({
-            "kind": "question", "id": row["msg_id"],
-            "title": _clip(_title(row) or _body(row).get("text"), 300) or row["msg_id"],
+            "kind": "question", "id": row["msg_id"], **card,
             "asked_by": _clip(str(row.get("actor")), 60) or "?", "asked_at": _stamp(row.get("ts")),
             "msg_id": row["msg_id"],
             "cli": f"{CLI} --kind answer --to {to} --in-reply-to {row['msg_id']} --body '{{\"text\": \"...\"}}'",
@@ -548,6 +663,7 @@ def build(repo: Path, now: datetime) -> dict:
         "work_items": items,
         "waiting_on_you": waiting_on_you(plan_id, items, claimed, rows,
                                          daily_plan["written_at"] if daily_plan else None),
+        "question_updates": question_updates(rows),
         "accomplishments": accomplishments(repo, rows, windows, git, now, plans),
         "improvements": improvements(git, now),
         "warnings": warnings,
@@ -590,7 +706,7 @@ def _rows(value, keys, maximum, check):
 def validate_live(value: dict, agents_ok) -> None:
     """Raise ValueError unless ``value`` is an exact v3 summary."""
     expected = {"schema_version", "generated_at", "current_plan_revision", "daily_plan", "research_focus",
-                "work_items", "waiting_on_you", "accomplishments", "improvements", "agents",
+                "work_items", "waiting_on_you", "question_updates", "accomplishments", "improvements", "agents",
                 "warnings", "sources"}
     if set(value) != expected or value["schema_version"] != LIVE_SCHEMA or not _time(value["generated_at"]):
         raise ValueError("v3 summary fields or timestamp are invalid")
@@ -647,12 +763,33 @@ def validate_live(value: dict, agents_ok) -> None:
             and _text(r["evidence_msg_id"], 80, optional=True) and _text(r["evidence_sha"], 40, optional=True)
             and _time(r["evidence_at"], optional=True))):
         raise ValueError("v3 work items are invalid")
-    if not _rows(value["waiting_on_you"], {"kind", "id", "title", "asked_by", "asked_at", "msg_id", "cli"},
+    if not _rows(value["waiting_on_you"], {"kind", "id", "title", "question", "context", "choices",
+                                             "recommendation", "consequence", "asked_by", "asked_at", "msg_id", "cli"},
                  MAX_ROWS, lambda r: (
                      r["kind"] in {"question", "owner_decision"} and _text(r["id"], 120)
-                     and _text(r["title"], 300) and _text(r["asked_by"], 60) and _time(r["asked_at"], optional=True)
+                     and _text(r["title"], 300) and _text(r["question"], 300)
+                     and _text(r["context"], 1200, optional=True)
+                     and isinstance(r["choices"], list) and len(r["choices"]) <= 8
+                     and all(_text(choice, 300) for choice in r["choices"])
+                     and _text(r["recommendation"], 600, optional=True)
+                     and _text(r["consequence"], 600, optional=True)
+                     and _text(r["asked_by"], 60) and _time(r["asked_at"], optional=True)
                      and _text(r["msg_id"], 80, optional=True) and _text(r["cli"], 600))):
         raise ValueError("v3 owner requests are invalid")
+    if not _rows(value["question_updates"], {"id", "question_id", "title", "question", "disposition",
+                                               "summary", "reason", "blocking_artifact", "resolved_by",
+                                               "resolved_at", "evidence_msg_ids"}, 10, lambda r: (
+                                                   _text(r["id"], 80) and _text(r["question_id"], 80)
+                                                   and _text(r["title"], 300) and _text(r["question"], 300)
+                                                   and r["disposition"] in QUESTION_RESOLUTIONS
+                                                   and _text(r["summary"], 1200) and _text(r["reason"], 1200)
+                                                   and _text(r["blocking_artifact"], 240, optional=True)
+                                                   and _text(r["resolved_by"], 60)
+                                                   and _time(r["resolved_at"])
+                                                   and isinstance(r["evidence_msg_ids"], list)
+                                                   and len(r["evidence_msg_ids"]) <= 8
+                                                   and all(_text(value, 80) for value in r["evidence_msg_ids"]))):
+        raise ValueError("v3 question updates are invalid")
     if not _rows(value["accomplishments"], {"id", "kind", "title", "at", "evidence"}, MAX_ROWS, lambda r: (
             r["kind"] in {"merged", "validated", "focus_closed", "day_closed"} and _text(r["id"], 120)
             and _text(r["title"], 400) and _time(r["at"]) and _text(r["evidence"], 120))):

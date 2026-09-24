@@ -78,6 +78,38 @@ def test_actor_and_shape_rules(tmp_path):
     mailbox.post("oracle", "answer", {"text": "v2"}, to="nara", in_reply_to=question["msg_id"], path=path)
 
 
+def test_question_resolution_is_explicit_and_preserves_question_provenance(tmp_path):
+    path = tmp_path / "mb.jsonl"
+    question = mailbox.post("oracle", "question", {"question": "Install the timer?"},
+                            to="owner", path=path)
+    withdrawn = mailbox.post("oracle", "question_resolution", {
+        "disposition": "withdrawn", "summary": "No action is needed.",
+        "reason": "The timer question was based on a mistaken premise.",
+    }, to="owner", in_reply_to=question["msg_id"], path=path)
+    assert withdrawn["in_reply_to"] == question["msg_id"]
+
+    # A reviewer may annotate with a normal note, but cannot hide a question
+    # even when it cites a valid, preceding mailbox row.
+    with pytest.raises(mailbox.MailboxError, match="question asker or a human"):
+        mailbox.post("claude", "question_resolution", {
+            "disposition": "withdrawn", "summary": "No action.", "reason": "review",
+            "evidence_msg_ids": [question["msg_id"]],
+        }, to="owner", in_reply_to=question["msg_id"], path=path)
+    with pytest.raises(mailbox.MailboxError, match="preceding mailbox rows"):
+        mailbox.post("codex", "question_resolution", {
+            "disposition": "withdrawn", "summary": "No action.", "reason": "review",
+            "evidence_msg_ids": ["codex-not-yet-posted"],
+        }, to="owner", in_reply_to=question["msg_id"], path=path)
+    with pytest.raises(mailbox.MailboxError, match="question asker or a human"):
+        mailbox.post("nara", "question_resolution", {
+            "disposition": "withdrawn", "summary": "No action.", "reason": "not my question",
+        }, to="owner", in_reply_to=question["msg_id"], path=path)
+    with pytest.raises(mailbox.MailboxError, match="must reply to a question"):
+        mailbox.post("oracle", "question_resolution", {
+            "disposition": "withdrawn", "summary": "No action.", "reason": "wrong parent",
+        }, to="owner", in_reply_to=withdrawn["msg_id"], path=path)
+
+
 def test_admission_fence(monkeypatch):
     _stub_the_precheck_gate(monkeypatch)
     assert lane.admission({"actor": "oracle", "body": _plan()}) == []

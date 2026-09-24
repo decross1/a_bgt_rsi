@@ -201,32 +201,73 @@ def test_oracle_dev_item_follows_ready_notes_reviews_and_merges_on_main(repo):
     assert {a["kind"] for a in value["accomplishments"]} == {"merged"}
 
 
-def test_owner_decision_and_open_questions_are_waiting_on_you_until_answered(repo):
+def test_owner_cards_require_a_real_question_and_direct_human_answer_or_explicit_resolution(repo):
     _plan(repo, "2026-09-23.json", [_item("d5", "owner_decision"), _item("d6", "owner_decision")])
     box = Box(repo)
     box.post("oracle", "note", {"title": "PLAN READY: 2026-09-23", "text": "x"})
-    asked = box.post("claude", "question", {"title": "Three items (d5 never reached you)", "text": "?"},
-                     to="owner")
+    asked = box.post("claude", "question", {
+        "question": "Use the reviewed worktree or main?", "why": "The runner needs one stable base.",
+        "options": ["A — reviewed worktree", "B — current main"], "recommendation": "A",
+        "ref": {"item": "d5"},
+    }, to="owner")
     other = box.post("oracle", "question", {"title": "An unrelated ruling", "text": "?"}, to="owner")
     box.post("oracle", "question", {"title": "Not for the owner", "text": "?"}, to="claude")
 
     value = _summary(repo)
     items = {i["id"]: i for i in value["work_items"]}
-    assert items["d5"]["status"] == items["d6"]["status"] == "waiting_on_you"
+    assert items["d5"]["status"] == "waiting_on_you"
+    assert items["d6"]["status"] == "not_started"  # a plan field is not an actual question
     waiting = {w["id"]: w for w in value["waiting_on_you"]}
-    assert set(waiting) == {"2026-09-23:d5", "2026-09-23:d6", other["msg_id"]}
+    assert set(waiting) == {"2026-09-23:d5", other["msg_id"]}
     assert waiting["2026-09-23:d5"]["msg_id"] == asked["msg_id"]
     assert f"--to claude --in-reply-to {asked['msg_id']}" in waiting["2026-09-23:d5"]["cli"]
-    assert "--kind note" in waiting["2026-09-23:d6"]["cli"] and waiting["2026-09-23:d6"]["msg_id"] is None
+    assert waiting["2026-09-23:d5"]["question"] == "Use the reviewed worktree or main?"
+    assert waiting["2026-09-23:d5"]["context"] == "The runner needs one stable base."
+    assert waiting["2026-09-23:d5"]["choices"] == ["A — reviewed worktree", "B — current main"]
+    assert waiting["2026-09-23:d5"]["recommendation"] == "A"
     assert f"--kind answer --to oracle --in-reply-to {other['msg_id']}" in waiting[other["msg_id"]]["cli"]
     assert waiting[other["msg_id"]]["cli"].startswith(
         ".venv-chroma/bin/python -m orchestrator.oracle_mailbox post --as human:derrick")
 
-    box.post("human:derrick", "answer", {"text": "Install on main."}, to="claude", reply=asked["msg_id"])
+    # A relay is context only; it must not mark the owner's question answered.
     box.post("claude", "answer", {"text": "relayed"}, to="oracle", reply=other["msg_id"])
     value = _summary(repo)
+    assert value["work_items"][0]["status"] == "waiting_on_you"
+    assert {w["id"] for w in value["waiting_on_you"]} == {"2026-09-23:d5", other["msg_id"]}
+
+    box.post("human:derrick", "answer", {"text": "Use the reviewed worktree."}, to="claude", reply=asked["msg_id"])
+    box.post("oracle", "question_resolution", {
+        "disposition": "superseded", "summary": "The standalone ruling is superseded by the reviewed plan.",
+        "reason": "It duplicates the direct owner decision.", "evidence_msg_ids": [asked["msg_id"]],
+    }, to="owner", reply=other["msg_id"])
+    value = _summary(repo)
     assert value["work_items"][0]["status"] == "answered"
-    assert [w["id"] for w in value["waiting_on_you"]] == ["2026-09-23:d6"]
+    assert value["waiting_on_you"] == []
+    assert value["question_updates"] == [{
+        "id": value["question_updates"][0]["id"], "question_id": other["msg_id"],
+        "title": "An unrelated ruling", "question": "An unrelated ruling", "disposition": "superseded",
+        "summary": "The standalone ruling is superseded by the reviewed plan.",
+        "reason": "It duplicates the direct owner decision.", "blocking_artifact": None,
+        "resolved_by": "oracle", "resolved_at": value["question_updates"][0]["resolved_at"],
+        "evidence_msg_ids": [asked["msg_id"]],
+    }]
+
+
+def test_projection_rejects_resolution_evidence_from_a_later_or_self_row_or_reviewer():
+    question = {"seq": 1, "msg_id": "oracle-q", "actor": "oracle", "to": "owner", "kind": "question",
+                "body": {"question": "Run it?"}, "ts": "2026-09-23T18:00:00+00:00"}
+    resolution = {"seq": 2, "msg_id": "oracle-r", "actor": "oracle", "to": "owner",
+                  "kind": "question_resolution", "in_reply_to": "oracle-q",
+                  "body": {"disposition": "withdrawn", "summary": "No action.", "reason": "review",
+                           "evidence_msg_ids": ["future-note"]}, "ts": "2026-09-23T18:01:00+00:00"}
+    future = {"seq": 3, "msg_id": "future-note", "actor": "claude", "to": "owner", "kind": "note",
+              "body": {"text": "later"}, "ts": "2026-09-23T18:02:00+00:00"}
+    assert live.question_updates([question, resolution, future]) == []
+    resolution["body"]["evidence_msg_ids"] = ["oracle-r"]
+    assert live.question_updates([question, resolution, future]) == []
+    resolution["body"]["evidence_msg_ids"] = ["oracle-q"]
+    resolution["actor"] = "codex"
+    assert live.question_updates([question, resolution, future]) == []
 
 
 @pytest.mark.parametrize(("projection", "expected"), [

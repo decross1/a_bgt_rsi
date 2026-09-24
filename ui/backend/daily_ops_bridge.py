@@ -949,17 +949,20 @@ class LabMailboxRouter:
             to = str(question.get("actor", "oracle")).split(":")[0]
             if to not in {"oracle", "nara", "claude", "codex"}:
                 to = "oracle"
-            if action == "reply":
-                row = oracle_mailbox.post(self.owner_actor, "answer", {"text": note or "(no text)"},
-                                          to=to, in_reply_to=question["msg_id"], path=mailbox_path)
-            else:
-                body = {
-                    "title": f"OWNER DECISION: {action} {payload['expected_plan_revision']}:{target_id}",
-                    "decision": action, "target": {"msg_id": target_id}, "text": note,
-                    "via": "owner-ui", "authority": "owner, D-084",
-                }
-                row = oracle_mailbox.post(self.owner_actor, "note", body, to=to,
-                                          in_reply_to=question["msg_id"], path=mailbox_path)
+            # Every action on a concrete question is a direct owner answer.
+            # A separate note leaves the question open and makes the UI lie
+            # about progress; the optional structured fields preserve whether
+            # this was approve/decline/defer or free-form text.
+            body = {"text": note or action, "via": "owner-ui", "authority": "owner, D-084",
+                    "request_id": payload["request_id"]}
+            if action != "reply":
+                body["decision"] = action
+            try:
+                row, duplicate = oracle_mailbox.post_once(
+                    self.owner_actor, "answer", body, to=to, in_reply_to=question["msg_id"],
+                    idempotency_key=payload["request_id"], require_open_question=True, path=mailbox_path)
+            except oracle_mailbox.MailboxError as exc:
+                raise HTTPException(409, str(exc)) from exc
         else:
             if action not in _PLAN_ACTIONS:
                 raise HTTPException(422, "action is not valid for a plan target")
@@ -980,12 +983,17 @@ class LabMailboxRouter:
                 "title": f"OWNER DECISION: {action} {payload['expected_plan_revision']}:{target_id}",
                 "decision": action, "target": {"plan": payload["expected_plan_revision"], "item": target_id},
                 "text": note, "via": "owner-ui", "authority": "owner, D-084",
+                "request_id": payload["request_id"],
             }
-            row = oracle_mailbox.post(self.owner_actor, "note", body, to=to, path=mailbox_path)
+            try:
+                row, duplicate = oracle_mailbox.post_once(
+                    self.owner_actor, "note", body, to=to, idempotency_key=payload["request_id"], path=mailbox_path)
+            except oracle_mailbox.MailboxError as exc:
+                raise HTTPException(409, str(exc)) from exc
         return {
             "request_id": payload["request_id"], "status": "queued",
             "accepted_at": _iso(datetime.fromisoformat(row["ts"])),
-            "duplicate": False, "target_kind": target_kind, "target_id": target_id, "action": action,
+            "duplicate": duplicate, "target_kind": target_kind, "target_id": target_id, "action": action,
             "expected_plan_revision": payload["expected_plan_revision"], "execution_available": False,
         }
 
