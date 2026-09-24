@@ -86,6 +86,54 @@ def validate_plan_item(body: dict) -> None:
     if not isinstance(budget, dict) or not all(
             type(budget.get(k, 1)) is int and budget.get(k, 1) > 0 for k in ("attempts", "wall_clock_minutes")):
         raise MailboxError("budget.attempts and budget.wall_clock_minutes must be positive integers")
+    # fixture_sources / fixture_enums / fixtures (plan 2026-09-24 d3) are optional
+    # declarations of where an item's test fixtures were copied from, so the lane can
+    # refuse an item whose fixture data does not exist in the live files. `fixtures` is
+    # the fixture data itself. They are shape-checked HERE because unknown keys pass this
+    # function silently, which is what made a bare fixture_sources declaration decorative
+    # (review claude-56275cf790bac03c, finding 1): the author declared the field and the
+    # lane never saw a shape it had to honor. The comparisons themselves are in
+    # nara_lane.check_fixtures() / check_declared_sources_ship_fixtures().
+    fixtures = body.get("fixtures", {})
+    if not isinstance(fixtures, dict) or not all(
+            isinstance(k, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", k)
+            and isinstance(v, dict) for k, v in fixtures.items()):
+        raise MailboxError("fixtures must be an object mapping a plain file name -> the fixture object")
+    # A name declared but not shipped is refused here too, so the two halves of the
+    # mistake (a source with nothing behind it, a fixture with nothing behind it) get one
+    # rule at one door. nara_lane.check_declared_sources_ship_fixtures() applies the same
+    # rule to an item that reached the lane by some other path.
+    shipped = {k for k, v in fixtures.items() if isinstance(v, dict)}
+    sources = body.get("fixture_sources", {})
+    if not isinstance(sources, dict) or not all(
+            isinstance(k, str) and k and isinstance(v, str) and v for k, v in sources.items()):
+        raise MailboxError("fixture_sources must be an object mapping fixture name -> one repo path")
+    extra_sources = set(sources) - shipped
+    if extra_sources:
+        name = sorted(extra_sources)[0]
+        raise MailboxError(f"fixture_sources.{name} declares a live file but the item ships no "
+                           f"fixtures.{name}, so nothing is compared and Nara's worktree gets no "
+                           f"fixture: ship fixtures.{name} or drop the declaration")
+    enums = body.get("fixture_enums", {})
+    if not isinstance(enums, dict) or not all(
+            isinstance(k, str) and k and isinstance(v, list) and v
+            and all(isinstance(f, str) and f for f in v) for k, v in enums.items()):
+        raise MailboxError("fixture_enums must be an object mapping fixture name -> non-empty list of field names")
+    extra_enums = set(enums) - shipped
+    if extra_enums:
+        name = sorted(extra_enums)[0]
+        raise MailboxError(f"fixture_enums.{name} declares enum fields for a fixture the item does "
+                           f"not ship, so no value is ever checked: ship fixtures.{name} or drop "
+                           f"the declaration")
+    extra_fixtures = shipped - set(sources)
+    if extra_fixtures:
+        name = sorted(extra_fixtures)[0]
+        raise MailboxError(f"fixtures.{name} is shipped but no fixture_sources entry names it, so "
+                           f"the lane has no live file to check it against and nothing writes it "
+                           f"into Nara's worktree: declare fixture_sources.{name} or drop it")
+    if set(enums) - set(sources):
+        raise MailboxError("fixture_enums names a fixture with no fixture_sources entry: "
+                           f"{sorted(set(enums) - set(sources))}")
     if not isinstance(body["title"], str) or not isinstance(body["objective"], str):
         raise MailboxError("title and objective must be strings")
     if len(body["objective"]) > 4000 or len(body["title"]) > 200:
