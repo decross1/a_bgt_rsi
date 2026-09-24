@@ -1,10 +1,14 @@
 # Thesis brief: information and beliefs (owner direction, 2026-09-23)
 
 Status: **the brief for goal G1.1.** Nara generates 3–5 candidate theses from
-it on local weights. Oracle screens them, the meta-oracle reviews the screen,
-and the owner picks one; it becomes the focus through the G0.2 selection CLI.
-Nothing here is a hypothesis: under D-061 the meta-oracle frames the brief
-and does not write theses. See D-086 for the owner's words.
+it on local weights. Oracle independently screens the set and selects the
+highest-ranked eligible candidate after the meta-oracle reviews the proposed
+selection. Oracle then records it through the G0.2 focus-selection CLI. The
+owner sets the research direction but does not choose among theses (direct owner
+instruction, 2026-09-24); this agrees with D-084's focus-selection authority and
+supersedes the older owner-picks sentence in this brief. Under D-061 the
+meta-oracle may veto or annotate the screen but does not write or choose theses.
+See D-086 for the owner's research direction.
 
 ## Direction
 
@@ -63,6 +67,28 @@ spread information in a game) is welcome but must stay testable at T.
 - **Fits the apparatus.** It is buildable on Flash with the lab's runners, and
   its results would say something about the apparatus itself (the program's
   central question).
+
+### Selection protocol (G1.1)
+
+The candidate Markdown is a draft, not an executable focus source. Nara must
+produce a tracked, immutable candidate-set record with exact source and prior-
+work citations. Oracle checks every candidate against the template above and
+records an evidence-bound screen. A candidate is eligible only when its T
+information structure, solver, benchmark, falsifier and predeclared rule; S
+arms, sample, outcome, missingness and bounded Flash cost; A as-of data route;
+closest prior work or an explicit uncertainty; and at least two informative
+anomaly branches are all concrete. A truthful "none in the lab store" is a
+retrieval result, not proof that no outside prior work exists.
+
+Among eligible candidates, Oracle uses the published screen score and a stable
+candidate-ID tie-break. The meta-oracle reviews the *proposed selection and its
+source hashes*, not an unbound preference. Only an accepted review lets Oracle
+select a focus; selection itself grants no study registration, rung credit or
+experiment execution. If none qualifies, Oracle records the failed screen and
+gives Nara one bounded revision pass on named gaps. Two consecutive empty
+screens trigger an apparatus/retrieval diagnosis rather than an endless draft
+loop. The daily plan carries the next task and its budget; no new scheduler is
+created. Stage T begins only with a fresh preregistration and review.
 
 ## Learning from anomalies (the refinement protocol)
 
