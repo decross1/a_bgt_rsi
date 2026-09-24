@@ -49,6 +49,13 @@ const ALL_SCOPE: ResearchScopeMetadata = {
   history_preserved: true,
 };
 
+const CLOSED_SCOPE: ResearchScopeMetadata = {
+  mode: "active",
+  status: "closed",
+  campaign: null,
+  history_preserved: true,
+};
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -89,6 +96,7 @@ describe("research scope URL and identity boundary", () => {
 
   it("admits only the requested, internally coherent metadata", () => {
     expect(admitResearchScopeMetadata(ACTIVE_SCOPE, "active")).toEqual(ACTIVE_SCOPE);
+    expect(admitResearchScopeMetadata(CLOSED_SCOPE, "active")).toEqual(CLOSED_SCOPE);
     expect(admitResearchScopeMetadata(ALL_SCOPE, "all")).toEqual(ALL_SCOPE);
     expect(() => admitResearchScopeMetadata(ALL_SCOPE, "active")).toThrow(
       "Research scope integrity error",
@@ -98,6 +106,9 @@ describe("research scope URL and identity boundary", () => {
         { ...ACTIVE_SCOPE, history_preserved: false },
         "active",
       ),
+    ).toThrow("Research scope integrity error");
+    expect(() =>
+      admitResearchScopeMetadata({ ...CLOSED_SCOPE, campaign: CAMPAIGN }, "active"),
     ).toThrow("Research scope integrity error");
   });
 
@@ -152,6 +163,25 @@ describe("research scope URL and identity boundary", () => {
     await expect(getResearchScope("active")).rejects.toThrow(
       "Research scope integrity error",
     );
+  });
+
+  it("admits an empty closed list without importing history", async () => {
+    const closedIterations = { iterations: [], research_scope: CLOSED_SCOPE };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(closedIterations)));
+
+    await expect(getIterations(undefined, "active")).resolves.toEqual(closedIterations);
+  });
+
+  it("renders a closed campaign as distinct from missing lifecycle state", () => {
+    render(
+      <MemoryRouter initialEntries={["/ladder"]}>
+        <ResearchScopeBar fetchMetadata={false} initialMetadata={CLOSED_SCOPE} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId("research-scope-closed")).toHaveTextContent(
+      "This campaign is closed. Current-campaign lists remain empty; history is available explicitly.",
+    );
+    expect(screen.queryByTestId("research-scope-campaign")).toBeNull();
   });
 
   it("requires scope metadata for explicit journey reads while preserving the legacy unscoped call", async () => {
