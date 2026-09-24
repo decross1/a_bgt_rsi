@@ -15,16 +15,28 @@ What it does, per candidate block in a Markdown candidate set:
     there is UNINGESTED (it may exist, but the lab cannot read it), and a malformed id
     is MALFORMED;
   * every *title-ish* citation line (a bullet or table row whose label is Title /
-    Prior work / Related work, or a heading field with those names) is matched by
-    normalized-title containment against the store. No hit is UNVERIFIABLE — which is
-    the invented-citation case this exists to catch — and a hit against an ingested
-    paper records its arXiv id.
+    Prior work / Related work, or a heading field with those names) is resolved against
+    the store by TITLE IDENTITY, not by containment.
 
-Matching is deliberately conservative: a title matches only when the store's title
-contains the cited title, or the cited title contains the store's title and is at least
-20 characters. A title that does not match is reported, never silently accepted. This
-is a screen, not a literature search: it asks whether a citation is checkable, and
-leaves the asking of "is this the closest prior work" to Oracle's note.
+What VERIFIED means, stated plainly because the difference matters: the screen checks
+that a cited TITLE exists in the store. It does not check author, year, venue, or
+whether the cited claim is what that paper says. VERIFIED means "the title resolves",
+NOT "the citation is correct".
+
+Why containment was dropped. Review claude-58cad93a58e0b3af (amendment 1) killed the
+20-char / 60% containment rule this file shipped at d04de85, and the measured class is
+the invention shape a candidate set is most likely to produce: append a qualifier to a
+real title and the real title verified the fiction. Reproduced against the live store at
+d04de85: 'Communication as Voting in LLM Agents' and 'Auctions as Experiments revisited'
+both returned a real arXiv id. So VERIFIED now requires the normalized cited title to
+EQUAL a stored title, after the prefix/suffix stripping in cited_title(). Containment in
+either direction is PARTIAL: it is never VERIFIED, it is counted as a residual gap, and
+it carries the candidate arXiv id so Oracle's screen note adjudicates it by hand. A
+substring that resolves is a lead, not a citation.
+
+This is a screen, not a literature search: it asks whether a citation is checkable, and
+leaves the asking of "is this the closest prior work" to Oracle's note. D-061: adjudying
+a PARTIAL is that note's job, and this tool never upgrades one itself.
 
 D-061: this tool contains no research judgment. It reads two directories of files and
 prints a table.
@@ -159,9 +171,40 @@ def normalize(title: str) -> str:
 # store at this commit: 1,134 papers over 14 files, shortest title 13 characters, 40 titles
 # under 45. Without the stored-side floor an invented citation that merely mentions one of
 # those short titles verified itself.
-MIN_CITED_TITLE = 20   # a cited phrase this short is a guess, not a citation
-MIN_STORE_TITLE = 20   # a stored title this short cannot certify a longer sentence
-MIN_COVERAGE = 0.60    # a real citation is mostly the title it names
+# The containment floors (MIN_STORE_TITLE, MIN_COVERAGE, MIN_CITED_TITLE) are gone on
+# purpose: review claude-58cad93a58e0b3af amendment 1 showed a qualified real title clears
+# them, and amendment 2 showed each guard was unpinned by its own test. Identity is the
+# rule; anything shorter or longer than a stored title is PARTIAL and comes to a human.
+MIN_CITED_CHUNK = 8    # below this a chunk is noise ("see also"), not a title citation
+
+# A leading "Smith 2031," / "Jones et al., 2020:" prefix, a trailing "(arXiv:2505.14639)"
+# or "(NeurIPS 2024)" venue parenthetical, and quote or emphasis markers are formatting
+# around the title, not part of it. The year/et-al requirement is what keeps a real title
+# that merely starts with a word from being eaten: the prefix must look like a citation.
+AUTHOR_YEAR_PREFIX = re.compile(
+    r"(?i)^\s*[A-Z][A-Za-z'’\-]+"
+    r"(?:\s+(?:&|and)\s+[A-Z][A-Za-z'’\-]+|,\s*[A-Z][A-Za-z'’\-]+)*"
+    r"(?:\s+et\s+al\.?|\s+\d{4}|\s+'\d{2})"
+    r"[^:.)\n]{0,40}[:.,)]\s*")
+TRAILING_PAREN = re.compile(r"\s*\((?:[^()]*(?:arxiv|proceedings|journal|conference|workshop|"
+                            r"neurips|icml|iclr|aaai|aamas|ecma|arxiv\.org)[^()]*)\)\s*$", re.I)
+EMPHASIS = re.compile(r"[*_`]{1,3}|[“”\"']")
+
+
+def cited_title(chunk: str) -> str:
+    """The normalized title a citation chunk points at, with citation furniture removed.
+
+    Deliberately does NOT split on ':'. Amendment 1: splitting on the colon would let
+    'Cursed Rationalizability: A New Benchmark' resolve to the stored 'Cursed
+    Rationalizability' — which is exactly the qualified-title forgery this pass exists to
+    refuse. A colon inside the title therefore stays in the title, and if the whole thing
+    is not in the store it comes back unmatched and lands in PARTIAL/UNVERIFIABLE.
+    """
+    text = EMPHASIS.sub("", chunk or "")
+    text = TRAILING_PAREN.sub("", text).strip()
+    text = AUTHOR_YEAR_PREFIX.sub("", text, count=1).strip()
+    text = re.sub(r"\s+", " ", text).strip(" \t-|:.,·")
+    return normalize(text)
 
 
 class PaperStore:
@@ -207,63 +250,61 @@ class PaperStore:
                 return paper
         return None
 
-    def find_title(self, title: str) -> dict | None:
-        """The store paper a cited title refers to, or None (the invented-citation case).
+    def resolve_title(self, chunk: str) -> tuple[str, dict | None, str]:
+        """('VERIFIED' | 'PARTIAL' | 'UNVERIFIABLE', paper, kind) for one cited chunk.
 
-        Three rules, because the two directions fail in opposite ways (review
-        claude-56275cf790bac03c, finding 4 and amendment 6 asked for a stored-side floor;
-        a stored-side floor ALONE was the first attempt here and it hid a second defect,
-        so all three are stated and each is tested):
+        VERIFIED only when the stripped cited title equals a stored title exactly (see
+        cited_title(): citation furniture comes off, a colon inside the title does not).
+        Any containment, in either direction, is PARTIAL and carries the candidate paper
+        so the screen note can adjudicate; a PARTIAL is a residual gap, never a pass. A
+        substring that resolves is a lead, not a citation — that is the whole content of
+        review claude-58cad93a58e0b3af amendment 1, which replaced this function's 20-char
+        / 60% containment floors after they were measured verifying a real title with a
+        qualifier bolted onto it.
 
-        * equal after normalization resolves, at any length. The store holds 40 titles
-          under 45 characters and 13 titles under 20 - "Fair Prophets" among them - so a
-          floor that applied to exact matches would refuse a correctly quoted short title
-          (measured at this commit: `Communication as Voting` is in the store and did not
-          resolve under the two-floor rule alone).
-        * `norm in stored`: the citation abbreviates a real title, so the floor is on the
-          CITED side (MIN_CITED_TITLE). A two-word guess must not match a long title.
-        * `stored in norm`: the citation contains a real title inside more words. This is
-          where the invented-citation hole was - with no floor, the live store's short
-          titles ("communication as voting", "auctions as experiments", "fair prophets")
-          verified any invented sentence that mentioned one. So the stored title must be
-          at least MIN_STORE_TITLE characters AND cover MIN_COVERAGE of the cited chunk:
-          a real citation is mostly the real title, an invented one carries a real phrase
-          inside a fiction. A short title therefore resolves ONLY exactly, never as a
-          fragment of a longer sentence.
+        Candidates are counted by DISTINCT STORED TITLE, never by row. The daily
+        ingestion re-reads one paper into several cache and run files, so at this review
+        the live store's 1,356 rows carry 350 distinct normalized titles and every one of
+        them appears 2 to 8 times; counting rows would call every stored paper ambiguous
+        and refuse the screen.
 
-        Ambiguity is not resolved silently: several qualifying matches return None and are
-        reported UNVERIFIABLE, because "which paper?" is a question the screen cannot
-        answer and Oracle's note must.
-
-        The same title stored more than once is ONE candidate, not several. Measured on
-        the live store at this commit: 1,134 rows carry 305 distinct normalized titles,
-        because the daily ingestion re-reads a paper into several cache and run files.
-        Counting rows would call every ingested paper ambiguous and refuse the screen.
+        Ambiguity is reported, never resolved: when one cited string matches more than one
+        distinct stored title the screen returns UNVERIFIABLE with no paper and names the
+        kind, because "which paper?" is not a question this tool can answer — the first
+        version of this function silently took the longest match. Measured on the live
+        store, all 17 of its titles of 13-30 characters sit inside a longer stored title,
+        so that arm is common, not exotic: a qualified short title comes back UNVERIFIABLE
+        there rather than PARTIAL, and a PARTIAL carrying one candidate is earned, not
+        assumed.
         """
-        norm = normalize(title)
+        norm = cited_title(chunk)
         if not norm:
-            return None
-        titles: set[str] = set()
-        for stored, paper in self.titles:
-            if not stored:
-                continue
-            if stored == norm:
-                titles.add(stored)
-            elif norm in stored and len(norm) >= MIN_CITED_TITLE:
-                titles.add(stored)
-            elif stored in norm and len(stored) >= MIN_STORE_TITLE \
-                    and len(stored) >= MIN_COVERAGE * len(norm):
-                titles.add(stored)
-        if not titles:
-            return None
-        if len(titles) > 1:
-            return None  # ambiguous: reported UNVERIFIABLE, and the note must name it
-        stored = next(iter(titles))
-        for candidate, paper in self.titles:  # first row wins; duplicates are the same paper
-            if candidate == stored:
-                return paper
-        return None
+            return "UNVERIFIABLE", None, "no_title"
+        exact = _by_title(self.titles, lambda stored: stored == norm)
+        if len(exact) == 1:
+            return "VERIFIED", next(iter(exact.values())), "exact"
+        if len(exact) > 1:
+            return "UNVERIFIABLE", None, "ambiguous_exact"
+        partial = _by_title(self.titles,
+                            lambda stored: bool(stored) and (stored in norm or norm in stored))
+        if len(partial) == 1:
+            return "PARTIAL", next(iter(partial.values())), "contains"
+        if partial:
+            return "UNVERIFIABLE", None, "ambiguous_partial"
+        return "UNVERIFIABLE", None, "absent"
 
+
+def _by_title(titles: list[tuple[str, dict]], matches) -> dict[str, dict]:
+    """{normalized stored title: one paper} for every stored title `matches` accepts.
+
+    Keyed by title so one paper's duplicate rows collapse to a single candidate. The paper
+    kept is the first row seen for that title.
+    """
+    out: dict[str, dict] = {}
+    for stored, paper in titles:
+        if matches(stored) and stored not in out:
+            out[stored] = paper
+    return out
 
 def candidates(text: str) -> list[tuple[str, str]]:
     """(label, block) per candidate section. A document title naming `candidates` is not one."""
@@ -291,18 +332,21 @@ def screen(set_path: Path, store: PaperStore) -> dict:
         for line in field_lines(block):
             for chunk in re.split(r"(?i)[;\n]|\(arxiv[:.\s]*\d{4}\.\d{4,5}(?:v\d+)?\)", line):
                 chunk = chunk.strip(" \t-*|").strip()
-                if len(normalize(chunk)) < 8 or normalize(chunk) in seen_titles:
+                if len(normalize(chunk)) < MIN_CITED_CHUNK or normalize(chunk) in seen_titles:
                     continue
                 seen_titles.add(normalize(chunk))
-                hit = store.find_title(chunk)
+                status, paper, kind = store.resolve_title(chunk)
                 works.append({"cited": chunk[:200],
-                              "status": "VERIFIED" if hit else "UNVERIFIABLE",
-                              "arxiv_id": (hit or {}).get("arxiv_id"),
-                              "matched_title": (hit or {}).get("title")})
+                              "cited_title": cited_title(chunk),
+                              "status": status,
+                              "match_kind": kind,
+                              "arxiv_id": (paper or {}).get("arxiv_id"),
+                              "matched_title": (paper or {}).get("title")})
         per_candidate.append({"label": label, "ids": ids, "works": works,
                               "unverifiable": sum(1 for w in works if w["status"] == "UNVERIFIABLE"),
+                              "partial": sum(1 for w in works if w["status"] == "PARTIAL"),
                               "uningested": sum(1 for i in ids if i["status"] == "UNINGESTED")})
-    counts = {k: sum(c[k] for c in per_candidate) for k in ("unverifiable", "uningested")}
+    counts = {k: sum(c[k] for c in per_candidate) for k in ("unverifiable", "partial", "uningested")}
     return {"schema": "citation-screen/v1",
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "set": str(set_path), "set_sha256": hashlib.sha256(text.encode()).hexdigest(),
@@ -311,7 +355,9 @@ def screen(set_path: Path, store: PaperStore) -> dict:
             "totals": counts,
             "residual_gaps": sorted(
                 ({"uningested_ids_present"} if counts["uningested"] else set())
-                | ({"unverifiable_citations_present"} if counts["unverifiable"] else set()))}
+                | ({"unverifiable_citations_present"} if counts["unverifiable"] else set())
+                # a PARTIAL is a lead that needs a human, so it blocks a clean screen too
+                | ({"partial_citations_need_adjudication"} if counts["partial"] else set()))}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -336,10 +382,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{report['papers']} papers in {len(store.files)} store files; "
               f"{len(report['candidates'])} candidates screened")
         for cand in report["candidates"]:
-            print(f"\n== {cand['label']}  (unverifiable {cand['unverifiable']}, uningested {cand['uningested']})")
+            print(f"\n== {cand['label']}  (unverifiable {cand['unverifiable']}, "
+                  f"partial {cand['partial']}, uningested {cand['uningested']})")
             for work in cand["works"]:
                 print(f"  [{work['status']:<12}] {work['cited'][:90]}"
-                      + (f"  -> {work['arxiv_id']}" if work.get("arxiv_id") else ""))
+                      + (f"  -> {work['arxiv_id']} ({work['match_kind']})"
+                         if work.get("arxiv_id") else f"  ({work['match_kind']})"))
             for entry in cand["ids"]:
                 print(f"  [{entry['status']:<12}] arXiv {entry['arxiv_id']} {entry.get('title') or ''}")
         print(f"\ntotals: {report['totals']}")
