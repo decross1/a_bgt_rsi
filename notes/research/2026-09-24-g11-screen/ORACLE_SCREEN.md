@@ -49,13 +49,16 @@ sources; unknown.** No name is listed here, because I hold none that I retrieved
 source today. A named-but-wrong citation is exactly what the citation screen exists to stop, and
 this document is brief for a repair, so an unverified name would propagate. I do not claim the
 store is empty and I do not claim `none in the lab store`: I ran no retrieval, so the prior-art
-gate is simply un-evaluated. The paper store is `chroma_db` collection `papers_recent` (10,091
-embeddings per `tools/citation_screen.py` against a read-only copy of the live store, seq 323
-inventory figure 2,195 at an earlier watermark — either way it is not empty), and
+gate is simply un-evaluated. The paper store is the `chroma_db` collection `papers_recent`, which
+is not empty: a read-only query of `chroma_db/chroma.sqlite3` (join `embeddings` to `segments` on
+that collection) gives 2,195 stored embeddings, reproduced in this session. The retrieval helper
+`tools/citation_screen.py` exists on `oracle/2026-09-24-citation-screen` but not yet on local
+`main`, so the citation-consistency check it provides is not yet a main-branch command.
 `memory/brain/edges.jsonl` (1 line) and `memory/brain/narratives.jsonl` (2 lines, `wc -l`) are
 brain pages, not the paper store, so their line counts say nothing about prior art. A retrieval
-run against `papers_recent` plus primary sources, and the `tools/citation_screen.py` check, are
-therefore the first step of any repair — see C1 in the repair plan — not a citation list to copy.
+run against `papers_recent` plus primary sources, and that citation-consistency check once it is
+on main, are therefore the first step of any repair — see C1 in the repair plan — not a citation
+list to copy.
 
 ## Per-candidate result
 
