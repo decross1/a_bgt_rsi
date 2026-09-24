@@ -418,6 +418,54 @@ def test_a_crashed_worker_fails_its_own_item_only(repo):
     assert lane.run_queue(path, build=build, sandbox=_fake_sandbox, ready=lambda: True) == []
 
 
+def test_a_terminal_receipt_write_failure_is_recovered_on_the_next_pass(repo, monkeypatch):
+    """A completed worker must not strand a claim when its terminal append fails.
+
+    The first pass logs the append failure and releases the per-item lock.  A
+    later pass can therefore identify the still-``claimed`` item as abandoned,
+    post one terminal receipt, and leave subsequent passes idempotent.
+    """
+    _deployment(repo, 4)
+    _policy(repo, max_concurrent_items=2)
+    path = repo / "run_state/mb.jsonl"
+    lost = mailbox.post("oracle", "plan_item", _plan(title="lost receipt"), to="nara", path=path)
+    fine = mailbox.post("oracle", "plan_item", _plan(title="fine"), to="nara", path=path)
+    real_receipt, failed_once = lane._receipt, threading.Event()
+
+    def fail_one_terminal_append(receipt_path, msg_id, body):
+        if msg_id == lost["msg_id"] and body["state"] in mailbox.TERMINAL and not failed_once.is_set():
+            failed_once.set()
+            raise OSError("simulated terminal append failure")
+        return real_receipt(receipt_path, msg_id, body)
+
+    monkeypatch.setattr(lane, "_receipt", fail_one_terminal_append)
+    first = lane.run_queue(path, build=_slow_builder({}, 0), sandbox=_fake_sandbox, ready=lambda: True)
+    assert failed_once.is_set()
+    assert _by_item(first) == {
+        lost["msg_id"]: ["claimed"],
+        fine["msg_id"]: ["claimed", "validated"],
+    }
+    assert _mailbox_states(path) == _by_item(first)
+    assert _lock_is_free(lane._claim_lock_path(lost["msg_id"]))
+    assert any(
+        row["task_id"] == f"nara-lane:{lost['msg_id']}"
+        and row["status"] == "failed"
+        and "terminal receipt not posted: OSError" in row["observable_actual"]
+        for row in _run_log(repo)
+    )
+
+    recovered = lane.run_queue(path, build=lambda *a, **k: pytest.fail("a claimed item is recovered, not rebuilt"),
+                               sandbox=_fake_sandbox, ready=lambda: True)
+    assert _by_item(recovered) == {lost["msg_id"]: ["failed"]}
+    assert recovered[0]["body"]["reason"] == "lane interrupted; item abandoned"
+    assert lane.run_queue(path, build=lambda *a, **k: pytest.fail("no item remains"),
+                          sandbox=_fake_sandbox, ready=lambda: True) == []
+    assert _mailbox_states(path) == {
+        lost["msg_id"]: ["claimed", "failed"],
+        fine["msg_id"]: ["claimed", "validated"],
+    }
+
+
 def test_a_dead_runner_leaves_claims_recovered_exactly_once(repo, monkeypatch):
     """A runner process dies with two items in flight: the next run posts one
     abandoned receipt for each, and a third run posts nothing."""
