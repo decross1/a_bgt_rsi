@@ -14,6 +14,15 @@ What it does, per candidate block in a Markdown candidate set:
   * every bare arXiv id is looked up in the ingested paper store; an id that is not
     there is UNINGESTED (it may exist, but the lab cannot read it), and a malformed id
     is MALFORMED;
+  * a citation that carries BOTH an arXiv id and a title is checked by ID: the title the
+    store holds for that id must equal the title on that line. Equal means VERIFIED.
+    Anything else is MISMATCH, which is a residual and is never INGESTED. This is the
+    check that stops a real id wrapped around an invented title - review
+    claude-4e67d485544a85df finding 1: at f150a22 the screen resolved such a line by id
+    alone, printed the store's title instead of the cited one, and reported
+    `unverifiable 0 / partial 0 / uningested 0`, i.e. a clean screen over a forged
+    citation. A title with a resolvable id is also no longer counted as a title-citation,
+    so one forged line cannot hide inside an `unverifiable >= 1` total.
   * every *title-ish* citation line (a bullet or table row whose label is Title /
     Prior work / Related work, or a heading field with those names) is resolved against
     the store by TITLE IDENTITY, not by containment.
@@ -315,6 +324,82 @@ def _by_title(titles: list[tuple[str, dict]], matches) -> dict[str, dict]:
             out[stored] = paper
     return out
 
+def title_without_ids(cited: str, ids: list[str]) -> str:
+    r"""A citation chunk with its arXiv id token(s) cut out, so the id text itself can never
+    be mistaken for part of the title.
+
+    Cutting the id rather than the whole `arXiv:` prefix is deliberate: `arXiv:` is a
+    legitimate substring of a real stored title ('... based on the AR-Xiv data platform')
+    and replacing the bare digits alone would leave the prefix glued to the title. Two
+    passes, because a bare `2609.20789` does not match `arXiv[:.\s]*<id>`: the greedy pass
+    eats the whole `arXiv:<id>` token (and a separator the id regex could not match, so
+    'arXiv 2609.11112' leaves no stray 'arXiv' glued to the title), the second pass eats a
+    bare id. The citation is a substring of the line the id was found on, so one of the two
+    always hits. `cited_title()` then strips the separator left behind.
+    """
+    text = cited or ""
+    for arxiv_id in ids:
+        text = re.sub(r"(?i)arXiv[:.\s]*" + re.escape(arxiv_id), " ", text)
+        text = re.sub(r"(?<![\d.])" + re.escape(arxiv_id) + r"(?![\d.])", " ", text)
+    return text
+
+
+def pair_status(cited: str, arxiv_id: str, store: "PaperStore") -> tuple[str, dict | None, str]:
+    """('VERIFIED' | 'MISMATCH' | 'ID_NOT_IN_STORE', store paper, store title) for one
+    citation chunk that carries an arXiv id.
+
+    The store title held for `arxiv_id` is the authority; the cited text is compared to it
+    with the same furniture-stripping used everywhere else in this file - the id token is
+    cut out first (title_without_ids), then cited_title() removes an author-year prefix, a
+    venue parenthetical and quote/emphasis markers, and normalize() blanks punctuation, so
+    a verbatim citation of a title containing an apostrophe or an underscore still
+    compares equal. Title-to-title only: an id's SHAPE is never evidence about a title.
+
+    Why the rule is asymmetric, and why that is not a hole. This check targets the failure
+    we were actually caught in (review claude-4e67d485544a85df finding 2): a real id with
+    an altered or invented title on the same line. Demanding that every bare id also carry
+    a title would make every legitimate id-only citation illegal, and the id arm already
+    reports UNINGESTED for an id the lab cannot read. So: an id absent from the store is
+    left to the id arm (ID_NOT_IN_STORE, no double-count); a chunk with an id and no
+    title text at all is not a title citation and is not screened as one, and stays a
+    residual through the id arm's own status; any title text that is not the store's title
+    for that id is MISMATCH.
+    """
+    paper = store.find_arxiv(arxiv_id)
+    if paper is None:
+        return "ID_NOT_IN_STORE", None, ""
+    stored = str(paper.get("title", ""))
+    want = cited_title(title_without_ids(cited, [arxiv_id]))
+    if not want:
+        return "NO_TITLE", paper, stored
+    if want == cited_title(stored):
+        return "VERIFIED", paper, stored
+    return "MISMATCH", paper, stored
+
+
+def line_ids(line: str, store: "PaperStore") -> tuple[list[dict], list[str]]:
+    """(id entries, arXiv ids the store holds a title for) for one citation line.
+
+    The entries have the same shape as the document-level id rows, so a reader sees one
+    convention rather than two. The second list is what the title-vs-id check runs
+    against - and it must be the line, not the chunk: the split below cuts citations apart
+    on ';' or a newline, and a trailing ';' can push the id into a fragment that the title
+    chunk no longer contains. If the id were not found there, the forged title would be
+    adjudicated by the title search and come back UNVERIFIABLE: still a residual, but a
+    generic one, and the report would never say 'you cited this id under a title that id
+    does not carry' - the exact sentence a fabricated citation needs.
+    """
+    entries, titled = [], []
+    for arxiv_id in ARXIV_ANY.findall(line):
+        hit = store.find_arxiv(arxiv_id)
+        entries.append({"arxiv_id": arxiv_id,
+                        "status": "INGESTED" if hit else "UNINGESTED",
+                        "title": (hit or {}).get("title")})
+        if hit and str(hit.get("title", "")).strip():
+            titled.append(arxiv_id)
+    return entries, titled
+
+
 def candidates(text: str) -> list[tuple[str, str]]:
     """(label, block) per candidate section. A document title naming `candidates` is not one."""
     starts = [m.start() for m in CANDIDATE_HEADING.finditer(text) if m.start() > 0]
@@ -339,11 +424,32 @@ def screen(set_path: Path, store: PaperStore) -> dict:
                         "title": (hit or {}).get("title")})
         seen_titles: set[str] = set()
         for line in field_lines(block):
+            line_entries, titled_ids = line_ids(line, store)
+            for entry in line_entries:
+                if entry["arxiv_id"] not in {seen["arxiv_id"] for seen in ids}:
+                    ids.append(entry)
             for chunk in re.split(r"(?i)[;\n]|\(arxiv[:.\s]*\d{4}\.\d{4,5}(?:v\d+)?\)", line):
                 chunk = chunk.strip(" \t-*|").strip()
                 if len(normalize(chunk)) < MIN_CITED_CHUNK or normalize(chunk) in seen_titles:
                     continue
                 seen_titles.add(normalize(chunk))
+                carried = [a for a in titled_ids if a in chunk] or titled_ids
+                if carried:
+                    pair, pair_paper, stored_title = pair_status(chunk, carried[0], store)
+                    if pair == "NO_TITLE":
+                        # an id with no title text beside it is the id arm's business; do
+                        # not invent a title-citation row for it
+                        continue
+                    cited_only = title_without_ids(chunk, carried)
+                    works.append({"cited": chunk[:200],
+                                  "cited_title": cited_title(cited_only),
+                                  "status": pair,
+                                  "match_kind": "id_title" if pair == "VERIFIED" else "id_title_" + pair.lower(),
+                                  "arxiv_id": carried[0],
+                                  "matched_title": (pair_paper or {}).get("title"),
+                                  "store_title": stored_title or None,
+                                  "detail": stored_title if pair == "MISMATCH" else None})
+                    continue
                 status, paper, kind = store.resolve_title(chunk)
                 works.append({"cited": chunk[:200],
                               "cited_title": cited_title(chunk),
@@ -354,8 +460,10 @@ def screen(set_path: Path, store: PaperStore) -> dict:
         per_candidate.append({"label": label, "ids": ids, "works": works,
                               "unverifiable": sum(1 for w in works if w["status"] == "UNVERIFIABLE"),
                               "partial": sum(1 for w in works if w["status"] == "PARTIAL"),
+                              "mismatch": sum(1 for w in works if w["status"] == "MISMATCH"),
                               "uningested": sum(1 for i in ids if i["status"] == "UNINGESTED")})
-    counts = {k: sum(c[k] for c in per_candidate) for k in ("unverifiable", "partial", "uningested")}
+    counts = {k: sum(c[k] for c in per_candidate)
+              for k in ("unverifiable", "partial", "mismatch", "uningested")}
     return {"schema": "citation-screen/v1",
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "set": str(set_path), "set_sha256": hashlib.sha256(text.encode()).hexdigest(),
@@ -365,6 +473,9 @@ def screen(set_path: Path, store: PaperStore) -> dict:
             "residual_gaps": sorted(
                 ({"uningested_ids_present"} if counts["uningested"] else set())
                 | ({"unverifiable_citations_present"} if counts["unverifiable"] else set())
+                # a MISMATCH is a real id cited under a title that id does not carry: a
+                # fabricated citation, not a gap in the store, and never an INGESTED
+                | ({"id_title_mismatch_present"} if counts["mismatch"] else set())
                 # a PARTIAL is a lead that needs a human, so it blocks a clean screen too
                 | ({"partial_citations_need_adjudication"} if counts["partial"] else set()))}
 
@@ -397,6 +508,12 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  [{work['status']:<12}] {work['cited'][:90]}"
                       + (f"  -> {work['arxiv_id']} ({work['match_kind']})"
                          if work.get("arxiv_id") else f"  ({work['match_kind']})"))
+                if work["status"] == "MISMATCH":
+                    # name both sides, or the reader cannot see the forgery (review
+                    # claude-4e67d485544a85df, finding 1: the old print showed only the
+                    # store title, so a clean-looking line hid the invented citation)
+                    print(f"                 cited title: {work['cited_title']}\n"
+                          f"                 store title: {work['store_title']}")
             for entry in cand["ids"]:
                 print(f"  [{entry['status']:<12}] arXiv {entry['arxiv_id']} {entry.get('title') or ''}")
         print(f"\ntotals: {report['totals']}")

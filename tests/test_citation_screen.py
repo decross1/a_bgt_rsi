@@ -61,7 +61,7 @@ def candidate(name: str, prior: str) -> str:
 CLEAN = (
     candidate("One", "Order effects in judgment under uncertainty (arXiv:2609.11111)")
     + candidate("Two", "Quantum probability models of cognition: a review")
-    + candidate("Three", "Counter-picking strategies in imperfect information games (arXiv 2609.11112)")
+    + candidate("Three", "Counter-picking strategies in imperfect information games (arXiv:2609.11113)")
 )
 
 
@@ -90,7 +90,7 @@ def test_store_reads_both_ingestion_shapes(tmp_path):
 def test_a_clean_set_resolves_every_citation(tmp_path):
     out = report(tmp_path, None)
     assert len(out["candidates"]) == 3
-    assert out["totals"] == {"unverifiable": 0, "uningested": 0, "partial": 0}, out["candidates"]
+    assert out["totals"] == {"unverifiable": 0, "uningested": 0, "partial": 0, "mismatch": 0}, out["candidates"]
     assert out["residual_gaps"] == []
     assert out["set_sha256"], "the note must be able to cite the bytes it screened"
 
@@ -581,3 +581,288 @@ def test_main_lab_root_follows_git_and_falls_back_to_root(tmp_path, monkeypatch)
     resolved = cs._main_lab_root()
     assert resolved == main or resolved.resolve() == main.resolve(), (
         f"a linked worktree resolved the store to {resolved}, not the main working tree {main}")
+
+
+# --- id + title on one line: review claude-4e67d485544a85df, amendment 3 and finding 1 ---
+#
+# The measured hole, quoted from the review: at f150a22 a Prior-work line carrying a real
+# id and an invented title came out `[INGESTED]` with totals `unverifiable 0 / partial 0 /
+# uningested 0`, and the report printed the STORE's title, not the cited one. Two tests
+# below reproduce that exact probe shape (`- Prior work:` + 'arXiv:2609.11111 "..."') and
+# assert the opposite answer.
+
+ID_TITLE_K = "id_title"
+
+# Tests that must go red when the id-vs-title check is deleted. Explicit names, because
+# `-k id_title` selects on test names and would miss the live-store arm.
+MUTATION_NODES = (
+    "test_a_real_id_with_an_invented_title_is_a_mismatch_never_ingested",
+    "test_a_real_id_with_a_paraphrased_title_is_a_mismatch",
+    "test_an_id_and_a_title_from_two_different_stored_papers_is_a_mismatch",
+    "test_a_verified_citation_and_a_forgery_in_one_block_cannot_cancel_out",
+    "test_main_refuses_a_set_whose_only_gap_is_an_id_title_mismatch",
+    "test_a_real_live_id_with_an_invented_title_is_a_mismatch",
+)
+
+
+def id_pair_text(cited: str, arxiv_id: str) -> str:
+    """The review's own probe shape: a labelled Prior-work line, an id, a quoted title."""
+    return f"## Candidate: Pair\n\n**Prior work:**\n- arXiv:{arxiv_id} \"{cited}\"\n"
+
+
+def pair_report(tmp_path: Path, cited: str, arxiv_id: str) -> dict:
+    return report(tmp_path, id_pair_text(cited, arxiv_id))
+
+
+def works_of(out: dict) -> list[dict]:
+    return out["candidates"][0]["works"]
+
+
+def write_live_row(tmp_path: Path, row: dict) -> Path:
+    """A tmp paper store holding exactly one row taken from the LIVE store.
+
+    The live id+title pairs I want to probe are not in PAPERS, and PAPERS must stay as it
+    is: it is the fixture for the three papers every older test screens. So a live probe
+    gets its own single-row store. It is still a store the screen built itself from the
+    ingestion JSONL shape - nothing here hands the screen a title list.
+    """
+    root = tmp_path / "live_store"
+    (root / "cache").mkdir(parents=True, exist_ok=True)
+    (root / "cache" / "live.jsonl").write_text(json.dumps(row) + "\n")
+    return root
+
+
+def live_screen(live_root: Path, tmp_path: Path, probe: str, slug: str = "") -> dict:
+    """One probe per file: screen() dedupes cited titles per candidate, so two probes in one
+    document would silently drop the second."""
+    set_path = tmp_path / f"LIVESET{slug}.md"
+    set_path.write_text("# Thesis candidates\n\n## Candidate: Live\n\n**Prior work:**\n"
+                        f"- {probe}\n")
+    return cs.screen(set_path, cs.PaperStore(live_root).load())
+
+
+def test_a_real_id_with_an_invented_title_is_a_mismatch_never_ingested(tmp_path):
+    """Amendment 3, arm 1: the forgery class, and it must be a residual."""
+    out = pair_report(tmp_path, "LLM Agents Always Defect in Public Goods Games", "2609.11111")
+    works = works_of(out)
+    assert works and works[0]["status"] == "MISMATCH", (
+        f"a real id wrapped in an invented title was not refused: "
+        f"{[(w['status'], w['cited_title']) for w in works]}")
+    assert out["totals"]["mismatch"] >= 1, out["totals"]
+    assert "id_title_mismatch_present" in out["residual_gaps"], out["residual_gaps"]
+    assert out["totals"]["unverifiable"] == 0, (
+        "the forged line must be refused by the id check, not by falling through to the "
+        "title search - an unverifiable total could be satisfied by any other bad line")
+    assert out["totals"]["partial"] == 0, out["totals"]
+
+
+def test_a_real_id_with_a_paraphrased_title_is_a_mismatch(tmp_path):
+    """The exact error the reading list shipped: '... under Hidden Effort' for the store's
+    '... under Moral Hazard and Adverse Selection'. Same shape, live-store pair at the
+    next test; here the hermetic equivalent."""
+    out = pair_report(tmp_path, "Order effects in judgment under effort", "2609.11111")
+    assert works_of(out)[0]["status"] == "MISMATCH", works_of(out)
+    assert "id_title_mismatch_present" in out["residual_gaps"]
+
+
+def test_a_real_id_with_the_exact_title_verifies(tmp_path):
+    """Amendment 3: EQUAL means VERIFIED. Citation furniture still comes off first."""
+    out = pair_report(tmp_path, "Order effects in judgment under uncertainty", "2609.11111")
+    works = works_of(out)
+    assert works[0]["status"] == "VERIFIED", works
+    assert works[0]["arxiv_id"] == "2609.11111"
+    assert out["totals"]["mismatch"] == 0
+    assert out["residual_gaps"] == [], out["residual_gaps"]
+
+
+def test_an_id_and_a_title_from_two_different_stored_papers_is_a_mismatch(tmp_path):
+    """Cross-wiring is the sneakiest variant: both halves are real, the pair is not."""
+    out = pair_report(tmp_path, "Quantum probability models of cognition: a review",
+                      "2609.11113")
+    assert works_of(out)[0]["status"] == "MISMATCH", works_of(out)
+    assert out["totals"]["mismatch"] >= 1
+
+
+def test_an_invented_id_with_the_right_title_is_uningested_not_a_clean_pass(tmp_path):
+    out = pair_report(tmp_path, "Order effects in judgment under uncertainty", "2609.99999")
+    ids = out["candidates"][0]["ids"]
+    assert any(i["arxiv_id"] == "2609.99999" and i["status"] == "UNINGESTED" for i in ids), ids
+    assert "uningested_ids_present" in out["residual_gaps"], out["residual_gaps"]
+
+
+def test_an_id_with_no_readable_title_on_the_line_is_never_verified(tmp_path):
+    """A line that names an id but whose text strips to nothing cannot be checked, so it
+    must not be called VERIFIED. It stays a residual."""
+    out = report(tmp_path, "## Candidate: Pair\n\n**Prior work:**\n- arXiv:2609.11111\n")
+    assert out["candidates"][0]["ids"][0]["status"] == "INGESTED", out["candidates"][0]["ids"]
+    assert out["totals"]["mismatch"] == 0, "a bare id is the id arm's business, not a forgery"
+    assert all(w["status"] != "VERIFIED" for w in works_of(out)) or not works_of(out)
+
+
+def test_a_verified_citation_and_a_forgery_in_one_block_cannot_cancel_out(tmp_path):
+    """A screen must not pass a forged citation because another line is clean, and a
+    block must not look clean because it also holds one bad line."""
+    text = (id_pair_text("Order effects in judgment under uncertainty", "2609.11111")
+            + "\n- LLM Agents Always Defect in Public Goods Games (arXiv:2609.11112)\n")
+    out = report(tmp_path, text)
+    statuses = sorted(w["status"] for w in works_of(out))
+    assert "MISMATCH" in statuses, statuses
+    assert out["totals"]["mismatch"] == 1, out["totals"]
+    assert "id_title_mismatch_present" in out["residual_gaps"]
+
+
+def test_main_refuses_a_set_whose_only_gap_is_an_id_title_mismatch(tmp_path, capsys):
+    """The command the screen note will cite: exit 1 and both titles on the page."""
+    set_path = tmp_path / "CANDIDATES.md"
+    set_path.write_text("# Thesis candidates\n\n" + id_pair_text(
+        "LLM Agents Always Defect in Public Goods Games", "2609.11111"))
+    store_root = write_store(tmp_path)
+    code = cs.main(["--set", str(set_path), "--store", str(store_root)])
+    printed = capsys.readouterr().out
+    assert code == 1, f"a forged citation must not exit 0; got {code}"
+    assert "MISMATCH" in printed, printed
+    assert "cited title:" in printed and "store title:" in printed, (
+        "the report must show both sides, or the reader cannot see the forgery")
+    assert "Public Goods Games" in printed, "the cited (invented) title must be on the page"
+
+
+def test_json_report_carries_both_sides_of_a_mismatch(tmp_path):
+    set_path = tmp_path / "CANDIDATES.md"
+    set_path.write_text("# Thesis candidates\n\n" + id_pair_text(
+        "LLM Agents Always Defect in Public Goods Games", "2609.11111"))
+    out = cs.screen(set_path, cs.PaperStore(write_store(tmp_path)).load())
+    work = works_of(out)[0]
+    assert work["cited_title"].startswith("llm agents always defect"), work
+    assert "Public Goods" in (work["store_title"] or "") or "public goods" in str(
+        work["cited_title"]), work
+    assert work["match_kind"] == "id_title_mismatch", work
+    assert out["totals"]["mismatch"] == 1
+
+
+# --- mutation pin: the id-vs-title check must be pinned by its own mutation -----------
+
+
+def test_removing_the_id_title_check_turns_the_suite_red(tmp_path):
+    """Same discipline as the stripping pins above: if the new check is deleted, a test
+    must go red. A guard no test can break is a guard that silently rots.
+
+    The mutant is NOT run with `-k id_title`: `-k` matches a test name, not a store id, and
+    the live-store test's name does not contain that substring, so a `-k`-filtered mutant
+    run would quietly collect one test and pass on it. The filter is an explicit nodeid
+    list, and the run asserts it collected more than one test."""
+    import shutil
+    work = tmp_path / "mut_id_title"
+    work.mkdir()
+    shutil_copytree(work)
+    source = (ROOT / "tools/citation_screen.py").read_text()
+    old = '                if carried:'
+    assert source.count(old) == 1, "the pin is stale: the id/title branch moved"
+    # neuter the check: never take the id arm, so every id+title line falls to title search
+    (work / "tools/citation_screen.py").write_text(
+        source.replace(old, '                if False:  # MUTANT: id-vs-title check removed'))
+    proc = subprocess.run([sys.executable, "-m", "pytest",
+                           *[f"tests/test_citation_screen.py::{name}" for name in MUTATION_NODES],
+                           "-q", "--no-header", "-p", "no:cacheprovider", "--collect-only"],
+                          cwd=work, capture_output=True, text=True, timeout=300)
+    collected = len([ln for ln in proc.stdout.splitlines() if "::" in ln])
+    assert collected >= 2, f"the pin must exercise more than one arm, collected {collected}"
+    proc = subprocess.run([sys.executable, "-m", "pytest",
+                           *[f"tests/test_citation_screen.py::{name}" for name in MUTATION_NODES],
+                           "-q", "--no-header", "-p", "no:cacheprovider"],
+                          cwd=work, capture_output=True, text=True, timeout=300)
+    assert proc.returncode != 0, (
+        "deleting the id-vs-title check left the suite green: the check is not pinned\n"
+        f"{proc.stdout[-800:]}")
+
+
+# --- live store: the forgery class measured against the papers the lab really holds ----
+
+@pytest.mark.skipif(not (cs._main_lab_root() / "run_state/arxiv_ingestion").is_dir(),
+                    reason="no live paper store on this machine")
+def test_a_real_live_id_with_an_invented_title_is_a_mismatch(tmp_path):
+    """Amendment 3's requirement, measured against the papers the lab really holds: a real
+    id cited under an invented title must be MISMATCH with a nonzero mismatch total, never
+    a clean screen and never merely 'a title I could not find'.
+
+    The distinction is the whole content of this test. At f150a22 the same probe was
+    already a residual through the title search - `unverifiable 1` - so ANY test that only
+    demands a nonzero total was satisfied by the old code and proves nothing about the
+    id check. What was missing is the verdict that names the fault: the store holds a
+    different title for that exact id. The hermetic twin above asserts the same thing; the
+    review measured the behaviour here, so the live arms pin both sides of it."""
+    store = cs.PaperStore(cs._main_lab_root() / "run_state/arxiv_ingestion").load()
+    # Fixture ids, each one checked into this file's expectation by the assert below: real
+    # ids the lab holds, with a title long enough that an invented phrase in place of one of
+    # its real phrases cannot resolve by title identity either - so the only arm that can
+    # catch arm 2 is the new id-vs-title check. The 2026-09-24 G1.1 reading list is where
+    # these came from, which is the point: this is the citation shape d1 will write.
+    arxiv_id, real_title = "2609.20404", None
+    hit = store.find_arxiv(arxiv_id)
+    assert hit is not None, f"live store no longer holds {arxiv_id}; pick another live id"
+    real_title = str(hit["title"])
+    assert len(cs.cited_title(real_title)) > 40, real_title
+    live_root = write_live_row(tmp_path, hit)
+    assert store.find_arxiv(arxiv_id) is not None, "fixture must name a live id"
+
+    def works_for(probe: str, slug: str = "") -> tuple[list[dict], dict]:
+        out = live_screen(live_root, tmp_path, probe, slug)
+        entry = next(i for i in out["candidates"][0]["ids"] if i["arxiv_id"] == arxiv_id)
+        assert entry["status"] == "INGESTED", (
+            f"{arxiv_id} must resolve in the store the screen reads: {out['store_files']}")
+        return works_of(out), out
+
+    # arm 1, amendment 3 verbatim: a live id, an invented title.
+    forged, _ = works_for(f'arXiv:{arxiv_id} "LLM Agents Always Defect in Public Goods Games"', "_a")
+    assert forged and forged[0]["status"] == "MISMATCH", forged
+    assert forged[0]["arxiv_id"] == arxiv_id, forged[0]
+    assert cs.cited_title(forged[0]["cited_title"]) == "llm agents always defect in public goods games", forged[0]
+    assert cs.cited_title(real_title) == cs.cited_title(forged[0]["store_title"]), (
+        "the report must show the store title held for that id")
+
+    # arm 2, amendment 1's real error class: a live title with a real phrase swapped for an
+    # invented one, cited beside its own id. This is the error Oracle shipped in seq 149.
+    paraphrase, out_p = works_for(f"{arxiv_id} - {real_title[:40]} under Hidden Effort", "_b")
+    assert paraphrase and paraphrase[0]["status"] == "MISMATCH", paraphrase
+    assert out_p["totals"]["mismatch"] == 1, out_p["totals"]
+    assert "id_title_mismatch_present" in out_p["residual_gaps"], out_p["residual_gaps"]
+
+    # arm 3, no false refusals: the same id quoted with the store's own title verifies.
+    exact, out_e = works_for(f'arXiv:{arxiv_id} "{real_title}"', "_c")
+    assert exact and exact[0]["status"] == "VERIFIED", exact
+    assert out_e["totals"]["mismatch"] == 0 and out_e["residual_gaps"] == [], out_e["totals"]
+
+    # arm 4: a forged title with NO id is still caught, by the title arm, unchanged. This
+    # probe carries no id, so it is screened straight off the live-derived store.
+    no_id_out = live_screen(live_root, tmp_path,
+                            '"LLM Agents Always Defect in Public Goods Games"', "_d")
+    assert no_id_out["candidates"][0]["ids"] == [], "this probe names no id"
+    no_id = works_of(no_id_out)
+    assert no_id and no_id[0]["status"] == "UNVERIFIABLE", no_id
+    assert no_id[0]["match_kind"] == "absent", no_id[0]
+
+
+@pytest.mark.skipif(not (cs._main_lab_root() / "run_state/arxiv_ingestion").is_dir(),
+                    reason="no live paper store on this machine")
+def test_every_live_title_cited_with_its_own_id_verifies(tmp_path):
+    """The false-refusal arm: over the whole live store, quoting a stored title beside its
+    own id must always be VERIFIED and never MISMATCH. A check that only fires on garbage
+    is a check that will be ignored."""
+    store = cs.PaperStore(cs._main_lab_root() / "run_state/arxiv_ingestion").load()
+    seen, checked = set(), 0
+    lines = []
+    for paper in store.papers:
+        arxiv_id = str(paper.get("arxiv_id") or "")
+        title = str(paper.get("title") or "").strip()
+        if not title or not arxiv_id or arxiv_id.lower() in seen:
+            continue
+        seen.add(arxiv_id.lower())
+        lines.append(f"- arXiv:{arxiv_id} \"{title}\"")
+        checked += 1
+    assert checked >= 50, f"only {checked} live id+title pairs available"
+    set_path = tmp_path / "LIVE.md"
+    set_path.write_text("# Thesis candidates\n\n## Candidate: All\n\n**Prior work:**\n"
+                        + "\n".join(lines) + "\n")
+    out = cs.screen(set_path, store)
+    bad = [w for w in out["candidates"][0]["works"] if w["status"] != "VERIFIED"]
+    assert not bad, f"{len(bad)}/{checked} verbatim id+title citations did not verify: {bad[:3]}"
+    assert out["totals"]["mismatch"] == 0
