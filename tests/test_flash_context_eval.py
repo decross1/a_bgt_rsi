@@ -165,6 +165,7 @@ class _Lease:
 
 
 def test_calibration_without_prompt_tokens_fails_the_tier(monkeypatch):
+    monkeypatch.setattr(driver.resident, "check_ready", lambda root=None: True)
     monkeypatch.setattr(driver.probes, "stream_chat", lambda prompt, max_tokens: {"status": 200, "text": ""})
     out = driver.run_probes(262144, (8000,), driver._NoMonitor())
     assert out["failures"] and not out["needles"]

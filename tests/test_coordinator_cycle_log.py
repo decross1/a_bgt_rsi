@@ -394,6 +394,7 @@ def test_emit_health_signals_writes_both_when_degraded(tmp_path):
     sigs = ccl.emit_health_signals(
         _report(), health_path=str(health),
         run_log_path=str(run_log), calls_log_path=str(calls),
+        frontier_calls_path=tmp_path / "frontier_calls.jsonl",
     )
     names = {s["signal"] for s in sigs}
     assert names == {"ml_intern_zero_papers", "qwen_degraded_empty_content"}
@@ -416,6 +417,7 @@ def test_emit_health_signals_stall_when_no_dispatch(tmp_path):
     sigs = ccl.emit_health_signals(rep, health_path=str(health),
                                    run_log_path=str(tmp_path / "nope.jsonl"),
                                    calls_log_path=str(tmp_path / "nope2.jsonl"),
+                                   frontier_calls_path=tmp_path / "frontier_calls.jsonl",
                                    alert_flag_path=str(flag))
     assert len(sigs) == 1
     assert sigs[0]["signal"] == "loop_stalled"
@@ -437,6 +439,7 @@ def test_emit_health_signals_ok_flag_on_active_cycle(tmp_path):
     sigs = ccl.emit_health_signals(rep, health_path=str(health),
                                    run_log_path=str(tmp_path / "nope.jsonl"),
                                    calls_log_path=str(tmp_path / "nope2.jsonl"),
+                                   frontier_calls_path=tmp_path / "frontier_calls.jsonl",
                                    alert_flag_path=str(flag))
     assert sigs == []
     assert json.loads(flag.read_text())["level"] == "ok"
@@ -456,7 +459,8 @@ def test_emit_health_signals_no_signal_when_healthy(tmp_path):
         "completion": '{"verdict": "stands"}',
     }) + "\n")
     sigs = ccl.emit_health_signals(_report(), health_path=str(health),
-                                   run_log_path=str(run_log), calls_log_path=str(calls))
+                                   run_log_path=str(run_log), calls_log_path=str(calls),
+                                   frontier_calls_path=tmp_path / "frontier_calls.jsonl")
     assert sigs == []
     assert not health.exists()
 

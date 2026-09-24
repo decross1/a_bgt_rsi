@@ -289,6 +289,7 @@ def test_health_rows_carry_ui_contract_fields(tmp_path):
         health_path=health_path,
         run_log_path=run_log,
         calls_log_path=calls_log,
+        frontier_calls_path=tmp_path / "frontier_calls.jsonl",
     )
     assert len(signals) == 2  # ml_intern_zero_papers + qwen_degraded_empty_content
 
