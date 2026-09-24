@@ -339,7 +339,9 @@ def test_activation_chronology_and_separate_closure_fail_closed(tmp_path):
     )
 
 
-@pytest.mark.parametrize("corrupt_parent", ["dangling_symlink", "regular_file"])
+@pytest.mark.parametrize(
+    "corrupt_parent", ["dangling_symlink", "regular_file", "mode_000"]
+)
 def test_active_loader_rejects_corrupt_closure_parent(tmp_path, corrupt_parent):
     root, _registry = _campaign_tree(tmp_path)
     campaign = load_campaign(DEFAULT_CAMPAIGN_ID, repo_root=root)
@@ -355,11 +357,18 @@ def test_active_loader_rejects_corrupt_closure_parent(tmp_path, corrupt_parent):
     closure_directory = root / "run_state" / "research_campaign_closures"
     if corrupt_parent == "dangling_symlink":
         closure_directory.symlink_to(root / "missing-closure-directory")
-    else:
+    elif corrupt_parent == "regular_file":
         closure_directory.write_text("not a directory")
+    else:
+        closure_directory.mkdir()
+        closure_directory.chmod(0)
 
-    with pytest.raises(CampaignError, match="closure directory"):
-        load_active_campaign(
-            repo_root=root,
-            now=datetime(2026, 9, 14, 22, 30, tzinfo=timezone.utc),
-        )
+    try:
+        with pytest.raises(CampaignError, match="closure (directory|receipt)"):
+            load_active_campaign(
+                repo_root=root,
+                now=datetime(2026, 9, 14, 22, 30, tzinfo=timezone.utc),
+            )
+    finally:
+        if corrupt_parent == "mode_000":
+            closure_directory.chmod(0o755)

@@ -420,13 +420,41 @@ def load_active_campaign(
     try:
         closure_directory = closure_path.parent.lstat()
     except FileNotFoundError:
-        pass
+        closure_exists = False
     except OSError as exc:
         raise CampaignError("campaign closure directory cannot be read safely") from exc
     else:
         if not stat.S_ISDIR(closure_directory.st_mode):
             raise CampaignError("campaign closure directory is redirected or not a directory")
-    if os.path.lexists(closure_path):
+        try:
+            directory_fd = os.open(
+                closure_path.parent,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+            )
+        except OSError as exc:
+            raise CampaignError(
+                "campaign closure directory cannot be read safely"
+            ) from exc
+        try:
+            opened_directory = os.fstat(directory_fd)
+            if (
+                opened_directory.st_dev != closure_directory.st_dev
+                or opened_directory.st_ino != closure_directory.st_ino
+            ):
+                raise CampaignError("campaign closure directory changed during validation")
+            try:
+                os.stat(closure_path.name, dir_fd=directory_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                closure_exists = False
+            except OSError as exc:
+                raise CampaignError(
+                    "campaign closure receipt cannot be read safely"
+                ) from exc
+            else:
+                closure_exists = True
+        finally:
+            os.close(directory_fd)
+    if closure_exists:
         if closure_path == repo_root / closure_relative:
             _closure_path, closure_bytes = _read_regular(
                 repo_root,
