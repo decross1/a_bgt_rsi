@@ -2,6 +2,7 @@
 import json
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -51,6 +52,37 @@ def test_post_if_appends_only_when_the_locked_prefix_satisfies_its_condition(tmp
         condition=lambda rows: mailbox.fold(rows)[item["msg_id"]]["state"] == "open",
     )
     assert claimed is not None and claimed["seq"] == 2
+
+
+def test_post_if_and_post_once_are_atomic_across_parallel_calls(tmp_path):
+    """A locked prefix permits one claim; an owner retry appends exactly once."""
+    path = tmp_path / "mb.jsonl"
+    item = mailbox.post("oracle", "plan_item", _plan(), to="nara", path=path)
+
+    def claim():
+        return mailbox.post_if(
+            "nara", "receipt", {"state": "claimed"}, to="oracle", in_reply_to=item["msg_id"],
+            path=path, condition=lambda rows: mailbox.fold(rows)[item["msg_id"]]["state"] == "open",
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        claims = list(pool.map(lambda _unused: claim(), range(2)))
+    assert sum(row is not None for row in claims) == 1
+    assert len(mailbox.read(path)) == 2
+
+    question = mailbox.post("oracle", "question", {"question": "Proceed?"}, to="owner", path=path)
+    body = {"text": "Yes", "request_id": "parallel-owner-request"}
+
+    def answer():
+        return mailbox.post_once(
+            "human:derrick", "answer", body, to="oracle", in_reply_to=question["msg_id"],
+            idempotency_key="parallel-owner-request", require_open_question=True, path=path,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        answers = list(pool.map(lambda _unused: answer(), range(2)))
+    assert sorted(duplicate for _row, duplicate in answers) == [False, True]
+    assert len([row for row in mailbox.read(path) if row.get("body") == body]) == 1
 
 
 def test_actor_and_shape_rules(tmp_path):
