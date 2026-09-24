@@ -40,6 +40,19 @@ def test_post_read_fold_and_chain(tmp_path):
         mailbox.read(path)
 
 
+def test_post_if_appends_only_when_the_locked_prefix_satisfies_its_condition(tmp_path):
+    path = tmp_path / "mb.jsonl"
+    item = mailbox.post("oracle", "plan_item", _plan(), to="nara", path=path)
+    assert mailbox.post_if("nara", "receipt", {"state": "claimed"}, to="oracle", in_reply_to=item["msg_id"],
+                           path=path, condition=lambda _rows: False) is None
+    assert len(mailbox.read(path)) == 1
+    claimed = mailbox.post_if(
+        "nara", "receipt", {"state": "claimed"}, to="oracle", in_reply_to=item["msg_id"], path=path,
+        condition=lambda rows: mailbox.fold(rows)[item["msg_id"]]["state"] == "open",
+    )
+    assert claimed is not None and claimed["seq"] == 2
+
+
 def test_actor_and_shape_rules(tmp_path):
     path = tmp_path / "mb.jsonl"
     with pytest.raises(mailbox.MailboxError, match="may not post"):

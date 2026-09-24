@@ -208,6 +208,34 @@ def test_two_items_run_concurrently_on_their_own_branches(repo):
     assert lane.run_queue(path, build=_slow_builder({}, 0), sandbox=_fake_sandbox, ready=lambda: True) == []
 
 
+def test_k2_never_claims_a_third_item_while_two_workers_are_blocked(repo):
+    """The dispatcher has exactly K claims in flight; this uses barriers, not sleeps."""
+    _deployment(repo, 4)
+    _policy(repo, max_concurrent_items=2)
+    path = repo / "run_state/mb.jsonl"
+    items = [mailbox.post("oracle", "plan_item", _plan(title=f"item {n}"), to="nara", path=path)
+             for n in range(4)]
+    both_started, release = threading.Barrier(3), threading.Event()
+    result = []
+
+    def build(body, worktree, feedback, timeout=0):
+        if body["title"] in {"item 0", "item 1"}:
+            both_started.wait(30)
+            assert release.wait(30)
+        return dict(GOOD)
+
+    runner = threading.Thread(target=lambda: result.extend(
+        lane.run_queue(path, build=build, sandbox=_fake_sandbox, ready=lambda: True)))
+    runner.start()
+    both_started.wait(30)
+    states = mailbox.fold(mailbox.read(path))
+    assert [states[item["msg_id"]]["state"] for item in items] == ["claimed", "claimed", "open", "open"]
+    release.set()
+    runner.join(120)
+    assert not runner.is_alive()
+    assert _by_item(result) == {item["msg_id"]: ["claimed", "validated"] for item in items}
+
+
 def test_every_check_still_runs_per_item_under_concurrency(repo):
     """A scope escape in one concurrent item fails that item only."""
     _deployment(repo, 4)
@@ -288,6 +316,7 @@ def build(body, worktree, feedback, timeout=0):
     time.sleep(cfg["delay"])
     return dict(GOOD)
 
+Path(cfg["ready"], cfg["name"]).write_text("")
 while not Path(cfg["go"]).exists():
     time.sleep(0.01)
 posted = lane.run_queue(Path(cfg["mailbox"]), build=build, sandbox=_fake_sandbox, ready=lambda: True,
@@ -299,9 +328,11 @@ print(json.dumps(posted))
 def _spawn(repo, name, **cfg):
     tmp = repo.parent
     (tmp / "marks").mkdir(exist_ok=True)
+    (tmp / "ready").mkdir(exist_ok=True)
     cfg = {"lane_root": str(LANE_ROOT), "root": str(repo), "worktrees": str(lane.WORKTREES),
            "run_log": str(tmp / f"{name}.jsonl"), "runner_lock": str(tmp / f"{name}.lock"),
-           "tests_dir": str(Path(__file__).parent), "marks": str(tmp / "marks"), "go": str(tmp / "go"),
+           "tests_dir": str(Path(__file__).parent), "marks": str(tmp / "marks"), "ready": str(tmp / "ready"),
+           "name": name, "go": str(tmp / "go"),
            "mailbox": str(repo / "run_state/mb.jsonl"), "delay": 0.4, "k": 2, **cfg}
     env = {**os.environ, "MOCK_LLM": "1", "PYTHONDONTWRITEBYTECODE": "1"}
     env.pop(lane.CONCURRENCY_ENV, None)
@@ -315,12 +346,22 @@ def test_racing_runner_processes_never_double_claim(repo):
     path = repo / "run_state/mb.jsonl"
     items = [mailbox.post("oracle", "plan_item", _plan(title=f"item {n}"), to="nara", path=path) for n in range(4)]
     children = [_spawn(repo, f"runner{n}") for n in range(3)]
-    (repo.parent / "go").write_text("")
-    outputs = [child.communicate(timeout=180) for child in children]
-    assert all(child.returncode == 0 for child in children), [err[-2000:] for _out, err in outputs]
-    posted = [r for out, _err in outputs for r in json.loads(out.strip().splitlines()[-1])]
-    assert _by_item(posted) == {i["msg_id"]: ["claimed", "validated"] for i in items}
-    assert _mailbox_states(path) == {i["msg_id"]: ["claimed", "validated"] for i in items}
+    try:
+        deadline = time.monotonic() + 30
+        while len(list((repo.parent / "ready").glob("runner*"))) < len(children) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert len(list((repo.parent / "ready").glob("runner*"))) == len(children)
+        (repo.parent / "go").write_text("")
+        outputs = [child.communicate(timeout=180) for child in children]
+        assert all(child.returncode == 0 for child in children), [err[-2000:] for _out, err in outputs]
+        posted = [r for out, _err in outputs for r in json.loads(out.strip().splitlines()[-1])]
+        assert _by_item(posted) == {i["msg_id"]: ["claimed", "validated"] for i in items}
+        assert _mailbox_states(path) == {i["msg_id"]: ["claimed", "validated"] for i in items}
+    finally:
+        for child in children:
+            if child.poll() is None:
+                child.kill()
+                child.communicate(timeout=30)
 
 
 class _Boom(BaseException):
@@ -396,6 +437,64 @@ def test_an_item_withdrawn_after_the_fold_is_not_claimed(repo, monkeypatch):
     assert mailbox.fold(mailbox.read(path))[item["msg_id"]]["state"] == "withdrawn"
 
 
+def test_withdrawn_during_admission_does_not_receive_a_stale_held_receipt(repo, monkeypatch):
+    """A rejection computed from the first fold cannot terminalize a withdrawn item."""
+    path = repo / "run_state/mb.jsonl"
+    item = mailbox.post("oracle", "plan_item", _plan(), to="nara", path=path)
+
+    def withdraw_then_reject(_item):
+        mailbox.post("oracle", "withdraw", {}, to="nara", in_reply_to=item["msg_id"], path=path)
+        return ["test admission rejection"]
+
+    monkeypatch.setattr(lane, "admission", withdraw_then_reject)
+    assert lane.run_queue(path, build=lambda *a, **k: pytest.fail("never built"), sandbox=_fake_sandbox,
+                          ready=lambda: True) == []
+    assert mailbox.fold(mailbox.read(path))[item["msg_id"]]["state"] == "withdrawn"
+    assert not [row for row in mailbox.read(path) if row["kind"] == "receipt"]
+
+
+@pytest.mark.parametrize("verdict", ["amend", "reject"])
+def test_review_posted_after_the_initial_fold_is_not_claimed(repo, verdict):
+    """A ready check may append a new review after the pass's initial fold."""
+    _policy(repo, require_meta_review=True)
+    path = repo / "run_state/mb.jsonl"
+    item = mailbox.post("oracle", "plan_item", _plan(), to="nara", path=path)
+    mailbox.post("codex", "review", {"verdict": "accept"}, to="nara", in_reply_to=item["msg_id"], path=path)
+
+    def amend_before_claim():
+        mailbox.post("codex", "review", {"verdict": verdict}, to="nara", in_reply_to=item["msg_id"], path=path)
+        return True
+
+    posted = lane.run_queue(path, build=lambda *a, **k: pytest.fail("never built"), sandbox=_fake_sandbox,
+                            ready=amend_before_claim)
+    assert _by_item(posted) == {item["msg_id"]: ["held"]}
+    assert _mailbox_states(path) == {item["msg_id"]: ["held"]}
+
+
+@pytest.mark.parametrize("verdict", ["amend", "reject"])
+def test_review_posted_at_the_claim_append_boundary_prevents_claim(repo, monkeypatch, verdict):
+    """The accepting review is rechecked in post_if's writer-lock transaction."""
+    _policy(repo, require_meta_review=True)
+    path = repo / "run_state/mb.jsonl"
+    item = mailbox.post("oracle", "plan_item", _plan(), to="nara", path=path)
+    mailbox.post("codex", "review", {"verdict": "accept"}, to="nara", in_reply_to=item["msg_id"], path=path)
+    real_post_if, injected = mailbox.post_if, threading.Event()
+
+    def post_review_before_claim(actor, kind, body, **kwargs):
+        if body.get("state") == "claimed" and not injected.is_set():
+            injected.set()
+            mailbox.post("codex", "review", {"verdict": verdict}, to="nara", in_reply_to=item["msg_id"], path=path)
+        return real_post_if(actor, kind, body, **kwargs)
+
+    monkeypatch.setattr(mailbox, "post_if", post_review_before_claim)
+    posted = lane.run_queue(path, build=lambda *a, **k: pytest.fail("never built"), sandbox=_fake_sandbox,
+                            ready=lambda: True)
+    assert injected.is_set()
+    assert _by_item(posted) == {item["msg_id"]: ["held"]}
+    assert posted[0]["body"]["reasons"] == ["meta-oracle verdict changed before claim; withdraw and repost"]
+    assert _mailbox_states(path) == {item["msg_id"]: ["held"]}
+
+
 def test_pause_stops_new_claims_while_workers_finish(repo):
     _deployment(repo, 4)
     _policy(repo, max_concurrent_items=2)
@@ -436,8 +535,12 @@ def test_default_pass_budget_fits_the_service_timeout(repo, monkeypatch):
     assert "TimeoutStartSec=5400" in service and lane.DEFAULT_PASS_BUDGET_S < 5400
     _policy(repo, pass_budget_s=900)
     assert lane.pass_budget_s() == 900
+    _policy(repo, pass_budget_s=5401)
+    assert lane.pass_budget_s() == 5100
     monkeypatch.setenv(lane.PASS_BUDGET_ENV, "1200")
     assert lane.pass_budget_s() == 1200
+    monkeypatch.setenv(lane.PASS_BUDGET_ENV, "5401")
+    assert lane.pass_budget_s() == 5100
     for malformed in ("soon", "\u00b2", "0"):
         monkeypatch.setenv(lane.PASS_BUDGET_ENV, malformed)
         assert lane.pass_budget_s() == 5100, malformed

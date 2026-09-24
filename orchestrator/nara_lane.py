@@ -587,11 +587,12 @@ def lane_concurrency(requested: int | None = None) -> int:
 def pass_budget_s() -> int:
     """Seconds one run may spend before it stops claiming: NARA_LANE_PASS_BUDGET_S,
     else `pass_budget_s` in config/nara_lane.json, else DEFAULT_PASS_BUDGET_S
-    (the service's TimeoutStartSec less a margin). Malformed values use the default."""
+    (the service's TimeoutStartSec less a margin). Malformed or oversized values
+    use the default, because a larger budget would let the service cut work off."""
     value = _env_int(PASS_BUDGET_ENV)
     if value is None:
         value = _policy().get("pass_budget_s")
-    return _positive_int(value) or DEFAULT_PASS_BUDGET_S
+    return min(_positive_int(value) or DEFAULT_PASS_BUDGET_S, DEFAULT_PASS_BUDGET_S)
 
 
 def _clock() -> float:
@@ -670,6 +671,57 @@ def _receipt(path: Path, msg_id: str, body: dict) -> dict:
         return mailbox.post("nara", "receipt", {"state": body["state"], "reason": f"full receipt rejected: {exc}"[:500],
                                                 "branch": body.get("branch"), "head_sha": body.get("head_sha")},
                             to="oracle", in_reply_to=msg_id, path=path)
+
+
+def _open_item(rows: list[dict], item: dict) -> bool:
+    """Whether the current mailbox still has this item open."""
+    current = mailbox.fold(rows).get(item["msg_id"])
+    return current is not None and current["state"] == "open"
+
+
+def _open_with_verdict(rows: list[dict], item: dict, verdicts: set[str]) -> bool:
+    """Whether the current mailbox still has this open item at one of ``verdicts``."""
+    return _open_item(rows, item) and meta_verdict(rows, item) in verdicts
+
+
+def _claim_if_meta_accepts(path: Path, entry: dict) -> dict | None:
+    """Atomically post ``claimed`` only for the mailbox's current accepting review.
+
+    The caller already holds the per-item claim lock.  ``post_if`` takes the
+    mailbox writer lock, so the review recheck and the claimed append share one
+    mailbox prefix (claim lock -> mailbox lock); a reviewer cannot amend or
+    reject in between them.
+    """
+    item = entry["item"]
+    return mailbox.post_if("nara", "receipt", {"state": "claimed"}, to="oracle",
+                           in_reply_to=item["msg_id"], path=path,
+                           condition=lambda rows: _open_with_verdict(rows, item, {"accept"}))
+
+
+def _post_held(path: Path, entry: dict, reasons: list[str], verdicts: set[str] | None = None) -> dict | None:
+    """Append ``held`` only while the item remains open, and optionally rejected."""
+    item = entry["item"]
+    return mailbox.post_if(
+        "nara", "receipt", {"state": "held", "reasons": reasons},
+        to="oracle", in_reply_to=item["msg_id"], path=path,
+        condition=(lambda rows: _open_with_verdict(rows, item, verdicts)) if verdicts else
+        (lambda rows: _open_item(rows, item)),
+    )
+
+
+def _hold_open(path: Path, entry: dict, reasons: list[str], verdicts: set[str] | None = None) -> dict | None:
+    """Claim an open item briefly to append a state-conditional held receipt.
+
+    This covers rejections before a worker claim too: claim lock then mailbox
+    lock prevents a withdrawal during admission from acquiring a stale hold.
+    """
+    claim = _claim(path, entry["item"]["msg_id"], "open")
+    if claim is None:
+        return None
+    try:
+        return _post_held(path, entry, reasons, verdicts)
+    finally:
+        claim.close()
 
 
 def _finish(path: Path, entry: dict, claim, build, sandbox, keep, contain: bool) -> None:
@@ -780,6 +832,7 @@ def run_queue(path: Path | None = None, build=builder, sandbox=sandbox_run, read
                     reasons = admission(entry["item"])
                 except Exception as exc:
                     reasons = [f"malformed plan item: {type(exc).__name__}: {exc}"]
+                meta_rejection = False
                 if not reasons:
                     verdict = meta_verdict(rows, entry["item"])
                     if verdict == "awaiting":  # stays open; the review row wakes the lane again
@@ -787,9 +840,18 @@ def run_queue(path: Path | None = None, build=builder, sandbox=sandbox_run, read
                         continue
                     if verdict != "accept":
                         reasons = [f"meta-oracle verdict: {verdict}; withdraw and repost"]
+                        meta_rejection = True
                 if reasons:
-                    keep(_receipt(path, msg_id, {"state": "held", "reasons": reasons}))
-                    log(msg_id, "held", "; ".join(reasons), "admissible plan item")
+                    try:
+                        held = _hold_open(path, entry, reasons, {"amend", "reject"} if meta_rejection else None)
+                    except mailbox.MailboxError as exc:
+                        log("mailbox", "failed", f"mailbox unreadable mid-pass: {exc}", "readable mailbox")
+                        break
+                    if held is not None:
+                        keep(held)
+                        log(msg_id, "held", "; ".join(reasons), "admissible plan item")
+                    else:
+                        log(msg_id, "deferred", "item changed before held receipt", "open item")
                     continue
                 slots.acquire()  # the serial lane never waits here: its slot is back before the next item
                 handed_off = False
@@ -812,10 +874,27 @@ def run_queue(path: Path | None = None, build=builder, sandbox=sandbox_run, read
                     if claim is None:  # withdrawn, expired or claimed elsewhere since the fold was read
                         continue
                     try:
-                        keep(_receipt(path, msg_id, {"state": "claimed"}))
+                        claimed = _claim_if_meta_accepts(path, entry)
                     except BaseException:
                         claim.close()
                         raise
+                    if claimed is None:
+                        try:
+                            held = _post_held(path, entry,
+                                              ["meta-oracle verdict changed before claim; withdraw and repost"],
+                                              {"amend", "reject"})
+                        except BaseException:
+                            claim.close()
+                            raise
+                        if held is not None:
+                            keep(held)
+                            log(msg_id, "held", "meta-oracle verdict changed before claim", "accepting review")
+                        else:
+                            log(msg_id, "deferred", "meta-oracle review changed or item closed before claim",
+                                "accepting review")
+                        claim.close()
+                        continue
+                    keep(claimed)
                     if pool is None:
                         _finish(path, entry, claim, build, sandbox, keep, contain=False)
                     else:

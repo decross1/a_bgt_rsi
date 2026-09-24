@@ -15,6 +15,7 @@ import hashlib
 import json
 import re
 import sys
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -111,8 +112,9 @@ def read(path: Path = PATH) -> list[dict]:
     return rows
 
 
-def post(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | None = None,
-         expires_hours: float | None = None, path: Path = PATH) -> dict:
+def _post_rows(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | None,
+               expires_hours: float | None, path: Path, rows: list[dict]) -> dict:
+    """Validate and append one row while the caller holds the mailbox lock."""
     if not _actor_ok(actor):
         raise MailboxError(f"unknown actor {actor!r}")
     if kind not in KINDS or not (actor in KINDS[kind] or (actor.startswith("human:") and kind in HUMAN_KINDS)):
@@ -129,28 +131,54 @@ def post(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | None 
         raise MailboxError(f"review verdict must be one of {sorted(VERDICTS)}")
     if kind in {"receipt", "withdraw", "answer", "review"} and not in_reply_to:
         raise MailboxError(f"{kind} must reply to a message")
+    ids = {r["msg_id"] for r in rows}
+    if in_reply_to and in_reply_to not in ids:
+        raise MailboxError(f"in_reply_to {in_reply_to} is not in the mailbox")
+    now = datetime.now(timezone.utc)
+    row = {
+        "schema": SCHEMA, "seq": len(rows) + 1, "ts": now.isoformat(), "actor": actor, "to": to,
+        "kind": kind, "in_reply_to": in_reply_to, "body": body,
+        "expires_at": (now + timedelta(hours=expires_hours)).isoformat() if expires_hours else None,
+        "prev_sha256": rows[-1]["row_sha256"] if rows else None,
+    }
+    row["msg_id"] = f"{actor.split(':')[0]}-{hashlib.sha256(_canonical(row)).hexdigest()[:16]}"
+    row["row_sha256"] = hashlib.sha256(_canonical(row)).hexdigest()
+    line = json.dumps(row, ensure_ascii=False)
+    if len(line.encode()) > MAX_ROW_BYTES:
+        raise MailboxError(f"row exceeds {MAX_ROW_BYTES} bytes")
+    with path.open("a") as handle:
+        handle.write(line + "\n")
+    return row
+
+
+def post(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | None = None,
+         expires_hours: float | None = None, path: Path = PATH) -> dict:
+    """Append one validated row under the mailbox writer lock."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with (path.parent / ".oracle_nara_mailbox.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _post_rows(actor, kind, body, to=to, in_reply_to=in_reply_to,
+                          expires_hours=expires_hours, path=path, rows=read(path))
+
+
+def post_if(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | None = None,
+            expires_hours: float | None = None, path: Path = PATH,
+            condition: Callable[[list[dict]], bool]) -> dict | None:
+    """Append a row only when ``condition`` accepts the current mailbox rows.
+
+    The predicate and append share the writer lock. Callers that also need an
+    item lock must acquire it first, so the lock order is item claim then
+    mailbox; this makes a state-dependent receipt atomic with the observed
+    mailbox prefix.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     with (path.parent / ".oracle_nara_mailbox.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         rows = read(path)
-        ids = {r["msg_id"] for r in rows}
-        if in_reply_to and in_reply_to not in ids:
-            raise MailboxError(f"in_reply_to {in_reply_to} is not in the mailbox")
-        now = datetime.now(timezone.utc)
-        row = {
-            "schema": SCHEMA, "seq": len(rows) + 1, "ts": now.isoformat(), "actor": actor, "to": to,
-            "kind": kind, "in_reply_to": in_reply_to, "body": body,
-            "expires_at": (now + timedelta(hours=expires_hours)).isoformat() if expires_hours else None,
-            "prev_sha256": rows[-1]["row_sha256"] if rows else None,
-        }
-        row["msg_id"] = f"{actor.split(':')[0]}-{hashlib.sha256(_canonical(row)).hexdigest()[:16]}"
-        row["row_sha256"] = hashlib.sha256(_canonical(row)).hexdigest()
-        line = json.dumps(row, ensure_ascii=False)
-        if len(line.encode()) > MAX_ROW_BYTES:
-            raise MailboxError(f"row exceeds {MAX_ROW_BYTES} bytes")
-        with path.open("a") as handle:
-            handle.write(line + "\n")
-    return row
+        if not condition(rows):
+            return None
+        return _post_rows(actor, kind, body, to=to, in_reply_to=in_reply_to,
+                          expires_hours=expires_hours, path=path, rows=rows)
 
 
 def fold(rows: list[dict], now: datetime | None = None) -> dict:
