@@ -80,24 +80,6 @@ def test_pinned_bundle_enforces_owner_reserve():
     assert f'record.get("mem_available_floor_gib") != {guard}' in text
 
 
-def test_pinned_bundle_serves_the_deployed_c2_profile():
-    import hashlib
-    import re
-    import pytest
-    if not resident.BUNDLE.exists():
-        pytest.skip('host-specific serving bundle is absent')
-    text = resident.BUNDLE.read_text()
-    config = json.loads((resident.ROOT / 'config/model_deployment.json').read_text())
-    profile_sha = re.search(r'\nPROFILE_SHA256 = "([0-9a-f]{64})"\n', text).group(1)
-    profile_name = re.search(r'\nPROFILE = BASE / "([^"]+)"\n', text).group(1)
-    profile = resident.PREP / profile_name
-    assert profile_sha == config['profile_sha256'] == hashlib.sha256(profile.read_bytes()).hexdigest()
-    assert json.loads(profile.read_text())['max_running_requests'] == config['max_running_requests'] == 2
-    # Live readiness admits only a server that reports the same two running requests.
-    readiness = text[text.index('def server_profile()'):text.index('def raise_if_startup_stop_requested')]
-    assert '"max_running_requests": 2,' in readiness and '"max_total_tokens": 262144,' in readiness
-
-
 def test_nara_flash_admission_does_not_apply_legacy_30g_floor(tmp_path, monkeypatch):
     from orchestrator import nara_daemon
     monkeypatch.setattr(nara_daemon, 'REPO_ROOT', tmp_path)

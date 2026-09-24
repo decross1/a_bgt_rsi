@@ -147,7 +147,7 @@ def load_model_deployment(
     _require_exact(value, "model", FLASH_MODEL)
     _require_exact(value, "base_url", FLASH_BASE_URL)
     _require_exact(value, "context_length", 262144)
-    _require_exact(value, "max_running_requests", 2)
+    _require_exact(value, "max_running_requests", 1)
     _require_exact(value, "production_authorized", True)
     _require_exact(value, "host_reserve_gib", 10)
     _require_exact(value, "automated_benchmarks_enabled", False)
@@ -166,7 +166,7 @@ def load_model_deployment(
         model=FLASH_MODEL,
         base_url=FLASH_BASE_URL,
         context_length=262144,
-        max_running_requests=2,
+        max_running_requests=1,
         model_revision=model_revision,
         image_id=image_id,
         profile_sha256=profile_sha256,

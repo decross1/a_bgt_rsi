@@ -30,7 +30,7 @@ def _manifest() -> dict:
         "model": FLASH_MODEL,
         "base_url": FLASH_BASE_URL,
         "context_length": 262144,
-        "max_running_requests": 2,
+        "max_running_requests": 1,
         "production_authorized": True,
         "selected_at": "2026-09-19",
         "model_revision": "a" * 40,
@@ -47,7 +47,7 @@ def _deployment() -> ModelDeployment:
         model=FLASH_MODEL,
         base_url=FLASH_BASE_URL,
         context_length=262144,
-        max_running_requests=2,
+        max_running_requests=1,
         model_revision="a" * 40,
         image_id=f"sha256:{'b' * 64}",
         profile_sha256="c" * 64,
@@ -127,8 +127,6 @@ def test_manifest_loader_binds_exact_runtime_and_content_hash(tmp_path):
         ("production_authorized", False),
         ("automated_benchmarks_enabled", True),
         ("context_length", 16384),
-        # Helper v9 serves two running requests; a stale C1 manifest fails closed.
-        ("max_running_requests", 1),
     ],
 )
 def test_manifest_loader_rejects_drifted_selection(tmp_path, field, value):
