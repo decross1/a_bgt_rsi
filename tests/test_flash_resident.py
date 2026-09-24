@@ -80,6 +80,77 @@ def test_pinned_bundle_enforces_owner_reserve():
     assert f'record.get("mem_available_floor_gib") != {guard}' in text
 
 
+def test_pinned_bundle_serves_the_exact_c4_m20_profile():
+    import hashlib
+    import re
+    import pytest
+    if not resident.BUNDLE.exists():
+        pytest.skip('host-specific serving bundle is absent')
+    text = resident.BUNDLE.read_text()
+    config = json.loads((resident.ROOT / 'config/model_deployment.json').read_text())
+    profile_sha = re.search(r'\nPROFILE_SHA256 = "([0-9a-f]{64})"\n', text).group(1)
+    profile_name = re.search(r'\nPROFILE = BASE / "([^"]+)"\n', text).group(1)
+    profile = resident.PREP / profile_name
+    assert profile_sha == config['profile_sha256'] == hashlib.sha256(profile.read_bytes()).hexdigest()
+    loaded = json.loads(profile.read_text())
+    assert loaded['context_length'] == loaded['max_total_tokens'] == config['context_length'] == 262144
+    assert (loaded['max_running_requests'] == config['max_running_requests']
+            == resident.BUNDLE_MAX_RUNNING_REQUESTS == 4)
+    # Twenty slots is exactly the minimum that SGLang's observed 5:1 cap rule
+    # permits for four running requests; this retry intentionally gives up the
+    # four spare M24 slots to recover the exact KV-token pool.
+    assert loaded['max_mamba_cache_size'] == 20
+    assert loaded['max_mamba_cache_size'] // 5 == loaded['max_running_requests']
+    assert loaded['mem_fraction_static'] == 0.83
+    readiness = text[text.index('def server_profile()'):text.index('def raise_if_startup_stop_requested')]
+    assert '"context_length": 262144,' in readiness
+    assert '"max_total_tokens": 262144,' in readiness
+    assert '"max_running_requests": 4,' in readiness
+    assert '"max_mamba_cache_size": 20,' in readiness
+    assert '"internal_states[0].effective_max_running_requests_per_dp", 4,' in readiness
+    assert 'if value.get("max_total_num_tokens") != 262144:' in readiness
+    # The durable session policy must no longer retain v10's stale 32K label.
+    assert '"context_length": 32768,' not in text
+    assert '"context_length": 262144,' in text
+
+
+def _selected_with(tmp_path, **changes):
+    (tmp_path / 'config').mkdir(exist_ok=True)
+    manifest = json.loads((Path(__file__).resolve().parents[1] / 'config/model_deployment.json').read_text())
+    for key, value in changes.items():
+        if value is _DROP:
+            manifest.pop(key)
+        else:
+            manifest[key] = value
+    (tmp_path / 'config/model_deployment.json').write_text(json.dumps(manifest))
+    return resident.selected(tmp_path)
+
+
+_DROP = object()
+
+
+def test_selected_binds_running_requests_to_the_pinned_profile(tmp_path):
+    import pytest
+    assert _selected_with(tmp_path, max_running_requests=4)
+    for running in (1, 2):
+        with pytest.raises(ValueError, match='reviewed serving bundle'):
+            _selected_with(tmp_path, max_running_requests=running)
+    for running in (3, 8, True, _DROP):
+        with pytest.raises(ValueError, match='max_running_requests'):
+            _selected_with(tmp_path, max_running_requests=running)
+
+
+def test_selected_rejects_previous_and_unreviewed_profile_digests(tmp_path):
+    import pytest
+    for digest in (
+        'f0fbb6c09ff926dd17d8bb9787e1f52632e5fba9135431a3d01222be785a81bf',
+        '45546ef777af74a264d31e5b5cfd5b2f68f0bddf2954d4f243bd7ea9b3dae903',
+        '495f1f3c59f559185720257538646354a5995ab9ca82e042565ae989ca4452a3',
+    ):
+        with pytest.raises(ValueError, match='reviewed serving bundle'):
+            _selected_with(tmp_path, profile_sha256=digest)
+
+
 def test_nara_flash_admission_does_not_apply_legacy_30g_floor(tmp_path, monkeypatch):
     from orchestrator import nara_daemon
     monkeypatch.setattr(nara_daemon, 'REPO_ROOT', tmp_path)
@@ -292,4 +363,3 @@ def _init_evictor(self, root, interval):
     self.passes = 0
     self.errors = []
     self.thread = threading.Thread(target=self._loop, name='load-evictor', daemon=True)
-

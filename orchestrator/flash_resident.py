@@ -23,15 +23,18 @@ from datetime import datetime, timezone
 
 ROOT = Path(__file__).resolve().parents[1]
 PREP = Path('/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-18/flash-personal-recovery/sglang-fallback-prep')
-BUNDLE = PREP / 'sglang_session_s3_v8.py'
-BUNDLE_SHA = '606d05f201b84b01441e6e23b98ed0c66c6a92faa81300b9d796bf54a2a4466c'
+BUNDLE = PREP / 'sglang_session_s3_v11.py'
+BUNDLE_SHA = '7cf10c6d0776583100f848ae24b7573c88dbf74558a3761e0f1f630c8165ad40'
+# Running requests served by nextn-262k-c4-m20-s3.json. The deployment
+# document must declare the same count and exact profile digest.
+BUNDLE_MAX_RUNNING_REQUESTS = 4
 RECEIPT = PREP / 'checkpoint-verification-bf16-20260918T2343Z/checkpoint-receipt.json'
 RECEIPT_SHA = '0489e1741832e6be63267cb1a04a1eb05736d27038fe924ac50cf02bce108287'
 MODEL = 'nvidia/Qwen3.8-Flash-Next-NVFP4'
 STATE = ROOT / 'run_state/flash_resident.json'
 BOOT = Path('/proc/sys/kernel/random/boot_id')
 # Owner lowered the steady-state host reserve from 20 to 10 GiB on 2026-09-21
-# so interactive SSH sessions do not stop Flash. Must equal the pinned v8 HOST_FLOOR_GIB.
+# so interactive SSH sessions do not stop Flash. Must equal the pinned helper's HOST_FLOOR_GIB.
 HOST_RESERVE_GIB = 10
 # The main-weight load reserves ~84 GiB at once. On 2026-09-19 it logged driver
 # big-page NV_ERR_NO_MEMORY lines whenever MemFree was below ~100 GiB at that
@@ -60,7 +63,8 @@ def selected(root: Path = ROOT) -> bool:
     # same deployed bundle, not merely a syntactically valid digest.
     if (deployment.image_id != 'sha256:2ee545cf877ae8497c123637e061b6e6313c624e30018f975969b1d554e27f56'
             or deployment.model_revision != 'fc694b54fb0174e0913e6adf86691ef85a4ead47'
-            or deployment.profile_sha256 != 'f0fbb6c09ff926dd17d8bb9787e1f52632e5fba9135431a3d01222be785a81bf'):
+            or deployment.profile_sha256 != '01436b7e2c515f2414b1693675d07a1de4504728455adc94f1e15da45c31007d'
+            or deployment.max_running_requests != BUNDLE_MAX_RUNNING_REQUESTS):
         raise ValueError('deployment differs from the reviewed serving bundle')
     return True
 
