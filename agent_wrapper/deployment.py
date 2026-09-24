@@ -22,10 +22,6 @@ FLASH_BACKEND = "sglang-flash"
 FLASH_MODEL = "nvidia/Qwen3.8-Flash-Next-NVFP4"
 FLASH_BASE_URL = "http://127.0.0.1:30080/v1"
 FLASH_ROLE_ALIASES = frozenset({"vllm-gemma", "vllm-qwen"})
-# Counts covered by an immutable serving helper/profile: C1 (v8), C2 (v9),
-# and C4 (v10/M24 or v11/M20). The resident's selected() check binds the
-# declared count and profile digest to one exact helper.
-FLASH_MAX_RUNNING_REQUESTS_ALLOWED = frozenset({1, 2, 4})
 
 
 @dataclass(frozen=True)
@@ -74,16 +70,6 @@ def _require_exact(value: Mapping[str, Any], key: str, expected: Any) -> None:
             f"model deployment {key!r} must be {expected!r}; "
             f"got {value.get(key)!r}"
         )
-
-
-def _max_running_requests(value: Mapping[str, Any]) -> int:
-    item = value.get("max_running_requests")
-    if type(item) is not int or item not in FLASH_MAX_RUNNING_REQUESTS_ALLOWED:
-        raise ValueError(
-            "model deployment 'max_running_requests' must be one of "
-            f"{sorted(FLASH_MAX_RUNNING_REQUESTS_ALLOWED)!r}; got {item!r}"
-        )
-    return item
 
 
 def _required_text(value: Mapping[str, Any], key: str) -> str:
@@ -161,10 +147,10 @@ def load_model_deployment(
     _require_exact(value, "model", FLASH_MODEL)
     _require_exact(value, "base_url", FLASH_BASE_URL)
     _require_exact(value, "context_length", 262144)
+    _require_exact(value, "max_running_requests", 1)
     _require_exact(value, "production_authorized", True)
     _require_exact(value, "host_reserve_gib", 10)
     _require_exact(value, "automated_benchmarks_enabled", False)
-    max_running_requests = _max_running_requests(value)
     selected_at = _required_text(value, "selected_at")
     model_revision = _hex(value, "model_revision", 40)
     profile_sha256 = _hex(value, "profile_sha256", 64)
@@ -180,7 +166,7 @@ def load_model_deployment(
         model=FLASH_MODEL,
         base_url=FLASH_BASE_URL,
         context_length=262144,
-        max_running_requests=max_running_requests,
+        max_running_requests=1,
         model_revision=model_revision,
         image_id=image_id,
         profile_sha256=profile_sha256,
@@ -194,7 +180,6 @@ __all__ = [
     "DEPLOYMENT_PATH",
     "FLASH_BACKEND",
     "FLASH_BASE_URL",
-    "FLASH_MAX_RUNNING_REQUESTS_ALLOWED",
     "FLASH_MODEL",
     "FLASH_ROLE_ALIASES",
     "ModelDeployment",
