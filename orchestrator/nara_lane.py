@@ -289,7 +289,51 @@ def _path_ok(path: str) -> bool:
             and not DENIED_PATTERN.search(path) and not path.startswith("/"))
 
 
-def admission(item: dict) -> list[str]:
+# What builder() reports for an input path it cannot read. A missing input used to reach
+# the model as current_contents[path] = None, which reads as "an empty file to fill in":
+# review claude-e347ce59ca643116 (seq 165), material - plan 2026-09-24 d1 told its builder
+# to copy 19 paper titles from a reading list that exists nowhere, because implement()
+# creates the worktree as checkout HEAD plus the acceptance test and builder() shows
+# contents only for writable paths.
+INPUT_MISSING = ("NOT PRESENT in this worktree: it is not committed at the checkout HEAD, and "
+                 "a worktree is created from HEAD plus the acceptance test only. Do not copy, "
+                 "quote or invent its content; report the missing input in your output instead.")
+INPUT_PRESENT = "PRESENT"
+BUILDER_SYSTEM = (
+    "You are Nara's builder for the lab. Make the acceptance test pass by writing complete file "
+    "contents. Reply with ONLY a JSON object {\"files\": {\"<path>\": \"<full content>\"}} using only "
+    "the writable_paths. Never modify the acceptance test. Standard library only unless the file "
+    "already imports something else.")
+
+
+def _tree_kind(rev: str, rel: str, *, cwd: Path | None = None) -> str | None:
+    """git ls-tree object type for `rel` at `rev` ('blob', 'tree', ...), None if untracked."""
+    done = subprocess.run(["git", "ls-tree", rev, "--", rel], cwd=str(cwd or ROOT),
+                          capture_output=True, text=True)
+    if done.returncode != 0 or not done.stdout.strip():
+        return None
+    parts = done.stdout.split()[0:3]
+    return parts[1] if len(parts) == 3 else None
+
+
+def _input_visibility(input_paths: list, writable: list, *, cwd: Path | None = None,
+                      worktree: Path | None = None) -> dict[str, str]:
+    """Per declared input: can builder() actually hand it over? Readable means a blob
+    tracked at the checkout HEAD, or a writable path already present in the worktree."""
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(cwd or ROOT),
+                          capture_output=True, text=True).stdout.strip()
+    verdicts: dict[str, str] = {}
+    for rel in input_paths:
+        if not isinstance(rel, str) or not _path_ok(rel) or _tree_kind(head, rel, cwd=cwd) != "blob":
+            if not (isinstance(rel, str) and rel in writable and worktree is not None
+                    and (worktree / rel).is_file()):
+                verdicts[rel] = INPUT_MISSING
+                continue
+        verdicts[rel] = INPUT_PRESENT
+    return verdicts
+
+
+def admission(item: dict, *, repo_root: Path | None = None) -> list[str]:
     """Deterministic policy; an empty list means admissible."""
     body, reasons = item["body"], []
     if item["actor"] != "oracle":
@@ -297,6 +341,16 @@ def admission(item: dict) -> list[str]:
     for path in body["allowed_write_paths"]:
         if not _path_ok(path):
             reasons.append(f"path outside the lane fence: {path}")
+    # Declared inputs must be readable by the builder. An input that is not tracked at the
+    # checkout HEAD makes the objective unexecutable, and the path fence cannot catch it:
+    # notes/... is inside the fence. Checked before the precheck rule so the held receipt
+    # names the real cause instead of a missing receipt.
+    for path, verdict in _input_visibility(body.get("input_paths") or [],
+                                          list(body["allowed_write_paths"]), cwd=repo_root).items():
+        if verdict == INPUT_MISSING:
+            reasons.append(f"declared input path is not readable by the builder: {path} (not a "
+                           f"file tracked at the checkout HEAD); put the content inline in the "
+                           f"objective instead")
     acceptance = body["acceptance"]
     test_path, argv = acceptance["test_path"], acceptance["test_argv"]
     if not (_path_ok(test_path) and re.search(r"(^|/)test_[^/]+\.py$", test_path)):
@@ -599,17 +653,22 @@ def builder(body: dict, worktree: Path, feedback: str, timeout: float = BUILDER_
     for path in writable:
         data = _read(worktree, path)
         current[path] = None if data is None else data[:MAX_FILE_BYTES].decode("utf-8", "replace")
+    declared = list(body.get("input_paths") or [])
     prompt = {
         "objective": body["objective"], "title": body["title"], "writable_paths": writable,
         "current_contents": current, "acceptance_test_path": test_path,
         "acceptance_test": body["acceptance"]["test_content"], "last_test_output": feedback[-4000:],
     }
+    system = BUILDER_SYSTEM
+    if declared:
+        # Judged before current_contents is read as truth: a None under a declared input means
+        # "absent", never "an empty file to fill in" (review claude-e347ce59ca643116, seq 165).
+        prompt["input_visibility"] = _input_visibility(declared, writable, worktree=worktree)
+        system += (" Paths the objective names as inputs are judged in input_visibility: NOT PRESENT "
+                   "means the file is absent from your worktree - do not copy, quote or invent "
+                   "content for it; report the missing input in your output.")
     record = call_sync(
-        [{"role": "system", "content": (
-            "You are Nara's builder for the lab. Make the acceptance test pass by writing complete file "
-            "contents. Reply with ONLY a JSON object {\"files\": {\"<path>\": \"<full content>\"}} using only "
-            "the writable_paths. Never modify the acceptance test. Standard library only unless the file "
-            "already imports something else.")},
+        [{"role": "system", "content": system},
          {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)}],
         temperature=0.2, max_tokens=BUILDER_MAX_TOKENS, caller_tag=caller_tag,
         extra_body={"chat_template_kwargs": {"enable_thinking": False}}, request_timeout_s=timeout,
