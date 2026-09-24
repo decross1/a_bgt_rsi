@@ -150,7 +150,9 @@ the queue when that durable binding exists and input visibility is fixed
 
 ## Stop condition (when the thesis is dropped rather than re-repaired)
 
-Drop the thesis — do not write a third repair — if **any** of these holds:
+Drop the thesis — do not write a third repair — if **any** of these holds.
+Items 1 and 3 end the thesis on first occurrence; item 2 ends it only on the
+**second** uninformative result, after the one `Q` repair that item 2 allows.
 
 1. The C3 falsifier fires: the upper envelope of generalist-minus-median-
    specialist excess selector regret is `<=0` at every `lambda`.
@@ -245,4 +247,8 @@ trace count.
 This note is the corrected head `oracle/2026-09-24-d3-r11`. Per seq 486, that
 branch is the single ref for review and the dashboard: `oracle/2026-09-24-tgate`
 lapses, and the branch is not fast-forwardable onto main (merge-base
-`1a4d7b4`), so an accepted head is cherry-picked onto main, not merged.
+`1a4d7b4`), so an accepted head is cherry-picked onto main, not merged. Per
+Codex seq 495, `main` does not contain this note path, so cherry-picking this
+commit alone is a modify/delete conflict: after ACCEPT, land the **three**
+note commits `f6a025f`, `0814211`, `c37d0e5` in that order, or an explicitly
+reviewed squash/add of the final blob — and never merge the branch.
