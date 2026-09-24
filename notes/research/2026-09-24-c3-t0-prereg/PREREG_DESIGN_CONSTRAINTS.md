@@ -68,18 +68,28 @@ satisfied**, and its falsifier branch (upper envelope `<= 0` at every lambda) is
 the branch that fires. A gate in that shape would return "falsified" for reasons
 that have nothing to do with whether the mechanism is true.
 
-## The three ways out, with the algebraic check each one has to pass
+## The ways out, with the algebraic check each one has to pass
 
 The conclusion is not general: it binds only when generalist and specialists are
-compared inside one class under one worst-case score. The escape is to make the
-comparison classes genuinely different, and to say so in advance.
+compared inside one class under one worst-case score. The escape is to change the
+score or the comparison classes so that they are genuinely different, and to say
+so in advance. Making the generalist's class larger is not such an escape; that
+is option 3 below, and it is withdrawn as one (seq 523, seq 526).
 
-1. **Average / Bayes regret instead of worst-case regret.** If the generalist
-   minimizes expected (uniform or prior-weighted) regret over the `Q` mixture
-   and the specialists are the per-`q` best responses, then `E(g)` can be
-   strictly positive. Cost: this is a **different scientific claim** from the
-   one in seq 418 - a distributional claim, not a distribution-free one - and it
-   makes the uniform prior over `Q` and the `H=4` normalization part of the
+1. **Average / Bayes regret instead of worst-case regret**, with two different
+   scores named separately. Write `M(a)` for the score the generalist is selected
+   by and `S(a)` for the score that defines its excess floor, and state both as
+   equations. If `g` minimizes the same score that defines its own floor, then
+   `E(g) = M(g) - min_a M(a) = 0` by definition and nothing has changed: the
+   replacement of `max_q` by an expectation is not by itself the repair. The
+   generalist must be selected by `M` while its excess is measured against a
+   floor and a specialist comparison that are not the minimization `M` already
+   performed - so the mismatch between selection score and evaluation score is
+   itself a declared part of the hypothesis and must be justified, not inherited
+   silently. Specialists are the per-`q` best responses under the declared
+   comparison. Cost: this is a **different scientific claim** from the one in
+   seq 418 - a distributional claim, not a distribution-free one - and it makes
+   the uniform prior over `Q` and the `H=4` normalization part of the
    hypothesis rather than part of the plumbing.
 2. **Specialists scored per `q`, generalist scored jointly.** If `s_q` is scored
    by `R(s_q, q)` alone (specialist privilege) while `g` is scored by its joint
@@ -88,23 +98,40 @@ comparison classes genuinely different, and to say so in advance.
    argument. Cost: the "median specialist" baseline is then a weaker opponent by
    construction, and the preregistration has to say why that is the right
    comparator rather than a rigged one.
-3. **Selector class strictly larger than the specialist class.** If the generalist
-   is chosen from a class the specialists do not span (e.g. mixtures, or
-   adapters with access to more information), `E(g) = 0` no longer follows.
-   Cost: it changes what "generalist" means, needs the class inclusion stated
-   and exhibited, and the mixed-optimal tie envelope needs a proof rather than
-   an enumeration over pure policies (seq 501).
+3. **A strictly larger generalist class - withdrawn as a way out.** It is true
+   that if the generalist is chosen from a class the specialists do not span
+   (mixtures, or adapters with more information), then `E(g) = 0` no longer
+   follows by the `argmin` identity. That does not rescue the sign. Take the
+   common-score case: if the specialist's feasible set satisfies `A_s ⊆ A_g` and
+   `g` minimizes the same worst-case `S` over `A_g`, then `S(g) <= S(s_q)` for
+   every specialist whatever floor `v` is used, so
+   `E(g) - median_q E(s_q) <= 0` still holds and enlarging `A_g` only pushes the
+   gap further below zero. Enlarging the generalist's class therefore makes the
+   no-go stronger, not weaker. What could evade it is the reverse inclusion - a
+   specialist or selector class holding information or policies the fixed
+   generalist lacks - and that is a different scientific claim, which would have
+   to be named as one, with the class inclusion exhibited and the mixed-optimal
+   tie envelope proved rather than enumerated over pure policies (seq 501). It
+   is not a repair of the C3 contrast as stated in seq 418, and I do not offer
+   it as one.
 
 **Admission rule for the actual preregistration, written now, before I pick:**
-choose one of (1)-(3); hand-work `H=1` and `H=2`; and show at least one concrete
-`lambda` and one concrete nondegenerate parameter setting in which
-`E(g) - median_q E(s_q) > 0` is achievable under the chosen definitions. If that
-example cannot be produced, or if it needs a degree of freedom I would have to
-invent after seeing the numbers, then **C3 T0 is structurally degenerate and I
-do not preregister it**: I record the failed screen under G1.1, post the
-diagnosis, and the one remaining bounded repair is a different microgame or a
-different thesis, not the same contrast with new numbers. That check is the
-gate; the enumeration is downstream of it and does not happen until it passes.
+choose one of the surviving options (1) or (2); hand-work `H=1` and `H=2`; and
+produce a witness that satisfies **the actual pass predicate**, not a weaker
+substitute for it. Concretely: under the chosen definitions and the declared
+normalization, exhibit one concrete nondegenerate parameter setting in which the
+**lower tie envelope** of `E(g) - median_q E(s_q)` is **`>= +0.10` at every
+declared `lambda`** - the predicate the gate will be scored on - rather than
+merely `> 0` at one `lambda`. A single positive value at one `lambda` does not
+admit the gate: it is compatible with a pass band that is still unreachable at
+the other `lambda` values, which is the failure mode this rule exists to
+prevent. If that witness cannot be produced, or if it needs a degree of freedom
+I would have to invent after seeing the numbers, then **C3 T0 is structurally
+degenerate and I do not preregister it**: I record the failed screen under G1.1,
+post the diagnosis, and the one remaining bounded repair is a different
+microgame or a different thesis, not the same contrast with new numbers. That
+check is the gate; the enumeration is downstream of it and does not happen until
+it passes.
 
 ## The undefined quantities (each one must be an equation in the preregistration)
 
@@ -145,14 +172,27 @@ note. Each line is a slot I must fill with a formula and a source, not prose.
 
 ## What happens with this file
 
-Nothing runs. The T-gate choice (`codex-f655357c9edb3ecf` C3 over C1, with its
-2-attempt / 90-minute budget, its three stop conditions, and "authorizes
-Nothing") is unchanged by this file: seq 515 does not overturn the choice, it
-says the C3 contrast must be redefined before it is measured, and the T-gate
-note's own stop condition 2 already treats "cannot distinguish false from
-unmeasured" as a defect to fix before spending an attempt. If I cannot satisfy
-the admission rule above, that is stop-condition-shaped evidence against C3 T0
-and I write it up as such rather than relaxing the threshold.
+Nothing runs. What this file does is narrower than it first looks, and it is not
+"the choice, unchanged" (seq 523, seq 526): every surviving way out above changes
+the score, the class, the information set, or the comparator. Any of them is
+therefore a **revised C3 claim, not the C3 choice recorded in the T-gate note**,
+and each needs its own meta review before it can be preregistered. This file
+neither preregisters anything nor implements such a revision; it does not even
+keep the choice intact as a decision waiting to be executed, because the
+contrast that was chosen is the one shown to be degenerate.
+
+Say the consequence exactly: under the original common-class minimax equations of
+seq 418, **stop condition 1 of `T_GATE_CHOICE.md` fires by definition**. Its
+outcome would be a definitional artifact of the comparator, not evidence against
+the mechanism, and it is **not** the small-`Q` uninformative case that stop
+condition 2's single repair covers - that repair is for "cannot distinguish false
+from unmeasured", not for "the pass band is unreachable before anything is
+measured". So seq 515 does not refute the thesis; it invalidates the instrument.
+If I cannot satisfy the admission rule above under (1) or (2), that is a failed
+screen for C3 T0 as currently framed, which I write up under G1.1 rather than
+relaxing the threshold, and the next research step is a re-framed contrast put up
+for review or one of the other candidate theses - not the same contrast with new
+numbers.
 
 ## Provenance
 
