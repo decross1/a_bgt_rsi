@@ -101,6 +101,181 @@ class LaneError(RuntimeError):
     pass
 
 
+class FixtureCheckError(RuntimeError):
+    """A declared fixture source cannot be read, parsed or judged. Refuse the item
+    rather than skip the row: a silently-skipped row is how a gate starts lying."""
+    pass
+
+
+def _fixture_objects(path: Path) -> list[dict]:
+    """The live rows a fixture is checked against: one object for a JSON file, one per
+    non-blank line for JSONL, which is the shape of most live lab state
+    (run_state/oracle_nara_mailbox.jsonl, run_state/week1.run.jsonl).
+
+    Raises FixtureCheckError naming the file when it cannot be read, when a line does
+    not parse, or when a row is not an object.
+    """
+    try:
+        text = path.read_text(errors="replace")
+    except OSError as exc:
+        raise FixtureCheckError(f"cannot read {path}: {exc}") from exc
+    if path.suffix == ".jsonl":
+        rows = []
+        for number, line in enumerate(text.splitlines(), 1):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                raise FixtureCheckError(f"{path} line {number} is not JSON") from None
+            if not isinstance(row, dict):
+                raise FixtureCheckError(f"{path} line {number} is not a JSON object")
+            rows.append(row)
+        return rows
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        raise FixtureCheckError(f"{path} is not parseable JSON") from None
+    if not isinstance(doc, dict):
+        raise FixtureCheckError(f"{path} is a JSON {type(doc).__name__}, not an object")
+    return [doc]
+
+
+def _observed_keys(rows: list[dict], fixture: dict) -> set:
+    """Top-level keys the live file really holds. Where rows carry a `kind` field, the
+    union is over rows of the fixture's own kind, because rows of another kind
+    legitimately differ in shape (a mailbox `note` and a `receipt` share few keys).
+    A fixture of a kind the file never holds is judged against all rows and refused
+    below, where the real kinds are listed.
+    """
+    kinds = {r["kind"] for r in rows if isinstance(r.get("kind"), str)}
+    kind = fixture.get("kind")
+    if kinds and isinstance(kind, str) and kind in kinds:
+        rows = [r for r in rows if r.get("kind") == kind]
+    return {key for row in rows for key in row}
+
+
+def _fixture_is_tracked(path: Path, root: Path) -> bool:
+    """Whether git tracks `path` in `root`. A live source a fixture claims to come from
+    has to be a file other people can read and would notice changing; an untracked file
+    in a working tree proves nothing about the lab's data.
+
+    Separate and monkeypatchable, because the real answer needs `git ls-files` against
+    the root that runs admission() - and a test that assumed one particular checkout is
+    what the rejected d3 did wrong (review claude-0404f2c56845b56f, seq 216)."""
+    try:
+        out = subprocess.run(["git", *GIT_SAFE, "-C", str(root), "ls-files", "--error-unmatch",
+                              str(path.relative_to(root))],
+                             capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return False
+    return out.returncode == 0
+
+
+def check_fixtures(item: dict) -> list[str]:
+    """Refuse a plan item whose test fixtures do not match the live files it declares.
+
+    Three days of lane holds came from one authoring defect (retro
+    claude-fd99b8f6159965c4, cause missing_context), and plan 2026-09-24 d1 cost nine
+    postings of the same shape: a fixture was derived by hand from a live file and got
+    its shape wrong - a key the file does not have, or an enum value it never holds -
+    or a plan item named a source file that exists nowhere. The lane found each one
+    only after a sandbox run, so every mistake cost a posting, a review round and a
+    hold. This refuses it before the sandbox rather than asking the author to be
+    careful.
+
+    A plan item declares `fixture_sources` {fixture name: repo-relative live path} and
+    `fixtures` {fixture name: the object its test uses}; `fixture_enums` {fixture name:
+    [field, ...]} names the fields whose values must also occur in the live file. Enum
+    fields are declared, never inferred - a str-valued field is not assumed to be an
+    enum, which would refuse most string fields in the lab's history.
+
+    Deliberately loose where looseness costs nothing: a fixture named in no source map
+    is unchecked (synthetic fixtures are fine), nested keys are not compared (top level
+    only, which is where the drift showed), and an enum field the fixture omits is
+    skipped. Sources, enums and fixtures are shape-checked by
+    mailbox.validate_plan_item(), so they are objects of the right type by here.
+
+    Raises FixtureCheckError on a live file that cannot be read, parsed or judged;
+    otherwise returns refusal reasons (empty means everything declared is observed).
+    """
+    body = item["body"]
+    sources, enums = body.get("fixture_sources") or {}, body.get("fixture_enums") or {}
+    fixtures = body.get("fixtures", {})
+    if not isinstance(fixtures, dict):
+        return ["fixtures must be an object mapping fixture name -> the object the test uses"]
+    reasons: list[str] = []
+    root = Path(ROOT)
+    for name, rel in sorted(sources.items()):
+        if rel.startswith("/") or ".." in Path(rel).parts:
+            reasons.append(f"fixture_sources.{name} points outside the repo root: {rel}")
+            continue
+        live = root / rel
+        try:
+            live.resolve().relative_to(root.resolve())
+        except ValueError:
+            reasons.append(f"fixture_sources.{name} points outside the repo root: {rel}")
+            continue
+        if not live.is_file():
+            reasons.append(f"fixture_sources.{name} names a live file that does not exist: {rel}")
+            continue
+        if not _fixture_is_tracked(live, root):
+            reasons.append(f"fixture_sources.{name} is not tracked by git, so it is not the "
+                           f"lab's data: {rel}")
+            continue
+        fixture = fixtures.get(name)
+        if fixture is None:
+            continue                       # case 6 (check_declared_sources_ship_fixtures)
+        if not isinstance(fixture, dict):
+            reasons.append(f"fixtures.{name} must be an object, got {type(fixture).__name__}")
+            continue
+        rows = _fixture_objects(live)
+        observed = _observed_keys(rows, fixture)
+        for key in sorted(set(fixture) - observed):
+            reasons.append(f"fixtures.{name} has a key no live row of {rel} has: {key} "
+                           f"(live keys: {sorted(observed)[:20]})")
+        kinds = {r["kind"] for r in rows if isinstance(r.get("kind"), str)}
+        kind = fixture.get("kind")
+        if kinds and isinstance(kind, str) and kind not in kinds:
+            reasons.append(f"fixtures.{name} has kind {kind!r}, which {rel} never holds "
+                           f"(live kinds: {sorted(kinds)})")
+        for field in sorted(enums.get(name, [])):
+            if field not in fixture:
+                continue
+            value = fixture[field]
+            values = {r[field] for r in rows if field in r and isinstance(r[field], str)}
+            if isinstance(value, str) and value not in values:
+                reasons.append(f"fixtures.{name}.{field}={value!r} is a value the live file {rel} "
+                               f"never holds (live values: {sorted(values)[:20]})")
+    return reasons
+
+
+def check_declared_sources_ship_fixtures(item: dict) -> list[str]:
+    """Refuse an item that declares fixture_sources or fixture_enums without the fixture
+    data that declaration is about.
+
+    A declaration claims the lane can check a fixture against a live file. That is only
+    meaningful if the item also ships the fixture object, because the fixture is what
+    the test uses and what the check compares. On the rejected d3 branch a bare
+    `fixture_sources` entry passed every check - `fixtures` was an unknown key to
+    validate_plan_item - so the gate was decorative (review claude-56275cf790bac03c,
+    finding 1). Both maps take the rule and both are keyed by fixture name, so a name
+    the shipped fixtures do not hold is a declaration about nothing.
+    """
+    body = item["body"]
+    sources = set(body.get("fixture_sources") or {})
+    enums = set(body.get("fixture_enums") or {})
+    shipped = {k for k, v in (body.get("fixtures") or {}).items() if isinstance(v, dict)}
+    reasons = [f"fixture_sources.{name} declares a live file but the item ships no fixtures.{name}, "
+               f"so nothing is compared and Nara's worktree gets no fixture: ship "
+               f"fixtures.{name} or drop the declaration"
+               for name in sorted(sources - shipped)]
+    reasons += [f"fixture_enums.{name} declares enum fields for a fixture the item does not ship, "
+                f"so no value is ever checked: ship fixtures.{name} or drop the declaration"
+                for name in sorted(enums - shipped)]
+    return reasons
+
+
 def log(task: str, status: str, actual: str, expected: str, duration_ms: int = 0) -> None:
     row = dict(timestamp=datetime.now(timezone.utc).isoformat(), task_id=f"nara-lane:{task}", agent="nara",
                status=status, observable_actual=actual[:2000], observable_expected=expected,
@@ -134,6 +309,12 @@ def admission(item: dict) -> list[str]:
     budget = body.get("budget") or {}
     if budget.get("attempts", 1) > MAX_ATTEMPTS or budget.get("wall_clock_minutes", 1) > MAX_WALL_MINUTES:
         reasons.append(f"budget exceeds {MAX_ATTEMPTS} attempts / {MAX_WALL_MINUTES} minutes")
+    if not reasons:  # declared fixtures must match the live files (plan 2026-09-24 d3)
+        try:
+            reasons.extend(check_declared_sources_ship_fixtures(item))
+            reasons.extend(check_fixtures(item))
+        except FixtureCheckError as exc:
+            reasons.append(f"fixture_sources cannot be checked: {exc}")
     if not reasons and not _prechecked(item):  # last, so it never masks an earlier reason
         sha = test_sha256(acceptance["test_content"])
         reasons.append(f"no green precheck receipt for sha256(test_content) {sha}: run "

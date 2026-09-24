@@ -60,6 +60,21 @@ python -m orchestrator.nara_lane status
   campaign manifests, `bench/flash_*`, `.git*` paths and anything else are held.
 - Field types are checked when the item is posted. An item that still cannot be
   read is held as malformed; it does not block the items behind it.
+- Optional fixture declarations (`plan 2026-09-24 d3`). A plan item whose test data
+  came from a live lab file declares it, so the lane can refuse the hand-copying
+  mistake before the sandbox instead of after a build:
+  `fixture_sources` {fixture name: repo-relative live path}, `fixtures` {fixture name:
+  the object the test uses}, and `fixture_enums` {fixture name: [field, ...]} for the
+  fields whose values must also occur in that file. Three rules follow. A fixture key no
+  live row of the source holds is refused naming the key and the live keys; a declared
+  enum field holding a value the file never holds is refused naming the value (enum
+  fields are declared, never inferred, so an ordinary string field is not judged); and a
+  source path must exist inside the repo root, so a path in a plan item means a file.
+  The three maps must name the same fixtures, which is checked at posting: a bare
+  `fixture_sources` with no `fixtures` behind it compares nothing and is refused.
+  A fixture named in no source is unchecked, so a purely synthetic fixture is fine, and
+  nested keys are not compared - top level only, which is where the drift showed.
+  For JSONL sources, keys are the union over rows of the fixture's own `kind`.
 - Limits: 3 attempts, 60 minutes, 8 KiB test, 48 KiB per file. Each test run and
   builder call gets only the time left in the item's wall-clock budget; a
   builder call is capped at 1800 s with no retries (a 12K-token build on a
