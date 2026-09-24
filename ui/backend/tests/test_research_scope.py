@@ -11,7 +11,15 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from backend import experiments, human_todo, iteration_journey, lab_todo, ladder, loop_v0, research_scope
+from backend import (
+    experiments,
+    human_todo,
+    iteration_journey,
+    lab_todo,
+    ladder,
+    loop_v0,
+    research_scope,
+)
 from orchestrator.research_campaign import bind_topic, load_campaign
 
 REPO = Path(__file__).resolve().parents[3]
@@ -176,12 +184,72 @@ def test_bad_activation_fails_closed_and_history_stays_readable(setup, damage):
 def test_no_active_campaign_is_not_implicit_all_history(setup):
     root, client, _, _ = setup
     (root / "run_state/active_research_campaign.json").unlink()
-    assert client.get("/api/research_scope").json()["status"] == "no_active_campaign"
+    response = client.get("/api/research_scope")
+    assert response.status_code == 200
+    assert response.json()["status"] == "no_active_campaign"
+    assert response.json()["campaign"] is None
     assert (
         client.get("/api/loop_v0/iterations?research_scope=active").json()["iterations"]
         == []
     )
     assert client.get("/api/iteration/iter-current/journey?research_scope=active").json()["found"] is False
+
+
+def test_closed_campaign_is_an_empty_active_projection_without_history_leak(setup):
+    root, client, current, old = setup
+    closure = {
+        "schema_version": "research-campaign-closure/v1",
+        "campaign_id": current["campaign"]["campaign_id"],
+        "campaign_manifest_sha256": current["campaign"]["campaign_manifest_sha256"],
+        "closed_at": datetime.now(timezone.utc).isoformat(),
+        "closed_by": "test operator",
+    }
+    path = root / "run_state/research_campaign_closures" / f"{closure['campaign_id']}.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps(closure))
+
+    metadata = client.get("/api/research_scope")
+    assert metadata.status_code == 200
+    assert metadata.json() == {
+        "mode": "active",
+        "status": "closed",
+        "campaign": None,
+        "history_preserved": True,
+    }
+    active = client.get("/api/loop_v0/iterations?research_scope=active")
+    assert active.status_code == 200
+    assert active.json()["iterations"] == []
+    assert old["iteration_id"] not in json.dumps(active.json())
+
+    history = client.get("/api/loop_v0/iterations?research_scope=all")
+    assert history.status_code == 200
+    assert history.json()["iterations"] == [old, current]
+
+
+@pytest.mark.parametrize("damage", ["malformed", "mismatched", "redirected"])
+def test_invalid_closure_remains_unavailable_without_reopening_history(setup, damage):
+    root, client, current, _old = setup
+    path = (
+        root / "run_state/research_campaign_closures"
+        / f"{current['campaign']['campaign_id']}.json"
+    )
+    path.parent.mkdir()
+    if damage == "malformed":
+        path.write_text("{broken")
+    elif damage == "mismatched":
+        path.write_text(json.dumps({
+            "schema_version": "research-campaign-closure/v1",
+            "campaign_id": current["campaign"]["campaign_id"],
+            "campaign_manifest_sha256": "0" * 64,
+            "closed_at": datetime.now(timezone.utc).isoformat(),
+            "closed_by": "test operator",
+        }))
+    else:
+        path.symlink_to(root / "outside-closure.json")
+
+    assert client.get("/api/research_scope").status_code == 503
+    assert client.get("/api/loop_v0/iterations?research_scope=active").status_code == 503
+    assert len(client.get("/api/loop_v0/iterations?research_scope=all").json()["iterations"]) == 2
 
 
 @pytest.mark.parametrize("damage", ["malformed", "symlink", "oversized"])

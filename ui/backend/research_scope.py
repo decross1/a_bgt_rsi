@@ -27,6 +27,7 @@ from orchestrator.research_campaign import (
 )
 
 ScopeName = Literal["active", "all"]
+ScopeStatus = Literal["active", "closed", "no_active_campaign", "all_research"]
 MAX_SOURCE_BYTES = 64 * 1024 * 1024
 MAX_SOURCE_ROWS = 100_000
 
@@ -100,21 +101,31 @@ class ResearchScope:
         self.name = name
         self.memory_dir = Path(memory_dir)
         self.campaign = None
+        self.status: ScopeStatus = (
+            "all_research" if name == "all" else "no_active_campaign"
+        )
         if name == "active":
             try:
                 self.campaign = load_active_campaign(repo_root=Path(repo_root))
             except CampaignError as exc:
+                # The lifecycle loader reaches this sentinel only after it has
+                # validated the exact activation pointer and closure receipt.
+                # A closed campaign is an empty current view, not unavailable
+                # state and never permission to expose historical records.
+                if exc.args == ("research campaign is closed",):
+                    self.status = "closed"
+                    return
                 raise HTTPException(
                     503, detail="Active campaign identity is unavailable"
                 ) from exc
+            if self.campaign is not None:
+                self.status = "active"
 
     def metadata(self) -> dict:
         campaign = self.campaign
         return {
             "mode": self.name,
-            "status": "all_research"
-            if self.name == "all"
-            else ("active" if campaign else "no_active_campaign"),
+            "status": self.status,
             "campaign": None
             if campaign is None
             else {
