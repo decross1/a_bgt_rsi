@@ -45,7 +45,10 @@ export function admitResearchScopeMetadata(
     }
     return value as unknown as ResearchScopeMetadata;
   }
-  if (value.status === "no_active_campaign" && value.campaign === null) {
+  if (
+    (value.status === "closed" || value.status === "no_active_campaign")
+    && value.campaign === null
+  ) {
     return value as unknown as ResearchScopeMetadata;
   }
   if (value.status !== "active") {

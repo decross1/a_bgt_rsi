@@ -12,7 +12,7 @@ export interface ResearchCampaignScope {
 
 export interface ResearchScopeMetadata {
   mode: ResearchScope;
-  status: "active" | "no_active_campaign" | "all_research";
+  status: "active" | "closed" | "no_active_campaign" | "all_research";
   campaign: ResearchCampaignScope | null;
   history_preserved: boolean;
   omitted_historical_items?: number;

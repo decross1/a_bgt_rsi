@@ -170,6 +170,11 @@ export default function ResearchScopeBar({
           No active campaign is recorded. Current-campaign lists remain empty; history is available explicitly.
         </p>
       )}
+      {!loading && error === null && metadata?.mode === "active" && metadata.status === "closed" && (
+        <p className="research-scope-bar__status" data-testid="research-scope-closed">
+          This campaign is closed. Current-campaign lists remain empty; history is available explicitly.
+        </p>
+      )}
       {!loading && error === null && metadata?.mode === "all" && (
         <p className="research-scope-bar__status" data-testid="research-scope-history">
           {historyExplanation ?? "Showing preserved v0/v1 and campaign records. This view keeps their recorded identity and does not make them current."}
