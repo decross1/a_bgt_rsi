@@ -80,6 +80,36 @@ python -m orchestrator.nara_lane status
   builder call is capped at 1800 s with no retries (a 12K-token build on a
   shared server runs at roughly 15-20 tok/s).
 
+### What the builder can see (read this before you point at a file)
+
+The builder is one model call. It receives the item's title, its objective, the
+acceptance test file, the last test output, and the current contents of the
+writable paths - nothing else. It does not see the repository, the mailbox, the
+plan, your session, or any file you did not list.
+
+The worktree it works in is the lane base checkout's HEAD plus your acceptance
+test. So a path is in that worktree only if it is tracked at the lane base HEAD,
+or because this item writes it. You cannot hand the builder an input file by
+naming a path to it: an input the objective refers to must go inline in the
+objective itself, which is capped at 4000 characters (and a `title` at 200).
+An `input_paths` entry the builder cannot read is refused at admission as
+`declared input path is not readable by the builder`, and the item is held - it
+never reaches the builder, so a wrong pointer costs a withdraw-and-repost.
+
+The cost of getting this wrong is not a held item but an invented one. In the
+2026-09-24 plan an objective told its builder to "copy the titles" from a
+reading list that existed nowhere; the builder sees a writable path it has not
+written as nothing, so the instruction read as *write that file yourself*, which
+is how a citation task ends up producing citations that were never read.
+
+A shape or format test is not a citation check. A test can prove a document has
+3-5 candidates, 12 filled fields and a well-formed `iter-YYYY-MM-DD-NNN` id; it
+cannot prove a cited paper exists or that a quoted title is the title of that
+id. Never let the objective imply that a passing test verified a reference: cite
+only content the objective carries, and route citation reality to
+`tools/citation_screen.py`, whose verdicts are the only citation claim the lab
+cites.
+
 ## What Nara does (the lane)
 
 `python -m orchestrator.nara_lane run` processes every open item once:
