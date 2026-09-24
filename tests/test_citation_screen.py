@@ -6,7 +6,8 @@ store. The structure test cannot catch invented citations." d1's precheck receip
 already burned and the lane caps its acceptance test at 8 KiB, so the check runs as a
 tool at screen time; this file is its test, in Oracle's lane, where there is no cap.
 
-Every case is hermetic: the store and the candidate set are tmp files. The discrimination
+Two cases read the live paper store read-only and skip when it is absent; everything else
+is hermetic, with the store and the candidate set as tmp files. The discrimination
 canary (retro fix SKILL 5, cause factual_error) is test_a_clean_set_passes_a_mutated_set_fails,
 which proves the screen is not vacuous by mutating a passing set four ways.
 """
@@ -278,6 +279,25 @@ def test_a_citation_prefixed_with_author_and_year_resolves_at_any_title_length()
         assert arxiv_id == "2609.55555" and kind == "exact"
 
 
+def test_an_author_year_prefix_cannot_swallow_invented_title_text():
+    """Review claude-749d39bc3396f628, finding 1 (material). At b30889a the prefix run
+    `[^:.)\\n]{0,40}` after the year ate up to 40 characters of *invented* title text, so
+    a forgery whose title is qualified verified with the real paper's id — the same class
+    as claude-58cad93a58e0b3af amendment 1, entered from the front instead of the back.
+    The prefix now ends at the year (or the et-al) plus one separator, so the qualifier
+    survives into the title and the citation comes back PARTIAL, never VERIFIED."""
+    paper = {"title": "Communication as voting", "arxiv_id": "2609.66666"}
+    for forgery in ("Jones 2030, LLM Agents: Communication as Voting",
+                    "Smith 2031, A survey of bidding, Auctions as Experiments"):
+        status, carried, kind = verdict(forgery, paper,
+                                        {"title": "Auctions as experiments",
+                                         "arxiv_id": "2609.55555"})
+        assert status != "VERIFIED", f"{forgery!r} verified as {kind} — the free-text run is back"
+        assert status == "PARTIAL", f"{forgery!r} -> {status}: a real substring must stay a lead"
+    # a lowercase name is not citation furniture: only a capped name may be stripped
+    assert verdict("jones 2030, Communication as voting", paper)[0] != "VERIFIED"
+
+
 def test_an_et_al_prefix_and_venue_parenthetical_are_stripped_but_a_colon_is_not():
     """The three pieces of citation furniture, separated: what comes off (a prefix naming
     a year or et al, a trailing venue/arXiv parenthetical, quote and emphasis markers)
@@ -285,7 +305,10 @@ def test_an_et_al_prefix_and_venue_parenthetical_are_stripped_but_a_colon_is_not
     paper = {"title": "Communication as voting", "arxiv_id": "2609.66666"}
     for form in ['Jones et al., 2020: "Communication as Voting" (NeurIPS 2024)',
                  "*Communication as voting* (arXiv:2505.14639)",
-                 "Smith 2021. Communication as voting."]:
+                 "Smith 2021. Communication as voting.",
+                 # review claude-749d39bc3396f628 amendment 1 checked this form against
+                 # the live store: the prefix ends at the year, then one separator
+                 "Jones et al. (2020). Communication as voting"]:
         assert verdict(form, paper)[0] == "VERIFIED", form
     assert verdict("Jones et al., 2020: Communication as voting in groups", paper)[0] == "PARTIAL"
 
@@ -317,7 +340,8 @@ def test_an_ambiguous_partial_is_not_resolved_to_the_longest_match():
 def test_a_title_stored_twice_is_one_candidate_not_an_ambiguity():
     """The live ingestion re-reads one paper into several files: at this review all 350
     distinct titles in the live store appear 2 to 8 times across its 1,356 rows. Rows are
-    counted by paper, so a re-read paper stays VERIFIED instead of looking ambiguous."""
+    counted by distinct title, so a re-read paper stays VERIFIED instead of looking
+    ambiguous."""
     twice = {"title": LONG, "arxiv_id": "2609.22223"}
     assert verdict(LONG, (twice, twice)) == ("VERIFIED", "2609.22223", "exact")
 
@@ -347,18 +371,34 @@ MUTATIONS = {
     "colon_not_split": ('return normalize(text)',
                         'return normalize(text.split(":")[0])'),
     "ambiguity": ("if len(partial) == 1:", "if partial:"),
+    # Review claude-749d39bc3396f628 amendment 1: the author/year prefix must end at the
+    # year plus one separator. Restoring the free-text run reopens the seq-113 forgery
+    # class from the front, so this pin refuses it independently of prefix_strip.
+    "prefix_free_text_run": ('[:.,]\\s*\")', '[^:.)\\n]{0,40}[:.,)]\\s*\")'),
+    # Review claude-749d39bc3396f628 amendment 2: emphasis/quote markers become a space.
+    "emphasis_to_empty": ('EMPHASIS.sub(" ", chunk or "")', 'EMPHASIS.sub("", chunk or "")'),
 }
+
+# The -k expression for the mutated run. `apostrophe` is the emphasis pin's own test:
+# deleting the markers instead of spacing them is invisible to the -k set's other names,
+# so without this word the guard would ride on another test's pass (finding 3 again).
+MUTATION_K = "partial or verified or fragment or colon or prefix or absent or ambiguous or apostrophe"
 
 
 @pytest.mark.parametrize("guard", sorted(MUTATIONS))
-def test_each_stripping_and_identity_guard_is_pinned_by_its_own_mutation(guard):
+def test_each_stripping_and_identity_guard_is_pinned_by_its_own_mutation(guard, tmp_path):
     """Finding 3: at d04de85 two guards shared one test, so deleting either alone left the
-    suite green. Each mutation is applied in a copy of this worktree and must turn this
-    file red — checked by running pytest, not by asserting about it."""
+    suite green. Each mutation is applied in a copy under tmp_path and must turn this file
+    red — checked by running pytest, not by asserting about it. The copy lives in
+    tmp_path, not in the checkout (review claude-749d39bc3396f628, amendment 3): running
+    this file at b30889a left five untracked .mut_cs_* directories in the lab root, where
+    a later `git add -A` would commit them, and two concurrent runs raced on the rmtree.
+    Safe because the -k expression selects no live-store case, so the copy needs neither
+    git context nor the live store."""
     old, new = MUTATIONS[guard]
     source = (ROOT / "tools/citation_screen.py").read_text()
     assert source.count(old) == 1, f"{guard}: pattern not found exactly once, the pin is stale"
-    work = ROOT / f".mut_cs_{guard}"
+    work = tmp_path / f"mut_cs_{guard}"
     if work.exists():
         import shutil
         shutil.rmtree(work)
@@ -366,7 +406,7 @@ def test_each_stripping_and_identity_guard_is_pinned_by_its_own_mutation(guard):
     shutil_copytree(work)
     (work / "tools/citation_screen.py").write_text(source.replace(old, new))
     proc = subprocess.run([sys.executable, "-m", "pytest", "tests/test_citation_screen.py",
-                           "-k", "partial or verified or fragment or colon or prefix or absent or ambiguous",
+                           "-k", MUTATION_K,
                            "-q", "--no-header", "-p", "no:cacheprovider"],
                           cwd=work, capture_output=True, text=True, timeout=300)
     assert proc.returncode != 0, (
@@ -394,6 +434,8 @@ def test_the_containment_floors_stay_deleted():
         assert gone not in source, f"{gone} is back; claude-58cad93a58e0b3af replaced it"
 
 
+@pytest.mark.skipif(not (cs._main_lab_root() / "run_state/arxiv_ingestion").is_dir(),
+                    reason="no live paper store on this machine")
 @pytest.mark.parametrize("shape", QUALIFIED)
 def test_a_qualified_title_is_refused_against_the_live_store(shape):
     """The review's material findings, against the store the screen will actually read,
@@ -422,6 +464,53 @@ def test_a_qualified_title_is_refused_against_the_live_store(shape):
     assert checked >= 10, f"only {checked} live short titles exercised; store shape changed"
 
 
+def test_a_title_with_an_apostrophe_or_an_underscore_verifies_verbatim():
+    """Review claude-749d39bc3396f628, finding 2 (material). normalize() on the stored side
+    turns an apostrophe, a quote or an underscore into a space; at b30889a cited_title()
+    *deleted* the same characters, so 7 of the live store's 350 distinct titles could never
+    verify even when cited word for word — "Approximating Pandora's Knapsack via Simple
+    Policies", "Arrow's Impossibility Theorem", "$\\ell_1$ Preferences". The fix is a space
+    instead of an empty string; this pins the class hermetically, the raw-title live test
+    above pins it against the store."""
+    for raw, stored in (
+            ("Approximating Pandora's Knapsack via Simple Policies",
+             "Approximating Pandora s Knapsack via Simple Policies"),
+            ("Approximating Pandora\u2019s Knapsack via Simple Policies",
+             "Approximating Pandora s Knapsack via Simple Policies"),
+            ("Approximating Pandora's Knapsack via Simple Policies",
+             "Approximating Pandora's Knapsack via Simple Policies"),
+            ("Arrow's Impossibility Theorem for Social Choice",
+             "Arrow's Impossibility Theorem for Social Choice"),
+            ("$\\ell_1$ Preferences in Committee Voting",
+             "$\\ell_1$ Preferences in Committee Voting"),
+            ("*Order effects* in judgment under uncertainty",
+             "Order effects in judgment under uncertainty")):
+        status, arxiv_id, kind = verdict(raw, {"title": stored, "arxiv_id": "2609.77777"})
+        assert status == "VERIFIED", f"{raw!r} -> {status}/{kind}: the cited side must space, not delete"
+        assert arxiv_id == "2609.77777"
+
+
+@pytest.mark.skipif(not (cs._main_lab_root() / "run_state/arxiv_ingestion").is_dir(),
+                    reason="no live paper store on this machine")
+def test_an_author_year_prefix_forgery_is_refused_against_the_live_store():
+    """The review's sweep, as a permanent case. At b30889a 'Jones 2030, LLM Agents: <real
+    title>' returned VERIFIED for 350 of 350 distinct live titles; without the free-text
+    run, 0 of 350. The same probe over the store the screen will actually read, read-only,
+    so the fix cannot rot into a passing unit test over a toy store."""
+    store = cs.PaperStore(cs._main_lab_root() / "run_state/arxiv_ingestion").load()
+    checked = 0
+    for stored in sorted({t for t, _ in store.titles if t}):
+        real = store.resolve_title(stored)
+        if real[0] != "VERIFIED":
+            continue
+        for probe in (f"Jones 2030, LLM Agents: {real[1]['title']}",
+                      f"Smith 2031, A survey of bidding, {real[1]['title']}"):
+            status, _paper, kind = store.resolve_title(probe)
+            assert status != "VERIFIED", f"{probe!r} verified as {kind}: the prefix eats titles"
+        checked += 1
+    assert checked >= 10, f"only {checked} live titles exercised; store shape changed"
+
+
 @pytest.mark.skipif(not (cs._main_lab_root() / "run_state/arxiv_ingestion").is_dir(),
                     reason="no live paper store on this machine")
 def test_real_citations_still_resolve_against_the_live_store():
@@ -430,24 +519,33 @@ def test_real_citations_still_resolve_against_the_live_store():
     with an author/year prefix and a venue parenthetical — and must still VERIFIED to
     their own paper. Measured against the live store at this commit."""
     store = cs.PaperStore(cs._main_lab_root() / "run_state/arxiv_ingestion").load()
-    real_titles = sorted({t for t, _ in store.titles if t})
-    checked = 0
-    for stored in real_titles:
-        paper = store.resolve_title(stored)
-        if paper[0] != "VERIFIED":
+    # RAW titles, keyed by the raw string so each distinct title is exercised once.
+    # Review claude-749d39bc3396f628, finding 2: the version at b30889a iterated the
+    # *normalized* titles and `continue`d past anything that failed to verify verbatim,
+    # so it could not see the class at all — 7 of 350 raw titles carry an apostrophe or
+    # an underscore, and EMPHASIS deleting (rather than spacing) the marker made every
+    # one of them UNVERIFIABLE even when quoted exactly. The whole set, not a sample.
+    raw: dict[str, dict] = {}
+    for _norm, paper in store.titles:
+        title = str(paper.get("title") or "").strip()
+        if title:
+            raw.setdefault(title, paper)
+    assert len(raw) >= 10, f"only {len(raw)} raw titles in the live store; shape changed"
+    skipped = 0
+    for title, paper in sorted(raw.items()):
+        arxiv_id = str(paper.get("arxiv_id") or "")
+        if store.resolve_title(title)[0] != "VERIFIED" or not arxiv_id:
+            skipped += 1   # an ambiguous or id-less row is not this test's subject
             continue
-        arxiv_id = paper[1].get("arxiv_id")
-        if not arxiv_id:
-            continue
-        for form in (f"Jones 2030: {stored}", f"Jones et al., 2020, {stored} (arXiv:{arxiv_id})",
-                     f"*{stored}*"):
+        for form in (title,
+                     f"Jones 2030: {title}",
+                     f"Jones et al., 2020, {title} (arXiv:{arxiv_id})",
+                     f"Jones et al. (2020). {title}",
+                     f"*{title}*"):
             status, hit, kind = store.resolve_title(form)
             assert status == "VERIFIED" and hit["arxiv_id"] == arxiv_id, (
                 f"a correct citation of a real paper did not resolve: {form!r} -> {status}/{kind}")
-        checked += 1
-        if checked >= 25:
-            break
-    assert checked >= 10, f"only {checked} live papers exercised; store shape changed"
+    assert len(raw) - skipped >= 10, f"only {len(raw) - skipped} live papers exercised"
 
 
 def test_main_lab_root_follows_git_and_falls_back_to_root(tmp_path, monkeypatch):

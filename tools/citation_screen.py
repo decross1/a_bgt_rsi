@@ -181,11 +181,15 @@ MIN_CITED_CHUNK = 8    # below this a chunk is noise ("see also"), not a title c
 # or "(NeurIPS 2024)" venue parenthetical, and quote or emphasis markers are formatting
 # around the title, not part of it. The year/et-al requirement is what keeps a real title
 # that merely starts with a word from being eaten: the prefix must look like a citation.
+# Review claude-749d39bc3396f628, finding 1: the free-text run `[^:.)\n]{0,40}` after the
+# year let a prefix swallow invented title text, so 'Jones 2030, LLM Agents: <real title>'
+# verified as the real paper — the seq-113 amendment-1 forgery class, entered from the
+# front. The prefix now must END at the year (or the et-al) plus one separator; nothing
+# between the year and the title is eaten. `(?i)` is gone so the name must start capped.
 AUTHOR_YEAR_PREFIX = re.compile(
-    r"(?i)^\s*[A-Z][A-Za-z'’\-]+"
+    r"^\s*[A-Z][A-Za-z'’\-]+"
     r"(?:\s+(?:&|and)\s+[A-Z][A-Za-z'’\-]+|,\s*[A-Z][A-Za-z'’\-]+)*"
-    r"(?:\s+et\s+al\.?|\s+\d{4}|\s+'\d{2})"
-    r"[^:.)\n]{0,40}[:.,)]\s*")
+    r"(?:\s+et\s+al\.?)?,?\s*\(?(?:\d{4}[a-z]?|'\d{2})\)?\s*[:.,]\s*")
 TRAILING_PAREN = re.compile(r"\s*\((?:[^()]*(?:arxiv|proceedings|journal|conference|workshop|"
                             r"neurips|icml|iclr|aaai|aamas|ecma|arxiv\.org)[^()]*)\)\s*$", re.I)
 EMPHASIS = re.compile(r"[*_`]{1,3}|[“”\"']")
@@ -200,7 +204,11 @@ def cited_title(chunk: str) -> str:
     refuse. A colon inside the title therefore stays in the title, and if the whole thing
     is not in the store it comes back unmatched and lands in PARTIAL/UNVERIFIABLE.
     """
-    text = EMPHASIS.sub("", chunk or "")
+    # Review claude-749d39bc3396f628, finding 2: markers become a SPACE, not nothing.
+    # normalize() turns a stored title's apostrophe or underscore into a space, so the
+    # cited side has to as well — otherwise "Approximating Pandora's Knapsack ..." and
+    # "$\\ell_1$ Preferences" can never verify, even when cited verbatim.
+    text = EMPHASIS.sub(" ", chunk or "")
     text = TRAILING_PAREN.sub("", text).strip()
     text = AUTHOR_YEAR_PREFIX.sub("", text, count=1).strip()
     text = re.sub(r"\s+", " ", text).strip(" \t-|:.,·")
@@ -280,11 +288,12 @@ class PaperStore:
         norm = cited_title(chunk)
         if not norm:
             return "UNVERIFIABLE", None, "no_title"
+        # _by_title keys by stored title, so an exact match is never a set of more than
+        # one: `len(exact) > 1` was unreachable and the review asked for it gone
+        # (claude-749d39bc3396f628, amendment 4). Only the partial arm can be ambiguous.
         exact = _by_title(self.titles, lambda stored: stored == norm)
-        if len(exact) == 1:
+        if exact:
             return "VERIFIED", next(iter(exact.values())), "exact"
-        if len(exact) > 1:
-            return "UNVERIFIABLE", None, "ambiguous_exact"
         partial = _by_title(self.titles,
                             lambda stored: bool(stored) and (stored in norm or norm in stored))
         if len(partial) == 1:
