@@ -934,11 +934,57 @@ class LabMailboxRouter:
         from orchestrator import oracle_mailbox
         return oracle_mailbox
 
+    def _prior_owner_request(self, oracle_mailbox, mailbox_path: Path, payload: dict) -> dict | None:
+        """Return an exact durable retry before consulting mutable plan state."""
+        try:
+            row = oracle_mailbox.find_idempotency_key(payload["request_id"], path=mailbox_path)
+        except oracle_mailbox.MailboxError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        if row is None:
+            return None
+        target_kind, target_id, action = payload["target_kind"], payload["target_id"], payload["action"]
+        note = payload.get("note") or ""
+        if target_kind == "question":
+            body = {"text": note or action, "via": "owner-ui", "authority": "owner, D-084",
+                    "request_id": payload["request_id"], "target_kind": target_kind}
+            if action != "reply":
+                body["decision"] = action
+            exact = (row.get("actor") == self.owner_actor and row.get("kind") == "answer"
+                     and row.get("in_reply_to") == target_id and row.get("body") == body)
+        else:
+            body = {
+                "title": f"OWNER DECISION: {action} {payload['expected_plan_revision']}:{target_id}",
+                "decision": action, "target": {"plan": payload["expected_plan_revision"], "item": target_id},
+                "text": note, "via": "owner-ui", "authority": "owner, D-084",
+                "request_id": payload["request_id"], "target_kind": target_kind,
+            }
+            exact = (row.get("actor") == self.owner_actor and row.get("kind") == "note"
+                     and row.get("body") == body)
+        if not exact:
+            raise HTTPException(409, "idempotency_key was already used for a different request")
+        return row
+
+    @staticmethod
+    def _decision_receipt(row: dict, payload: dict, *, duplicate: bool) -> dict:
+        return {
+            "request_id": payload["request_id"], "status": "queued",
+            "accepted_at": _iso(datetime.fromisoformat(row["ts"])),
+            "duplicate": duplicate, "target_kind": payload["target_kind"], "target_id": payload["target_id"],
+            "action": payload["action"], "expected_plan_revision": payload["expected_plan_revision"],
+            "execution_available": False,
+        }
+
     def route_decision(self, payload: dict) -> dict:
         oracle_mailbox = self._mailbox_module()
         mailbox_path = self.repo_root / "run_state" / "oracle_nara_mailbox.jsonl"
         target_kind, target_id, action = payload["target_kind"], payload["target_id"], payload["action"]
         note = payload.get("note") or ""
+        # The receipt is immutable evidence of the original owner action. A
+        # retry must remain safe even after a later daily plan has replaced the
+        # revision it originally targeted.
+        prior = self._prior_owner_request(oracle_mailbox, mailbox_path, payload)
+        if prior is not None:
+            return self._decision_receipt(prior, payload, duplicate=True)
         if target_kind == "question":
             if action not in _QUESTION_ACTIONS:
                 raise HTTPException(422, "action is not valid for a question")
@@ -954,7 +1000,7 @@ class LabMailboxRouter:
             # about progress; the optional structured fields preserve whether
             # this was approve/decline/defer or free-form text.
             body = {"text": note or action, "via": "owner-ui", "authority": "owner, D-084",
-                    "request_id": payload["request_id"]}
+                    "request_id": payload["request_id"], "target_kind": target_kind}
             if action != "reply":
                 body["decision"] = action
             try:
@@ -968,6 +1014,12 @@ class LabMailboxRouter:
                 raise HTTPException(422, "action is not valid for a plan target")
             current = current_plan(self.repo_root)
             if current is None or payload["expected_plan_revision"] != current[0]:
+                # An exact request can race a plan roll-over between the first
+                # locked lookup and this mutable revision check. Recheck the
+                # durable request before returning a stale-plan conflict.
+                prior = self._prior_owner_request(oracle_mailbox, mailbox_path, payload)
+                if prior is not None:
+                    return self._decision_receipt(prior, payload, duplicate=True)
                 raise HTTPException(409, "plan revision changed; refresh before requesting changes")
             plan_id, plan = current
             item = None
@@ -983,19 +1035,14 @@ class LabMailboxRouter:
                 "title": f"OWNER DECISION: {action} {payload['expected_plan_revision']}:{target_id}",
                 "decision": action, "target": {"plan": payload["expected_plan_revision"], "item": target_id},
                 "text": note, "via": "owner-ui", "authority": "owner, D-084",
-                "request_id": payload["request_id"],
+                "request_id": payload["request_id"], "target_kind": target_kind,
             }
             try:
                 row, duplicate = oracle_mailbox.post_once(
                     self.owner_actor, "note", body, to=to, idempotency_key=payload["request_id"], path=mailbox_path)
             except oracle_mailbox.MailboxError as exc:
                 raise HTTPException(409, str(exc)) from exc
-        return {
-            "request_id": payload["request_id"], "status": "queued",
-            "accepted_at": _iso(datetime.fromisoformat(row["ts"])),
-            "duplicate": duplicate, "target_kind": target_kind, "target_id": target_id, "action": action,
-            "expected_plan_revision": payload["expected_plan_revision"], "execution_available": False,
-        }
+        return self._decision_receipt(row, payload, duplicate=duplicate)
 
 
 def configured_lab_mailbox_router(config_path: str | None, *, repo_root: Path) -> LabMailboxRouter | None:

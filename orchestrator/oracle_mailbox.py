@@ -121,6 +121,36 @@ def validate_question_resolution(body: dict) -> None:
             raise MailboxError(f"question_resolution {key} must be a non-empty string <= 240 characters")
 
 
+def is_valid_question_resolution(question: dict, resolution: dict, rows: list[dict]) -> bool:
+    """Whether an already-recorded resolution may close ``question``.
+
+    Read projections must apply the same authority and ordering rules as the
+    append path. In particular, a syntactically forged/replayed row must not
+    make an owner question disappear merely because it has the right kind.
+    ``rows`` is the ordered mailbox prefix containing both rows.
+    """
+    if (not isinstance(question, dict) or not isinstance(resolution, dict)
+            or question.get("kind") != "question"
+            or resolution.get("kind") != "question_resolution"
+            or resolution.get("in_reply_to") != question.get("msg_id")):
+        return False
+    try:
+        validate_question_resolution(resolution.get("body"))
+    except MailboxError:
+        return False
+    actor = resolution.get("actor")
+    if not (isinstance(actor, str) and (actor == question.get("actor") or actor.startswith("human:"))):
+        return False
+    positions = {str(row.get("msg_id")): position for position, row in enumerate(rows)
+                 if isinstance(row, dict) and isinstance(row.get("msg_id"), str)}
+    question_position = positions.get(str(question.get("msg_id")))
+    resolution_position = positions.get(str(resolution.get("msg_id")))
+    if question_position is None or resolution_position is None or question_position >= resolution_position:
+        return False
+    evidence = resolution["body"].get("evidence_msg_ids")
+    return evidence is None or all(positions.get(value, resolution_position) < resolution_position for value in evidence)
+
+
 def read(path: Path = PATH) -> list[dict]:
     """All rows, with the hash chain verified; a break raises. The chain detects edits in place;
     it cannot detect a truncated tail or a chain re-hashed from the edit onward."""
@@ -258,15 +288,32 @@ def post_once(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | 
                              and row.get("kind") == "question" and row.get("to") == "owner"), None)
             if question is None:
                 raise MailboxError("owner question is no longer open")
-            closed = any(row.get("in_reply_to") == question["msg_id"] and (
-                row.get("kind") == "question_resolution"
-                or (row.get("kind") == "answer" and isinstance(row.get("actor"), str)
-                    and row["actor"].startswith("human:"))) for row in rows)
+            closed = any(
+                is_valid_question_resolution(question, row, rows)
+                or (row.get("in_reply_to") == question["msg_id"] and row.get("kind") == "answer"
+                    and isinstance(row.get("actor"), str) and row["actor"].startswith("human:"))
+                for row in rows)
             if closed:
                 raise MailboxError("owner question is no longer open")
         row = _append_locked(actor, kind, body, to=to, in_reply_to=in_reply_to,
                              expires_hours=expires_hours, path=path, rows=rows)
         return row, False
+
+
+def find_idempotency_key(idempotency_key: str, *, path: Path = PATH) -> dict | None:
+    """Return an owner-UI request receipt under the mailbox lock, if one exists.
+
+    This is intentionally lookup-only. Callers must compare every
+    payload-derived field before treating the row as a retry receipt.
+    """
+    if not isinstance(idempotency_key, str) or not idempotency_key:
+        raise MailboxError("idempotency_key must be a non-empty string")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with (path.parent / ".oracle_nara_mailbox.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        existing = [row for row in read(path) if isinstance(row.get("body"), dict)
+                    and row["body"].get("request_id") == idempotency_key]
+        return existing[-1] if existing else None
 
 
 def fold(rows: list[dict], now: datetime | None = None) -> dict:

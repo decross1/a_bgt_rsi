@@ -132,28 +132,11 @@ def _human_answer(question: dict, rows: list[dict]) -> dict | None:
 
 def _question_resolution(question: dict, rows: list[dict]) -> dict | None:
     """Return the latest valid non-owner resolution, never an implied answer."""
-    by_id = {str(row.get("msg_id")): row for row in rows}
+    oracle_mailbox, _ = _orchestrator()
     for row in reversed(rows):
         if row.get("kind") != "question_resolution" or row.get("in_reply_to") != question.get("msg_id"):
             continue
-        actor, body = row.get("actor"), _body(row)
-        disposition, summary, reason = body.get("disposition"), body.get("summary"), body.get("reason")
-        if (disposition not in QUESTION_RESOLUTIONS or not isinstance(summary, str) or not summary.strip()
-                or not isinstance(reason, str) or not reason.strip()):
-            continue
-        evidence = body.get("evidence_msg_ids")
-        if evidence is not None and (not isinstance(evidence, list) or not evidence
-                                     or not all(isinstance(value, str) and value in by_id
-                                                and isinstance(by_id[value].get("seq"), int)
-                                                and isinstance(row.get("seq"), int)
-                                                and by_id[value]["seq"] < row["seq"]
-                                                for value in evidence)):
-            continue
-        original = question.get("actor")
-        # Mirror the post-time authority rule.  The hash chain proves ordering,
-        # not identity or semantics, so a forged reviewer row must not hide a
-        # live owner question in this read model.
-        if isinstance(actor, str) and (actor == original or actor.startswith("human:")):
+        if oracle_mailbox.is_valid_question_resolution(question, row, rows):
             return row
     return None
 

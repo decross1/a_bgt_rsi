@@ -114,6 +114,27 @@ def test_nara_dev_item_routes_to_nara(repo, config):
     assert rows[-1]["to"] == "nara"
 
 
+def test_plan_retry_survives_a_later_plan_revision_and_rejects_changed_payload(repo, config):
+    router = LabMailboxRouter(config, repo_root=repo)
+    payload = {
+        "request_id": "21212121-2121-2121-2121-212121212121",
+        "target_kind": "work_card", "target_id": "d1", "action": "approve",
+        "expected_plan_revision": REVISION, "note": "Go ahead.",
+    }
+    assert router.route_decision(payload)["duplicate"] is False
+    old_plan = json.loads((repo / "run_state" / "daily_plans" / f"{REVISION}.json").read_text())
+    old_plan["date"] = "2026-09-24"
+    (repo / "run_state" / "daily_plans" / "2026-09-24.json").write_text(json.dumps(old_plan))
+
+    retry = router.route_decision(payload)
+    assert retry["duplicate"] is True
+    assert len(oracle_mailbox.read(repo / "run_state" / "oracle_nara_mailbox.jsonl")) == 1
+
+    changed = {**payload, "note": "Actually hold."}
+    with pytest.raises(HTTPException, match="idempotency_key"):
+        router.route_decision(changed)
+
+
 def test_reply_to_a_question_posts_an_answer_in_reply_to_it(repo, config):
     mailbox = repo / "run_state" / "oracle_nara_mailbox.jsonl"
     question = oracle_mailbox.post("oracle", "question", {"title": "What next?"}, to="owner", path=mailbox)
