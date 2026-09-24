@@ -30,7 +30,7 @@ def _manifest() -> dict:
         "model": FLASH_MODEL,
         "base_url": FLASH_BASE_URL,
         "context_length": 262144,
-        "max_running_requests": 1,
+        "max_running_requests": 4,
         "production_authorized": True,
         "selected_at": "2026-09-19",
         "model_revision": "a" * 40,
@@ -47,7 +47,7 @@ def _deployment() -> ModelDeployment:
         model=FLASH_MODEL,
         base_url=FLASH_BASE_URL,
         context_length=262144,
-        max_running_requests=1,
+        max_running_requests=4,
         model_revision="a" * 40,
         image_id=f"sha256:{'b' * 64}",
         profile_sha256="c" * 64,
@@ -127,6 +127,13 @@ def test_manifest_loader_binds_exact_runtime_and_content_hash(tmp_path):
         ("production_authorized", False),
         ("automated_benchmarks_enabled", True),
         ("context_length", 16384),
+        ("max_running_requests", 3),
+        ("max_running_requests", 8),
+        ("max_running_requests", 0),
+        ("max_running_requests", True),
+        ("max_running_requests", "4"),
+        ("max_running_requests", 4.0),
+        ("max_running_requests", None),
     ],
 )
 def test_manifest_loader_rejects_drifted_selection(tmp_path, field, value):
@@ -136,6 +143,29 @@ def test_manifest_loader_rejects_drifted_selection(tmp_path, field, value):
     path.write_text(json.dumps(manifest))
 
     with pytest.raises(ValueError, match=field):
+        load_model_deployment(path)
+
+
+@pytest.mark.parametrize("running", [1, 2, 4])
+def test_manifest_loader_admits_each_reviewed_running_request_count(tmp_path, running):
+    manifest = _manifest()
+    manifest["max_running_requests"] = running
+    path = tmp_path / "model_deployment.json"
+    path.write_text(json.dumps(manifest))
+
+    deployment = load_model_deployment(path)
+
+    assert deployment.max_running_requests == running
+    assert deployment.host_metadata["max_running_requests"] == running
+
+
+def test_manifest_loader_rejects_missing_running_request_count(tmp_path):
+    manifest = _manifest()
+    del manifest["max_running_requests"]
+    path = tmp_path / "model_deployment.json"
+    path.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="max_running_requests"):
         load_model_deployment(path)
 
 
