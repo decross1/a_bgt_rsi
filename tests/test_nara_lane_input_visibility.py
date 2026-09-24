@@ -202,3 +202,66 @@ def test_builder_prompt_reports_a_missing_input_that_is_also_writable(monkeypatc
     user = json.loads(captured["messages"][1]["content"])
     assert user["current_contents"][ABSENT_INPUT] is None
     assert user["input_visibility"][ABSENT_INPUT].startswith("NOT PRESENT")
+
+
+# --- review claude-80ce66157b935e62 (seq 188): a PRESENT verdict that never ships bytes
+#
+# Amendment 1: builder() judged a tracked-but-not-writable input PRESENT and then sent no
+# content for it, because current_contents covers writable paths only. The lane told the
+# model "PRESENT" about a file whose bytes it never received - the same class of defect
+# this branch exists to close. Chosen fix: send the bytes. The alternative (admission
+# refusing any input_paths entry that is not also writable) would forbid a genuinely
+# readable, genuinely safe case: an input tracked at HEAD that the item must not rewrite.
+#
+# Amendment 3: an input denied by the path fence must be reported as outside the lane
+# fence, not as "not a file tracked at the checkout HEAD", which is false - run_state/
+# secrets.json can well be tracked.
+
+
+def test_builder_sends_the_bytes_of_a_tracked_input_that_is_not_writable(monkeypatch, tmp_path) -> None:
+    """The defect review seq 188 names: PRESENT, and no content.
+
+    builder() is driven through its real seams: visibility is judged against a checkout
+    whose HEAD tracks the input (the lane runs it with cwd=ROOT, whose HEAD the worktree
+    is), and the bytes come from the worktree. tmp_path's git init prints a
+    symlinks-resolved path on some platforms, so the HEAD is named by commit sha, which is
+    identical however git spells the directory."""
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    _git(checkout, "init", "-q")
+    _git(checkout, "config", "user.email", "t@example.invalid")
+    _git(checkout, "config", "user.name", "Test")
+    (checkout / TRACKED_INPUT).parent.mkdir(parents=True, exist_ok=True)
+    (checkout / TRACKED_INPUT).write_text("iter-2026-09-23-035 - a stored claim\n", encoding="utf-8")
+    _git(checkout, "add", "-A")
+    _git(checkout, "commit", "-q", "-m", "base")
+    head = _git(checkout, "rev-parse", "HEAD").strip()
+
+    worktree = tmp_path / "worktree"
+    subprocess.run(["git", "-c", "core.fsmonitor=false", "worktree", "add", "--detach",
+                    str(worktree), head], cwd=checkout, check=True, capture_output=True, text=True)
+    visibility = lane._input_visibility([TRACKED_INPUT], [], cwd=checkout, worktree=worktree)
+    assert visibility[TRACKED_INPUT] == "PRESENT", visibility
+    body = _body(input_paths=[TRACKED_INPUT])   # NOT in allowed_write_paths
+    captured, _ = _call_builder(monkeypatch, body, worktree)
+    user = json.loads(captured["messages"][1]["content"])
+    assert user["input_visibility"][TRACKED_INPUT] == "PRESENT", user["input_visibility"]
+    sent = user.get("input_contents", {})
+    assert sent.get(TRACKED_INPUT) == "iter-2026-09-23-035 - a stored claim\n", (
+        f"a PRESENT input reached the prompt with no bytes: keys={sorted(sent)}")
+
+
+def test_a_present_input_that_is_absent_from_the_worktree_is_not_claimed(monkeypatch, tmp_path) -> None:
+    """No invented content: PRESENT is computed from HEAD, so if the file is somehow not in
+    the worktree the prompt must say so instead of shipping a PRESENT verdict with nothing."""
+    body = _body(input_paths=[TRACKED_INPUT])
+    captured, _ = _call_builder(monkeypatch, body, tmp_path)  # tmp_path holds no such file
+    user = json.loads(captured["messages"][1]["content"])
+    assert user["input_visibility"][TRACKED_INPUT].startswith("NOT PRESENT")
+    assert TRACKED_INPUT not in user.get("input_contents", {})
+
+
+def test_admission_says_outside_the_lane_fence_for_a_denied_input(repo) -> None:
+    """Amendment 3: the reason must name the real cause."""
+    reasons = lane.admission(_item(input_paths=["run_state/secrets.json"]), repo_root=repo)
+    assert any("run_state/secrets.json" in r and "fence" in r.lower() for r in reasons), reasons

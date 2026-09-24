@@ -299,6 +299,8 @@ INPUT_MISSING = ("NOT PRESENT in this worktree: it is not committed at the check
                  "a worktree is created from HEAD plus the acceptance test only. Do not copy, "
                  "quote or invent its content; report the missing input in your output instead.")
 INPUT_PRESENT = "PRESENT"
+INPUT_OUTSIDE_FENCE = ("OUTSIDE THE LANE FENCE: the sandbox denies this path, so its content "
+                       "is never handed over. Do not copy, quote or invent content for it.")
 BUILDER_SYSTEM = (
     "You are Nara's builder for the lab. Make the acceptance test pass by writing complete file "
     "contents. Reply with ONLY a JSON object {\"files\": {\"<path>\": \"<full content>\"}} using only "
@@ -319,12 +321,18 @@ def _tree_kind(rev: str, rel: str, *, cwd: Path | None = None) -> str | None:
 def _input_visibility(input_paths: list, writable: list, *, cwd: Path | None = None,
                       worktree: Path | None = None) -> dict[str, str]:
     """Per declared input: can builder() actually hand it over? Readable means a blob
-    tracked at the checkout HEAD, or a writable path already present in the worktree."""
+    tracked at the checkout HEAD, or a writable path already present in the worktree.
+    A path the lane fence denies gets its own verdict: it is not a readability question,
+    and calling it 'not a file tracked at the checkout HEAD' is false (review
+    claude-80ce66157b935e62 seq 188, amendment 3 - run_state/secrets.json can be tracked)."""
     head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(cwd or ROOT),
                           capture_output=True, text=True).stdout.strip()
     verdicts: dict[str, str] = {}
     for rel in input_paths:
-        if not isinstance(rel, str) or not _path_ok(rel) or _tree_kind(head, rel, cwd=cwd) != "blob":
+        if not isinstance(rel, str) or not _path_ok(rel):
+            verdicts[rel] = INPUT_OUTSIDE_FENCE
+            continue
+        if _tree_kind(head, rel, cwd=cwd) != "blob":
             if not (isinstance(rel, str) and rel in writable and worktree is not None
                     and (worktree / rel).is_file()):
                 verdicts[rel] = INPUT_MISSING
@@ -347,7 +355,9 @@ def admission(item: dict, *, repo_root: Path | None = None) -> list[str]:
     # names the real cause instead of a missing receipt.
     for path, verdict in _input_visibility(body.get("input_paths") or [],
                                           list(body["allowed_write_paths"]), cwd=repo_root).items():
-        if verdict == INPUT_MISSING:
+        if verdict == INPUT_OUTSIDE_FENCE:
+            reasons.append(f"declared input path is outside the lane fence: {path}")
+        elif verdict == INPUT_MISSING:
             reasons.append(f"declared input path is not readable by the builder: {path} (not a "
                            f"file tracked at the checkout HEAD); put the content inline in the "
                            f"objective instead")
@@ -663,10 +673,30 @@ def builder(body: dict, worktree: Path, feedback: str, timeout: float = BUILDER_
     if declared:
         # Judged before current_contents is read as truth: a None under a declared input means
         # "absent", never "an empty file to fill in" (review claude-e347ce59ca643116, seq 165).
-        prompt["input_visibility"] = _input_visibility(declared, writable, worktree=worktree)
+        # cwd is the worktree, because that is where HEAD is read from here: implement()
+        # creates the worktree AT the lane base HEAD, and a process-wide cwd=ROOT would ask
+        # the wrong checkout (review claude-80ce66157b935e62 seq 188 needs the verdict and
+        # the bytes to describe the same tree the builder is looking at).
+        visibility = _input_visibility(declared, writable, cwd=worktree, worktree=worktree)
+        prompt["input_visibility"] = visibility
+        # A PRESENT verdict must ship the bytes. current_contents covers writable paths only,
+        # so a tracked-but-not-writable input used to be announced as PRESENT with no content
+        # beside it - review claude-80ce66157b935e62 (seq 188), amendment 1. Read from the
+        # worktree, which IS the checkout HEAD, and only where the file is really there, so
+        # no bytes are ever claimed for a file that is not present.
+        contents: dict[str, str] = {}
+        for path, verdict in visibility.items():
+            if verdict != INPUT_PRESENT or path in current:
+                continue
+            data = _read(worktree, path)
+            if data is not None:
+                contents[path] = data[:MAX_FILE_BYTES].decode("utf-8", "replace")
+        if contents:
+            prompt["input_contents"] = contents
         system += (" Paths the objective names as inputs are judged in input_visibility: NOT PRESENT "
                    "means the file is absent from your worktree - do not copy, quote or invent "
-                   "content for it; report the missing input in your output.")
+                   "content for it; report the missing input in your output. PRESENT means its "
+                   "content is given in input_contents or current_contents.")
     record = call_sync(
         [{"role": "system", "content": system},
          {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)}],
