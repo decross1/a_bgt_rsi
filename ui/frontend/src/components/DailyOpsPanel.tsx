@@ -601,15 +601,13 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
   }
 
   async function requestDecision(request: DailyDecisionRequest) {
-    if (!summary?.currentPlanRevision)
-      throw new DailyOpsError(409, "no current plan revision is available");
     const receipt = await postDailyOpsDecision({
       accessKey,
       requestId: request.requestId,
       targetKind: request.targetKind,
       targetId: request.targetId,
       action: request.action,
-      expectedPlanRevision: summary.currentPlanRevision,
+      expectedPlanRevision: request.expectedPlanRevision,
       ...(request.note ? { note: request.note } : {}),
       ...(request.priority ? { priority: request.priority } : {}),
     });
@@ -713,6 +711,7 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
     <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
       <div className="rounded border border-[var(--border-1)] p-4">
         <DailyDecisionCards cards={summary.workCards} waiting={summary.waiting} updates={summary.updates}
+          planRevision={summary.currentPlanRevision}
           requestAvailable={decisionRouteAvailable} readonlyReason={readonlyReason}
           canRequest={decisionCanRequest} blockedReason={decisionBlockedReason}
           onRequireAccess={requireOwnerAccess} onRequest={requestDecision} />

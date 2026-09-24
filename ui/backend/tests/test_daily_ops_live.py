@@ -208,6 +208,7 @@ def test_owner_cards_require_a_real_question_and_direct_human_answer_or_explicit
     asked = box.post("claude", "question", {
         "question": "Use the reviewed worktree or main?", "why": "The runner needs one stable base.",
         "options": ["A — reviewed worktree", "B — current main"], "recommendation": "A",
+        "if_deferred": "The runner remains unpinned for the next test window.",
         "ref": {"item": "d5"},
     }, to="owner")
     other = box.post("oracle", "question", {"title": "An unrelated ruling", "text": "?"}, to="owner")
@@ -225,6 +226,7 @@ def test_owner_cards_require_a_real_question_and_direct_human_answer_or_explicit
     assert waiting["2026-09-23:d5"]["context"] == "The runner needs one stable base."
     assert waiting["2026-09-23:d5"]["choices"] == ["A — reviewed worktree", "B — current main"]
     assert waiting["2026-09-23:d5"]["recommendation"] == "A"
+    assert waiting["2026-09-23:d5"]["consequence"] == "The runner remains unpinned for the next test window."
     assert f"--kind answer --to oracle --in-reply-to {other['msg_id']}" in waiting[other["msg_id"]]["cli"]
     assert waiting[other["msg_id"]]["cli"].startswith(
         ".venv-chroma/bin/python -m orchestrator.oracle_mailbox post --as human:derrick")

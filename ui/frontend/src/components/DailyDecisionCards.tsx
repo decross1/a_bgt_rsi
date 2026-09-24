@@ -67,6 +67,8 @@ export type DailyQuestionUpdate = {
 
 export type DailyDecisionRequest = {
   requestId: string;
+  /** Bound when the request id is first made; retries must preserve it. */
+  expectedPlanRevision: string;
   targetKind: DailyOpsDecisionTarget;
   targetId: string;
   action: DailyOpsDecisionAction;
@@ -272,10 +274,11 @@ function QuestionUpdates({ updates }: { updates: DailyQuestionUpdate[] }) {
   </section>;
 }
 
-export function DailyDecisionCards({ cards, waiting, updates, requestAvailable, readonlyReason, canRequest, blockedReason, onRequireAccess, onRequest }: {
+export function DailyDecisionCards({ cards, waiting, updates, planRevision, requestAvailable, readonlyReason, canRequest, blockedReason, onRequireAccess, onRequest }: {
   cards: DailyWorkCard[];
   waiting: DailyWaitingItem[];
   updates: DailyQuestionUpdate[];
+  planRevision: string | null;
   requestAvailable: boolean;
   readonlyReason: string;
   canRequest: boolean;
@@ -287,7 +290,11 @@ export function DailyDecisionCards({ cards, waiting, updates, requestAvailable, 
   const [note, setNote] = useState("");
   const [priority, setPriority] = useState<DailyOpsDecisionPriority>("next");
   const [submit, setSubmit] = useState<SubmitState>({ kind: "idle" });
-  const [retry, setRetry] = useState<{ fingerprint: string; requestId: string } | null>(null);
+  const [retry, setRetry] = useState<{
+    fingerprint: string;
+    requestId: string;
+    expectedPlanRevision: string;
+  } | null>(null);
   const editorRef = useRef<HTMLElement>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const editorGeneration = useRef(0);
@@ -323,7 +330,7 @@ export function DailyDecisionCards({ cards, waiting, updates, requestAvailable, 
   async function send(event: React.FormEvent) {
     event.preventDefault();
     const generation = editorGeneration.current;
-    if (!editor || !canRequest || ["submitting", "queued"].includes(submit.kind) ||
+    if (!editor || !planRevision || !canRequest || ["submitting", "queued"].includes(submit.kind) ||
         inFlightGeneration.current === generation ||
         (["modify", "reply"].includes(editor.action) && !note.trim())) return;
     const normalizedNote = note.trim();
@@ -331,12 +338,18 @@ export function DailyDecisionCards({ cards, waiting, updates, requestAvailable, 
       editor.kind, editor.id, editor.action, normalizedNote,
       editor.action === "reprioritize" ? priority : null,
     ]);
-    const ident = retry?.fingerprint === fingerprint ? retry.requestId : requestId();
+    const prior = retry?.fingerprint === fingerprint ? retry : null;
+    // Keep the revision paired with its request id. A summary poll may observe
+    // a newer plan after a lost response, but this click is still a retry of
+    // the original durable request, not a new decision on the newer plan.
+    const ident = prior?.requestId ?? requestId();
+    const expectedPlanRevision = prior?.expectedPlanRevision ?? planRevision;
     inFlightGeneration.current = generation;
     setSubmit({ kind: "submitting" });
     try {
       const receipt = await onRequest({
         requestId: ident,
+        expectedPlanRevision,
         targetKind: editor.kind,
         targetId: editor.id,
         action: editor.action,
@@ -350,7 +363,7 @@ export function DailyDecisionCards({ cards, waiting, updates, requestAvailable, 
       if (editorGeneration.current !== generation) return;
       const detail = error instanceof DailyOpsError ? error.detail : String(error);
       const uncertain = !(error instanceof DailyOpsError) || error.status >= 500;
-      setRetry(uncertain ? { fingerprint, requestId: ident } : null);
+      setRetry(uncertain ? { fingerprint, requestId: ident, expectedPlanRevision } : null);
       setSubmit({ kind: "failed", message: uncertain
         ? `Delivery unconfirmed; retry safely with the same request ID. ${detail}`
         : error instanceof DailyOpsError && error.status === 409

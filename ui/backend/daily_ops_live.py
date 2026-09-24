@@ -155,7 +155,7 @@ def _question_card(row: dict) -> dict:
         "context": context,
         "choices": [_clip(choice, 300) for choice in choices[:8] if _clip(choice, 300)],
         "recommendation": _clip(body.get("recommendation"), 600),
-        "consequence": _clip(body.get("consequence") or body.get("impact"), 600),
+        "consequence": _clip(body.get("consequence") or body.get("impact") or body.get("if_deferred"), 600),
     }
 
 
