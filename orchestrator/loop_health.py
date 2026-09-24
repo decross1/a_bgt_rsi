@@ -663,5 +663,66 @@ def main(argv: list[str] | None = None) -> int:
     return _EXIT_BY_LEVEL[level]
 
 
+def cycle_durations(events: list, window_hours: float,
+                    now: str | datetime) -> dict:
+    """Percentile cycle duration of the daily loop, from start/finish events.
+
+    The 2026-09-24 loop-latency investigation (run_state/gap_scan_2026-09-24.sh)
+    found the oracle cycle firing on a 300s timer with gaps up to 2,820s. The
+    timer is `OnUnitInactiveSec=5min`, so a cycle cannot restart until the
+    previous one ENDS plus five minutes: long cycles are the gap, and the timer
+    is not at fault. What was never measured is how long a cycle takes, so
+    nothing could tell a 0s cycle from a 2,502s one. This is that measurement.
+
+    `events` are journal-style rows, each with a `ts` (or `timestamp`) and a
+    `message` (or `summary`): a " Starting " opens a cycle, a " Finished " or
+    "Deactivated successfully" closes it. Rows are judged in the order given; a
+    close without an open, or an open never closed inside the window, is
+    discarded, never guessed at (rule 4).
+
+    Returns {"cycles": int, "median_s": float, "p95_s": float, "max_s": float,
+    "over_1200s": int} — the acceptance line for the uptime loop is p95_s <
+    1,200s. Pure: no disk, no clock, no model.
+    """
+    stamp = _parse_ts(now) if isinstance(now, str) else now
+    if stamp is not None and stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    if stamp is None or not isinstance(window_hours, (int, float)):
+        return {"cycles": 0, "median_s": 0.0, "p95_s": 0.0, "max_s": 0.0,
+                "over_1200s": 0}
+    cutoff = stamp.timestamp() - float(window_hours) * 3600.0
+    open_at: datetime | None = None
+    durs: list[float] = []
+    for row in events:
+        if not isinstance(row, dict):
+            continue
+        when = _parse_ts(row.get("ts") or row.get("timestamp"))
+        text = row.get("message") or row.get("summary")
+        if when is None or not isinstance(text, str):
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        if when.timestamp() < cutoff or when.timestamp() > stamp.timestamp():
+            continue
+        if " Starting " in text:
+            open_at = when                     # an unclosed cycle is dropped later
+        elif (" Finished " in text or "Deactivated successfully" in text):
+            if open_at is not None:
+                durs.append((when - open_at).total_seconds())
+                open_at = None
+    if not durs:
+        return {"cycles": 0, "median_s": 0.0, "p95_s": 0.0, "max_s": 0.0,
+                "over_1200s": 0}
+    durs.sort()
+    def _pct(q: float) -> float:
+        idx = max(0, min(len(durs) - 1, int(q * len(durs)) - 1))
+        return float(durs[idx])
+    mid = len(durs) // 2
+    median = (durs[mid] if len(durs) % 2 else (durs[mid - 1] + durs[mid]) / 2.0)
+    return {"cycles": len(durs), "median_s": float(median), "p95_s": _pct(0.95),
+            "max_s": float(durs[-1]),
+            "over_1200s": sum(1 for d in durs if d > 1200.0)}
+
+
 if __name__ == "__main__":
     raise SystemExit(main())
