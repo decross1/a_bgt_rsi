@@ -337,3 +337,29 @@ def test_activation_chronology_and_separate_closure_fail_closed(tmp_path):
     assert classify_record({"campaign": link_before_activation}, reloaded) == (
         "explicit_match"
     )
+
+
+@pytest.mark.parametrize("corrupt_parent", ["dangling_symlink", "regular_file"])
+def test_active_loader_rejects_corrupt_closure_parent(tmp_path, corrupt_parent):
+    root, _registry = _campaign_tree(tmp_path)
+    campaign = load_campaign(DEFAULT_CAMPAIGN_ID, repo_root=root)
+    activation = root / "run_state" / "active_research_campaign.json"
+    activation.parent.mkdir(parents=True)
+    activation.write_text(json.dumps({
+        "schema_version": "research-campaign-activation/v1",
+        "campaign_id": DEFAULT_CAMPAIGN_ID,
+        "campaign_manifest_sha256": campaign["_manifest_sha256"],
+        "activated_at": "2026-09-14T22:20:00Z",
+        "activated_by": "test-owner",
+    }))
+    closure_directory = root / "run_state" / "research_campaign_closures"
+    if corrupt_parent == "dangling_symlink":
+        closure_directory.symlink_to(root / "missing-closure-directory")
+    else:
+        closure_directory.write_text("not a directory")
+
+    with pytest.raises(CampaignError, match="closure directory"):
+        load_active_campaign(
+            repo_root=root,
+            now=datetime(2026, 9, 14, 22, 30, tzinfo=timezone.utc),
+        )
