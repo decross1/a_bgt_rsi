@@ -51,14 +51,21 @@ this document is brief for a repair, so an unverified name would propagate. I do
 store is empty and I do not claim `none in the lab store`: I ran no retrieval, so the prior-art
 gate is simply un-evaluated. The paper store is the `chroma_db` collection `papers_recent`, which
 is not empty: a read-only query of `chroma_db/chroma.sqlite3` (join `embeddings` to `segments` on
-that collection) gives 2,195 stored embeddings, reproduced in this session. The retrieval helper
-`tools/citation_screen.py` exists on `oracle/2026-09-24-citation-screen` but not yet on local
-`main`, so the citation-consistency check it provides is not yet a main-branch command.
-`memory/brain/edges.jsonl` (1 line) and `memory/brain/narratives.jsonl` (2 lines, `wc -l`) are
-brain pages, not the paper store, so their line counts say nothing about prior art. A retrieval
-run against `papers_recent` plus primary sources, and that citation-consistency check once it is
-on main, are therefore the first step of any repair — see C1 in the repair plan — not a citation
-list to copy.
+that collection) gives 2,195 stored embeddings, reproduced in this session. The citation-consistency
+checker `tools/citation_screen.py` **is** on local `main` (`git cat-file -e
+0640767:tools/citation_screen.py` succeeds; `git ls-tree -r 0640767 --name-only` lists it; its
+landing commit `68d563d` is an ancestor of `0640767`). What it is missing from is the **live C4
+checkout** at `a958f91` (`git cat-file -e a958f91:tools/citation_screen.py` fails), so the check
+cannot run in the lane until the interactive C4 port carries that commit — the gap is deployment,
+not the repository. An earlier revision of this paragraph said the opposite, and mailbox seq 342
+repeats that error; seq 344 and seq 346 correct it, and this paragraph follows them. For
+completeness on the same evidence: `papers_recent` holds 2,195 embeddings while
+`SELECT count(*) FROM embeddings` gives 10,091 across all chroma collections, which is where the
+10,091 figure belongs. `memory/brain/edges.jsonl` (1 line) and `memory/brain/narratives.jsonl` (2
+lines, `wc -l`) are brain pages, not the paper store, so their line counts say nothing about prior
+art. A retrieval run against `papers_recent` plus primary sources, and that citation-consistency
+check, are therefore the first step of any repair — see C1 in the repair plan — not a citation list
+to copy.
 
 ## Per-candidate result
 
@@ -114,15 +121,19 @@ list to copy.
 
 ### C3 — Exploitability of Generalist Strategies in Coordination Games: **fails T (best A readiness; second repair target)**
 
-- **Under-defined T as written, and tautological only under one reading:** the benchmark is "Nash
+- **Under-defined T as written, and definitional only under two conditions:** the benchmark is "Nash
   equilibrium in mixed strategies" while the preregistered rule is "specialist strategies achieve
-  higher payoff against fixed opponents than generalists". *If* "specialist" is defined as the argmax
-  best response to the fixed opponent, then the rule is a definition rather than a prediction and its
-  falsifier ("if generalists consistently outperform specialists across all opponent types") could
-  only fire against an a priori impossible outcome. As the candidate is actually written the
-  specialist is left under-defined — a scripted, non-optimal specialist can lose — so failure is not
-  logically impossible and the honest verdict is that the falsifier is **under-specified**, not
-  refuted. Either reading fails the T gate; they fail it for different reasons.
+  higher payoff against fixed opponents than generalists". If "specialist" is the argmax best response
+  to the fixed opponent, argmax guarantees the specialist **non-inferior** payoff (>=), not a strictly
+  higher one — under ties the two can be equal — so even under that definition the word "higher" is
+  doing work the definition does not supply. And the falsifier ("if generalists consistently
+  outperform specialists across all opponent types") is a priori impossible **only if** the
+  specialist's argmax ranges over the same admissible class that contains the generalist; if the
+  specialist is restricted to a narrower class, a generalist can legitimately beat it. As the
+  candidate is actually written the specialist is left under-defined — a scripted, non-optimal
+  specialist can lose — so failure is not logically impossible and the honest verdict is that the
+  falsifier is **under-specified**: neither the payoff comparison (>= vs >) nor the class the
+  specialist ranges over is declared. That is what fails the T gate.
 - What would make it real: define exploitability as max counter-strategy payoff *over a declared
   opponent class*, then test whether generalist exploitability exceeds specialist exploitability by
   a preregistered margin at matched per-strategy coverage, with coverage explicitly controlled.
