@@ -80,7 +80,7 @@ def test_pinned_bundle_enforces_owner_reserve():
     assert f'record.get("mem_available_floor_gib") != {guard}' in text
 
 
-def test_pinned_bundle_serves_the_deployed_c2_profile():
+def test_pinned_bundle_serves_the_deployed_c4_profile():
     import hashlib
     import re
     import pytest
@@ -92,10 +92,53 @@ def test_pinned_bundle_serves_the_deployed_c2_profile():
     profile_name = re.search(r'\nPROFILE = BASE / "([^"]+)"\n', text).group(1)
     profile = resident.PREP / profile_name
     assert profile_sha == config['profile_sha256'] == hashlib.sha256(profile.read_bytes()).hexdigest()
-    assert json.loads(profile.read_text())['max_running_requests'] == config['max_running_requests'] == 2
-    # Live readiness admits only a server that reports the same two running requests.
+    loaded = json.loads(profile.read_text())
+    assert (loaded['max_running_requests'] == config['max_running_requests']
+            == resident.BUNDLE_MAX_RUNNING_REQUESTS == 4)
+    # SGLang caps running requests at max_mamba_cache_size // 5 on this model.
+    assert loaded['max_mamba_cache_size'] == 24 and loaded['max_mamba_cache_size'] // 5 >= 4
+    # Live readiness admits only a server that reports four uncapped running
+    # requests in the full 262K pool.
     readiness = text[text.index('def server_profile()'):text.index('def raise_if_startup_stop_requested')]
-    assert '"max_running_requests": 2,' in readiness and '"max_total_tokens": 262144,' in readiness
+    assert '"max_running_requests": 4,' in readiness and '"max_total_tokens": 262144,' in readiness
+    assert '"max_mamba_cache_size": 24,' in readiness
+    assert '"internal_states[0].effective_max_running_requests_per_dp", 4,' in readiness
+    assert 'if value.get("max_total_num_tokens") != 262144:' in readiness
+
+
+def _selected_with(tmp_path, **changes):
+    (tmp_path / 'config').mkdir(exist_ok=True)
+    manifest = json.loads((Path(__file__).resolve().parents[1] / 'config/model_deployment.json').read_text())
+    for key, value in changes.items():
+        if value is _DROP:
+            manifest.pop(key)
+        else:
+            manifest[key] = value
+    (tmp_path / 'config/model_deployment.json').write_text(json.dumps(manifest))
+    return resident.selected(tmp_path)
+
+
+_DROP = object()
+
+
+def test_selected_binds_running_requests_to_the_pinned_profile(tmp_path):
+    import pytest
+    assert _selected_with(tmp_path, max_running_requests=4)
+    # C1 and C2 are valid deployment counts, but not for the pinned C4 profile.
+    for running in (1, 2):
+        with pytest.raises(ValueError, match='reviewed serving bundle'):
+            _selected_with(tmp_path, max_running_requests=running)
+    # Counts without a reviewed profile fail in the deployment loader.
+    for running in (3, 8, True, _DROP):
+        with pytest.raises(ValueError, match='max_running_requests'):
+            _selected_with(tmp_path, max_running_requests=running)
+
+
+def test_selected_rejects_a_stale_profile_digest(tmp_path):
+    import pytest
+    c2 = '495f1f3c59f559185720257538646354a5995ab9ca82e042565ae989ca4452a3'
+    with pytest.raises(ValueError, match='reviewed serving bundle'):
+        _selected_with(tmp_path, profile_sha256=c2)
 
 
 def test_nara_flash_admission_does_not_apply_legacy_30g_floor(tmp_path, monkeypatch):
