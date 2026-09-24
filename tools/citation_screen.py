@@ -121,8 +121,18 @@ def field_lines(block: str) -> list[str]:
             continue
         if stripped.startswith("---") or set(stripped) <= {"-", ":", " "}:
             continue
-        if re.match(r"(?i)^(prior(\s+work)?|related\s+work|title)\b[ \t]*:", stripped):
-            in_field = True  # a bare (unbolded) field label: only its own line is a citation
+        if re.match(r"(?i)^(?:[-*][ \t]+)?(prior(\s+work)?|related\s+work)\b[ \t]*:", stripped):
+            # An UNBOLDED field label with text after the colon is a citation line, and the
+            # text must reach the screen. It used to be dropped: this branch set in_field,
+            # the branch below matched the same line as ANY_LABELLED_FIELD and reset
+            # in_field without appending anything, so the seq 150 finding-1 probe
+            # ('- Prior work: <invented title> (arXiv:<real id>)') screened as clean.
+            # Review claude-a857cd9b3f5b6c33 (seq 187), amendment 1. 'Title:' stays out:
+            # a title is not a prior-work citation, and screening it manufactures rows.
+            tail = stripped.split(":", 1)[1].strip()
+            lines.append(BULLET.sub("", tail) if tail else stripped)
+            capture = True
+            continue
         match = ANY_LABELLED_FIELD.match(stripped)
         if match:
             named = LABELLED.match(stripped)
@@ -428,12 +438,23 @@ def screen(set_path: Path, store: PaperStore) -> dict:
             for entry in line_entries:
                 if entry["arxiv_id"] not in {seen["arxiv_id"] for seen in ids}:
                     ids.append(entry)
-            for chunk in re.split(r"(?i)[;\n]|\(arxiv[:.\s]*\d{4}\.\d{4,5}(?:v\d+)?\)", line):
+            # Amendment 2 (review claude-a857cd9b3f5b6c33, seq 187): pair each chunk with
+            # the id whose parenthetical actually ends it, never with the line's first id.
+            # `carried = [...] or titled_ids` let a forged second title be adjudicated
+            # against the first citation's id, which could read a forgery as VERIFIED.
+            # The id is taken from the text INCLUDING the removed parenthetical, so an
+            # uningested id still binds its own chunk instead of falling to the title arm.
+            PARENTHETICAL = r"\((arxiv[:.\s]*\d{4}\.\d{4,5}(?:v\d+)?(?:,\s*arxiv[:.\s]*\d{4}\.\d{4,5}(?:v\d+)?)*)\)"
+            pieces = re.split(PARENTHETICAL, line, flags=re.I)
+            for index, chunk in enumerate(pieces):
                 chunk = chunk.strip(" \t-*|").strip()
                 if len(normalize(chunk)) < MIN_CITED_CHUNK or normalize(chunk) in seen_titles:
                     continue
                 seen_titles.add(normalize(chunk))
-                carried = [a for a in titled_ids if a in chunk] or titled_ids
+                beside = pieces[index + 1] if index + 1 < len(pieces) else ""
+                own = [a for a in ARXIV_ANY.findall(beside or "")
+                       if re.search(r"(?i)\b%s\b" % re.escape(a), line)]
+                carried = own or ([a for a in titled_ids if a in chunk] if len(titled_ids) == 1 else [])
                 if carried:
                     pair, pair_paper, stored_title = pair_status(chunk, carried[0], store)
                     if pair == "NO_TITLE":

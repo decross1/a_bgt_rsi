@@ -587,9 +587,11 @@ def test_main_lab_root_follows_git_and_falls_back_to_root(tmp_path, monkeypatch)
 #
 # The measured hole, quoted from the review: at f150a22 a Prior-work line carrying a real
 # id and an invented title came out `[INGESTED]` with totals `unverifiable 0 / partial 0 /
-# uningested 0`, and the report printed the STORE's title, not the cited one. Two tests
-# below reproduce that exact probe shape (`- Prior work:` + 'arXiv:2609.11111 "..."') and
-# assert the opposite answer.
+# uningested 0`, and the report printed the STORE's title, not the cited one. The bolded
+# probe below (id_pair_text, '**Prior work:') covers that shape. The unbolded shape
+# ('- Prior work: ...') was NOT covered until review claude-a857cd9b3f5b6c33 (seq 187)
+# amendment 1: see test_an_unbolded_prior_work_line_is_screened_not_skipped, which is now
+# the test that reproduces the seq 150 probe.
 
 ID_TITLE_K = "id_title"
 
@@ -866,3 +868,74 @@ def test_every_live_title_cited_with_its_own_id_verifies(tmp_path):
     bad = [w for w in out["candidates"][0]["works"] if w["status"] != "VERIFIED"]
     assert not bad, f"{len(bad)}/{checked} verbatim id+title citations did not verify: {bad[:3]}"
     assert out["totals"]["mismatch"] == 0
+
+
+# --- review claude-a857cd9b3f5b6c33 (seq 187), amendments 1 and 2 ---------------------
+#
+# Amendment 1: an UNBOLDED 'Prior work:' label. field_lines() set in_field on the bare
+# label, then the very next branch reset it without appending the line's text, so the
+# seq 150 finding-1 probe shape ('- Prior work: <text> (arXiv:<id>)') never reached the
+# screen at all: totals all zero, exit 0. The three tests below use the unbolded shape
+# so the probe is reproduced by tests, not only in a comment (amendment 3).
+#
+# Amendment 2: the id fallback `carried = [...] or titled_ids`. On a line carrying two
+# real citations, a chunk with no id of its own was paired with titled_ids[0], so a
+# title could be verified against the wrong paper.
+
+
+def test_an_unbolded_prior_work_line_is_screened_not_skipped(tmp_path):
+    """Amendment 1, the exact probe: a real id, an invented title, no bold anywhere."""
+    text = ("## Candidate: Bare\n\n"
+            "- Prior work: Anchoring in LLM agents (arXiv:2609.11111)\n"
+            "- Falsifier: something\n")
+    out = report(tmp_path, text)
+    works = out["candidates"][0]["works"]
+    assert works, (
+        "an unbolded 'Prior work:' line reached the screen with no citation rows at all - "
+        "the forgery class the seq 150 probe describes walks through clean")
+    assert out["totals"]["mismatch"] >= 1, (
+        f"the invented title beside a real id was not a MISMATCH: {works}")
+
+
+def test_an_unbolded_prior_work_line_with_the_true_title_verifies(tmp_path):
+    """Amendment 1, the other arm: screening must not only fire on forgeries."""
+    text = ("## Candidate: BareTrue\n\n"
+            "- Prior work: Order effects in judgment under uncertainty (arXiv:2609.11111)\n")
+    out = report(tmp_path, text)
+    works = out["candidates"][0]["works"]
+    assert works and works[0]["status"] == "VERIFIED", works
+
+
+def test_an_unbolded_related_work_line_is_screened(tmp_path):
+    text = ("## Candidate: BareRel\n\n"
+            "Related work: Quantum probability models of cognition: a review "
+            "(arXiv:2609.11111)\n")
+    out = report(tmp_path, text)
+    assert out["totals"]["mismatch"] >= 1, out["candidates"][0]["works"]
+
+
+def test_two_citations_on_one_line_never_pair_a_title_with_the_wrong_id(tmp_path):
+    """Amendment 2: the second title belongs to 2609.11112. Pairing it with the first id
+    on the line would call a real title a mismatch, or the reverse would call a forgery
+    verified; either way the pairing must come from the text beside the chunk."""
+    text = ("## Candidate: Two\n\n**Prior work:** Order effects in judgment under "
+            "uncertainty (arXiv:2609.11111); Anchoring in LLM agents (arXiv:2609.11112)\n")
+    out = report(tmp_path, text)
+    by_cited = {w["cited"][:40]: w for w in out["candidates"][0]["works"]}
+    forged = [w for k, w in by_cited.items() if "Anchoring" in k]
+    assert forged, sorted(by_cited)
+    assert forged[0]["status"] == "MISMATCH", forged
+    assert forged[0]["arxiv_id"] == "2609.11112", (
+        f"a forged title was adjudicated against {forged[0]['arxiv_id']}; the line's first "
+        f"id is not this chunk's id")
+    true = [w for k, w in by_cited.items() if "Order effects" in k]
+    assert true and true[0]["status"] == "VERIFIED" and true[0]["arxiv_id"] == "2609.11111", true
+
+
+def test_a_chunk_with_no_id_of_its_own_on_a_single_id_line_still_uses_that_id(tmp_path):
+    """The fallback is still needed: one id on the line, the title phrased beside it."""
+    text = ("## Candidate: One\n\n**Prior work:** Order effects in judgment under "
+            "uncertainty, arXiv:2609.11111\n")
+    out = report(tmp_path, text)
+    works = out["candidates"][0]["works"]
+    assert works and works[0]["status"] == "VERIFIED", works
