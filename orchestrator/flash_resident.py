@@ -23,11 +23,8 @@ from datetime import datetime, timezone
 
 ROOT = Path(__file__).resolve().parents[1]
 PREP = Path('/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-18/flash-personal-recovery/sglang-fallback-prep')
-BUNDLE = PREP / 'sglang_session_s3_v10.py'
-BUNDLE_SHA = 'e26d2aa2330a6c2e37c4629aa7074b6b7804f07f9239239bcf90f73244b90aa5'
-# Running requests served by the helper's pinned profile (nextn-262k-c4-m24-s3.json).
-# The deployment document must declare the same count.
-BUNDLE_MAX_RUNNING_REQUESTS = 4
+BUNDLE = PREP / 'sglang_session_s3_v9.py'
+BUNDLE_SHA = '1be5d93b88bd26b6f8f8514088375df9c986d656d9aafffb8a838711b7d101b7'
 RECEIPT = PREP / 'checkpoint-verification-bf16-20260918T2343Z/checkpoint-receipt.json'
 RECEIPT_SHA = '0489e1741832e6be63267cb1a04a1eb05736d27038fe924ac50cf02bce108287'
 MODEL = 'nvidia/Qwen3.8-Flash-Next-NVFP4'
@@ -63,8 +60,7 @@ def selected(root: Path = ROOT) -> bool:
     # same deployed bundle, not merely a syntactically valid digest.
     if (deployment.image_id != 'sha256:2ee545cf877ae8497c123637e061b6e6313c624e30018f975969b1d554e27f56'
             or deployment.model_revision != 'fc694b54fb0174e0913e6adf86691ef85a4ead47'
-            or deployment.profile_sha256 != '45546ef777af74a264d31e5b5cfd5b2f68f0bddf2954d4f243bd7ea9b3dae903'
-            or deployment.max_running_requests != BUNDLE_MAX_RUNNING_REQUESTS):
+            or deployment.profile_sha256 != '495f1f3c59f559185720257538646354a5995ab9ca82e042565ae989ca4452a3'):
         raise ValueError('deployment differs from the reviewed serving bundle')
     return True
 
