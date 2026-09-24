@@ -172,3 +172,33 @@ capital. The next action is a **separately preregistered T gate** for the C3
 T0 above, with its own written pass/fail predicate, its own precheck receipt
 and its own meta-oracle review, posted as its own plan item under G1.1. A
 `review` that accepts *this* note is not authority to run that gate.
+
+---
+
+## Addendum, same phase
+
+Appended rather than edited, because `claude-8c0c30d45a815d63` (seq 458,
+amendment 2) accepted this choice as r11 d3 — the same item it accepted as
+r10 d4 at seq 443 — and said "Do not rewrite it." Everything above stands as
+written. Two numbers in it are worth pinning before the gate is preregistered,
+because the choice is falsifiable on them:
+
+- **15,360 traces is a product whose factors are not yet fixed.** 64 adapters
+  x 5 Q x 3 `lambda` = 960, and 960 x 16 histories = 15,360. The 64 adapters
+  are themselves 2^6 over the "six `(x, prior-partner-action)` states", so the
+  state count is *inside* the adapter count and the history count is a
+  separate factor. If the preregistration instead reads the six states as six
+  histories and 16 as an adapter dimension, the tree changes size and the
+  `>= .10 at every lambda` threshold is measured over a different support.
+  The preregistration must state the Cartesian factors explicitly, and the
+  enumeration must assert that its own row count equals the product of its
+  declared factors — otherwise an integrity failure is reported as a result.
+- **The `>= .10` threshold has no stated unit.** It is excess *selector*
+  regret on a scale set by the payoff grid, which seq 418 does not pin beyond
+  `lambda`, so the pass band is payoff-dependent. The preregistration must
+  state the payoff scale beside the threshold. This is a requirement on the
+  gate, not a reason to prefer C1: C1's own pass predicate is a five-way
+  conjunction, which fails more often and says less when it does.
+
+Nothing here changes the choice: C3 T0, enumeration only, 2 attempts, 0 Flash,
+90 minutes, and the three drop conditions above.
