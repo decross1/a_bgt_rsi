@@ -309,13 +309,19 @@ BUILDER_SYSTEM = (
 
 
 def _tree_kind(rev: str, rel: str, *, cwd: Path | None = None) -> str | None:
-    """git ls-tree object type for `rel` at `rev` ('blob', 'tree', ...), None if untracked."""
+    """Return 'blob' only for a regular file at the exact path in `rev`."""
     done = subprocess.run(["git", "ls-tree", rev, "--", rel], cwd=str(cwd or ROOT),
                           capture_output=True, text=True)
-    if done.returncode != 0 or not done.stdout.strip():
+    if done.returncode != 0:
         return None
-    parts = done.stdout.split()[0:3]
-    return parts[1] if len(parts) == 3 else None
+    for line in done.stdout.splitlines():
+        metadata, separator, path = line.partition("\t")
+        if not separator or path != rel:
+            continue
+        parts = metadata.split()
+        if len(parts) == 3 and parts[0] in ("100644", "100755") and parts[1] == "blob":
+            return "blob"
+    return None
 
 
 def _input_visibility(input_paths: list, writable: list, *, cwd: Path | None = None,
@@ -329,7 +335,7 @@ def _input_visibility(input_paths: list, writable: list, *, cwd: Path | None = N
                           capture_output=True, text=True).stdout.strip()
     verdicts: dict[str, str] = {}
     for rel in input_paths:
-        if not isinstance(rel, str) or not _path_ok(rel):
+        if not isinstance(rel, str) or (not _path_ok(rel) and f"{rel}/" not in ALLOWED_PREFIXES):
             verdicts[rel] = INPUT_OUTSIDE_FENCE
             continue
         if _tree_kind(head, rel, cwd=cwd) != "blob":

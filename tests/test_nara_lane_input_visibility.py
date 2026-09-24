@@ -25,6 +25,7 @@ An item that declares no `input_paths` is admitted and prompted exactly as befor
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -129,6 +130,31 @@ def test_admission_still_refuses_a_non_regular_input(repo) -> None:
     _git(repo, "commit", "-q", "-m", "directory input")
     reasons = lane.admission(_item(input_paths=["notes/dir_input"]), repo_root=repo)
     assert any("notes/dir_input" in r for r in reasons), reasons
+
+
+def test_admission_holds_tracked_directory_inputs_with_trailing_slashes(repo) -> None:
+    for directory in ("docs", "notes"):
+        (repo / directory).mkdir(exist_ok=True)
+        (repo / directory / "child.md").write_text("tracked child\n", encoding="utf-8")
+    (repo / "notes/link_target.md").write_text("tracked target\n", encoding="utf-8")
+    os.symlink("link_target.md", repo / "notes/linked_input.md")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "tracked directory and symlink inputs")
+
+    for path in ("docs/", "notes/"):
+        reasons = lane.admission(_item(input_paths=[path]), repo_root=repo)
+        assert any(path in reason and "not readable by the builder" in reason
+                   for reason in reasons), (path, reasons)
+
+    for path in ("docs", "notes"):
+        reasons = lane.admission(_item(input_paths=[path]), repo_root=repo)
+        assert any(path in reason and "not readable by the builder" in reason
+                   for reason in reasons), (path, reasons)
+
+    path = "notes/linked_input.md"
+    reasons = lane.admission(_item(input_paths=[path]), repo_root=repo)
+    assert any(path in reason and "not readable by the builder" in reason
+               for reason in reasons), (path, reasons)
 
 
 # --- rule 2: builder() tells the model which declared inputs it cannot read ---------
