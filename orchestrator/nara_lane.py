@@ -1,7 +1,8 @@
 """Nara's implementor lane (owner direction 2026-09-22, D-082).
 
 Turns Oracle plan items from the mailbox into validated branches, one at a
-time and outside the research coordinator. Per item: admit deterministically,
+time unless concurrency is raised (below) and outside the research
+coordinator. Per item: admit deterministically,
 write Oracle's red-first test into a fresh worktree, confirm it fails, let a
 local-Flash builder edit only the allowed paths, run the test in a network-less
 bubblewrap sandbox, then commit on nara/<id> and post a receipt. It never
@@ -30,6 +31,19 @@ and its own tests post plan items without receipts - so it can only be enforced
 at the lane, which means a hold costs a withdraw-and-repost (a `held` receipt is
 terminal in the fold, as an `amend` verdict already found). The receipt is a
 discipline, not authentication: the actor who writes the test writes the receipt.
+
+Concurrency (2026-09-24): one runner holds run_state/.nara_lane.lock for its
+whole pass, as before, and may run up to K items at once in a bounded thread
+pool. K is `max_concurrent_items` in config/nara_lane.json (default 1, the
+serial lane), overridable by --max-concurrent or NARA_LANE_MAX_CONCURRENT, and
+always capped at the server's max_running_requests - 1 from
+config/model_deployment.json (floor 1), so the lane never takes every server
+slot. Only the runner's dispatcher claims, in mailbox order; every claim takes a
+per-item flock under run_state/nara_lane_claims/ and re-reads the mailbox under
+it before posting `claimed`, and the lock is held until the terminal receipt is
+posted. A `claimed` item is recovered as abandoned only when its claim lock is
+free (its claimant died). Admission, the review gate, the fence, the sandbox and
+the per-item checks are unchanged and run per item exactly as in the serial lane.
 """
 from __future__ import annotations
 
@@ -44,8 +58,10 @@ import stat
 import sys
 import subprocess
 import tempfile
+import threading
 import time
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -64,9 +80,16 @@ DENIED_PATTERN = re.compile(r"PREREGISTRATION|^experiments/research_campaign_|[*
                             r"|(^|/)\.git(/|$)|(^|/)\.gitattributes$|(^|/)\.gitmodules$")
 GIT_SAFE = ("-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.sshCommand=false",
             "-c", "submodule.recurse=false")
-MAX_ATTEMPTS, MAX_WALL_MINUTES = 3, 30
+# 60 minutes / 1800 s (2026-09-24): with K items sharing the server's decode, a
+# 12K-token build at ~15-20 tok/s takes 10-14 minutes, so the serial budgets
+# (30 minutes / 900 s) would time out a correct build. Retries stay at zero.
+MAX_ATTEMPTS, MAX_WALL_MINUTES = 3, 60
 MAX_TEST_BYTES, MAX_FILE_BYTES, BUILDER_MAX_TOKENS = 8 * 1024, 48 * 1024, 12000
 TEST_TIMEOUT_S = 300
+BUILDER_TIMEOUT_S = 1800.0
+CONCURRENCY_ENV = "NARA_LANE_MAX_CONCURRENT"
+_GIT_SERIAL = threading.Lock()  # worktree creation and commits, one at a time per runner
+_LOG_SERIAL = threading.Lock()
 
 
 class LaneError(RuntimeError):
@@ -77,7 +100,7 @@ def log(task: str, status: str, actual: str, expected: str, duration_ms: int = 0
     row = dict(timestamp=datetime.now(timezone.utc).isoformat(), task_id=f"nara-lane:{task}", agent="nara",
                status=status, observable_actual=actual[:2000], observable_expected=expected,
                duration_ms=duration_ms)
-    with RUN_LOG.open("a") as handle:
+    with _LOG_SERIAL, RUN_LOG.open("a") as handle:
         handle.write(json.dumps(row) + "\n")
 
 
@@ -379,7 +402,7 @@ def _dotgit(worktree: Path) -> bytes:
     return pointer.read_bytes()
 
 
-def builder(body: dict, worktree: Path, feedback: str, timeout: float = 900) -> dict[str, str]:
+def builder(body: dict, worktree: Path, feedback: str, timeout: float = BUILDER_TIMEOUT_S) -> dict[str, str]:
     """One local-Flash call proposing full contents for the allowed files."""
     from agent_wrapper.wrapper import call_sync
 
@@ -437,8 +460,9 @@ def implement(entry: dict, build=builder, sandbox=sandbox_run) -> dict:
         if worktree.exists():
             return {"state": "failed", "reason": f"worktree already exists: {worktree}"}
         WORKTREES.mkdir(parents=True, exist_ok=True)
-        base_sha = _git("rev-parse", "HEAD").strip()
-        _git("worktree", "add", "-b", branch, str(worktree), base_sha)
+        with _GIT_SERIAL:
+            base_sha = _git("rev-parse", "HEAD").strip()
+            _git("worktree", "add", "-b", branch, str(worktree), base_sha)
         pointer = _dotgit(worktree)
         before = _snapshot(worktree)
         _write(worktree, test_path, acceptance["test_content"])
@@ -451,7 +475,7 @@ def implement(entry: dict, build=builder, sandbox=sandbox_run) -> dict:
         while attempts < attempts_allowed and time.monotonic() < deadline:
             attempts += 1
             try:
-                files = build(body, worktree, output, timeout=_left(deadline, 900.0))
+                files = build(body, worktree, output, timeout=_left(deadline, BUILDER_TIMEOUT_S))
             except LaneError:
                 raise
             except Exception as exc:  # recorded as feedback for the next attempt
@@ -479,21 +503,28 @@ def implement(entry: dict, build=builder, sandbox=sandbox_run) -> dict:
             return {**result, "state": "failed", "reason": "acceptance test still failing"}
         if _dotgit(worktree) != pointer:
             return {**result, "state": "failed", "reason": "worktree .git pointer changed"}
-        _git("add", "--", *changed, cwd=worktree)
-        _git("-c", "user.name=Nara (lab lane)", "-c", "user.email=nara@lab.local", "commit", "-q", "-m",
-             f"Nara lane: {body['title']}\n\nOracle plan item {msg_id}; validated in the lane sandbox.", cwd=worktree)
+        with _GIT_SERIAL:
+            _git("add", "--", *changed, cwd=worktree)
+            _git("-c", "user.name=Nara (lab lane)", "-c", "user.email=nara@lab.local", "commit", "-q", "-m",
+                 f"Nara lane: {body['title']}\n\nOracle plan item {msg_id}; validated in the lane sandbox.",
+                 cwd=worktree)
         return {**result, "state": "validated", "head_sha": _git("rev-parse", "HEAD", cwd=worktree).strip()}
     except Exception as exc:
         return {"state": "failed", "reason": f"{type(exc).__name__}: {exc}", "branch": branch, "base_sha": base_sha}
 
 
-def meta_verdict(rows: list[dict], item: dict) -> str:
-    """'accept', 'awaiting', or the latest non-accepting meta-oracle verdict on this item."""
+def _policy() -> dict:
+    """config/nara_lane.json, or {} when missing or unreadable (which requires review)."""
     try:
         policy = json.loads((ROOT / "config/nara_lane.json").read_text())
     except (OSError, ValueError):
         policy = {}
-    policy = policy if isinstance(policy, dict) else {}
+    return policy if isinstance(policy, dict) else {}
+
+
+def meta_verdict(rows: list[dict], item: dict) -> str:
+    """'accept', 'awaiting', or the latest non-accepting meta-oracle verdict on this item."""
+    policy = _policy()
     exempt = policy.get("review_optional_task_classes")
     if policy.get("require_meta_review") is False or (
             isinstance(exempt, list) and item["body"].get("task_class") in exempt):
@@ -504,9 +535,73 @@ def meta_verdict(rows: list[dict], item: dict) -> str:
     return verdicts[-1] if verdicts else "awaiting"
 
 
+def _positive_int(value) -> int | None:
+    return value if type(value) is int and value >= 1 else None
+
+
+def server_slots() -> int:
+    """max_running_requests from config/model_deployment.json; 1 when missing or unreadable."""
+    try:
+        deployment = json.loads((Path(ROOT) / "config/model_deployment.json").read_text())
+    except (OSError, ValueError):
+        return 1
+    return _positive_int(deployment.get("max_running_requests") if isinstance(deployment, dict) else None) or 1
+
+
+def lane_concurrency(requested: int | None = None) -> int:
+    """How many items one run may process at once.
+
+    The request is the argument (the --max-concurrent flag), else the
+    NARA_LANE_MAX_CONCURRENT environment variable, else `max_concurrent_items` in
+    config/nara_lane.json, else 1; anything that is not a positive integer counts
+    as 1. It is then capped at server_slots() - 1 so the lane always leaves the
+    server a slot, with a floor of 1 so a single-slot server keeps today's serial
+    lane.
+    """
+    if requested is None:
+        raw = os.environ.get(CONCURRENCY_ENV, "").strip()
+        if raw:
+            requested = int(raw) if raw.isdigit() else 1
+    if requested is None:
+        requested = _policy().get("max_concurrent_items", 1)
+    return max(1, min(_positive_int(requested) or 1, server_slots() - 1))
+
+
 def _lane_lock_path() -> Path:
-    """The single-writer lock, under run_state/, resolved at call time with ROOT."""
+    """The lane-runner lock, under run_state/, resolved at call time with ROOT.
+    One runner dispatches at a time; items are claimed under _claim_lock_path."""
     return Path(ROOT) / "run_state/.nara_lane.lock"
+
+
+def _claim_lock_path(msg_id: str) -> Path:
+    """The per-item claim lock, named for sha256(msg_id): rows are not
+    schema-checked on read, so a msg_id never becomes a path component here."""
+    return Path(ROOT) / "run_state/nara_lane_claims" / f"{hashlib.sha256(msg_id.encode()).hexdigest()[:32]}.lock"
+
+
+def _claim(path: Path, msg_id: str, expected: str):
+    """The item's claim lock, held, if the item is still in `expected` state when
+    re-read under it; otherwise None. A live claimant holds this lock from before
+    its `claimed` receipt until after its terminal one, so a held lock means the
+    item is in progress and a free lock on a `claimed` item means it was abandoned.
+    flock is per open file, so this excludes other threads as well as processes."""
+    lock_path = _claim_lock_path(msg_id)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = os.fdopen(os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o644), "a")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        handle.close()
+        return None
+    try:
+        current = mailbox.fold(mailbox.read(path)).get(msg_id)
+    except BaseException:
+        handle.close()
+        raise
+    if current is None or current["state"] != expected:
+        handle.close()
+        return None
+    return handle
 
 
 def _paused() -> bool:
@@ -534,14 +629,68 @@ def _receipt(path: Path, msg_id: str, body: dict) -> dict:
                             to="oracle", in_reply_to=msg_id, path=path)
 
 
-def run_queue(path: Path | None = None, build=builder, sandbox=sandbox_run, ready=None) -> list[dict]:
-    """Process every open item once; returns the receipts posted."""
+def _finish(path: Path, entry: dict, claim, build, sandbox, keep, contain: bool) -> None:
+    """Implement one claimed item and post its terminal receipt, then release the claim.
+
+    contain=False is the serial lane: anything implement() or the receipt raises
+    propagates, exactly as before. contain=True is a pool worker: a crash becomes
+    this item's own `failed` receipt, and a receipt that cannot be posted is
+    logged and left to the next run's abandoned-claim recovery, so one worker's
+    failure never touches another item's receipt.
+    """
+    msg_id = entry["item"]["msg_id"]
+    try:
+        started = time.monotonic()
+        try:
+            outcome = implement(entry, build, sandbox)
+        except BaseException as exc:
+            if not contain:
+                raise
+            outcome = {"state": "failed", "reason": f"lane worker crashed: {type(exc).__name__}: {exc}"}
+        try:
+            keep(_receipt(path, msg_id, outcome))
+        except BaseException as exc:
+            if not contain:
+                raise
+            log(msg_id, "failed", f"terminal receipt not posted: {type(exc).__name__}: {exc}",
+                "terminal receipt posted")
+            return
+        log(msg_id, "completed" if outcome["state"] == "validated" else "failed",
+            json.dumps({k: outcome.get(k) for k in ("state", "reason", "branch", "head_sha", "attempts")}),
+            "validated branch", duration_ms=int((time.monotonic() - started) * 1000))
+    finally:
+        claim.close()
+
+
+def _worker(path: Path, entry: dict, claim, build, sandbox, keep, slots) -> None:
+    try:
+        _finish(path, entry, claim, build, sandbox, keep, contain=True)
+    finally:
+        slots.release()
+
+
+def run_queue(path: Path | None = None, build=builder, sandbox=sandbox_run, ready=None,
+              max_concurrent: int | None = None) -> list[dict]:
+    """Process every open item once; returns the receipts posted, in mailbox order.
+
+    With lane_concurrency() == 1 each item runs to its terminal receipt before
+    the next is examined (the serial lane). Above 1, the dispatcher still
+    examines, admits and claims items one at a time in mailbox order, but hands
+    each claimed item to a pool worker and waits only for a free slot, checking
+    the pause files and Flash readiness again just before each claim.
+    """
     if _paused():
         return []
     path = mailbox.PATH if path is None else path  # resolved at call time, like _git's ROOT
     if ready is None:
         from orchestrator.flash_resident import check_ready as ready
     posted = []
+    posted_lock = threading.Lock()
+
+    def keep(receipt: dict) -> None:
+        with posted_lock:
+            posted.append(receipt)
+
     lock_path = _lane_lock_path()
     with lock_path.open("a") as lock:
         try:
@@ -554,40 +703,70 @@ def run_queue(path: Path | None = None, build=builder, sandbox=sandbox_run, read
         except mailbox.MailboxError as exc:
             log("mailbox", "failed", f"mailbox unreadable: {exc}", "readable mailbox")
             return []
-        for entry in entries:
-            if _paused():
-                break
-            msg_id = entry["item"]["msg_id"]
-            if entry["state"] == "claimed":  # a previous lane process died mid-item
-                posted.append(_receipt(path, msg_id, {"state": "failed", "reason": "lane interrupted; item abandoned"}))
-                continue
-            if entry["state"] != "open":
-                continue
-            try:
-                reasons = admission(entry["item"])
-            except Exception as exc:
-                reasons = [f"malformed plan item: {type(exc).__name__}: {exc}"]
-            if not reasons:
-                verdict = meta_verdict(rows, entry["item"])
-                if verdict == "awaiting":  # stays open; the review row wakes the lane again
-                    log(msg_id, "deferred", "awaiting meta-oracle review", "accepting review")
+        workers = lane_concurrency(max_concurrent)
+        pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="nara-lane-item") if workers > 1 else None
+        slots = threading.BoundedSemaphore(workers)
+        if pool is not None:
+            log("runner", "started", f"max_concurrent_items={workers} server_slots={server_slots()}",
+                "bounded concurrent lane")
+        try:
+            for entry in entries:
+                if _paused():
+                    break
+                msg_id = entry["item"]["msg_id"]
+                if entry["state"] == "claimed":  # a lane process died mid-item, unless its claim is still held
+                    claim = _claim(path, msg_id, "claimed")
+                    if claim is None:
+                        continue
+                    with claim:
+                        keep(_receipt(path, msg_id, {"state": "failed", "reason": "lane interrupted; item abandoned"}))
                     continue
-                if verdict != "accept":
-                    reasons = [f"meta-oracle verdict: {verdict}; withdraw and repost"]
-            if reasons:
-                posted.append(_receipt(path, msg_id, {"state": "held", "reasons": reasons}))
-                log(msg_id, "held", "; ".join(reasons), "admissible plan item")
-                continue
-            if not ready():
-                log(msg_id, "deferred", "Flash resident not ready", "Flash ready")
-                break
-            posted.append(_receipt(path, msg_id, {"state": "claimed"}))
-            started = time.monotonic()
-            outcome = implement(entry, build, sandbox)
-            posted.append(_receipt(path, msg_id, outcome))
-            log(msg_id, "completed" if outcome["state"] == "validated" else "failed",
-                json.dumps({k: outcome.get(k) for k in ("state", "reason", "branch", "head_sha", "attempts")}),
-                "validated branch", duration_ms=int((time.monotonic() - started) * 1000))
+                if entry["state"] != "open":
+                    continue
+                try:
+                    reasons = admission(entry["item"])
+                except Exception as exc:
+                    reasons = [f"malformed plan item: {type(exc).__name__}: {exc}"]
+                if not reasons:
+                    verdict = meta_verdict(rows, entry["item"])
+                    if verdict == "awaiting":  # stays open; the review row wakes the lane again
+                        log(msg_id, "deferred", "awaiting meta-oracle review", "accepting review")
+                        continue
+                    if verdict != "accept":
+                        reasons = [f"meta-oracle verdict: {verdict}; withdraw and repost"]
+                if reasons:
+                    keep(_receipt(path, msg_id, {"state": "held", "reasons": reasons}))
+                    log(msg_id, "held", "; ".join(reasons), "admissible plan item")
+                    continue
+                slots.acquire()  # the serial lane never waits here: its slot is back before the next item
+                handed_off = False
+                try:
+                    if pool is not None and _paused():  # a pause may have landed while waiting for a slot
+                        break
+                    if not ready():
+                        log(msg_id, "deferred", "Flash resident not ready", "Flash ready")
+                        break
+                    claim = _claim(path, msg_id, "open")
+                    if claim is None:  # withdrawn, expired or claimed elsewhere since the fold was read
+                        continue
+                    try:
+                        keep(_receipt(path, msg_id, {"state": "claimed"}))
+                    except BaseException:
+                        claim.close()
+                        raise
+                    if pool is None:
+                        _finish(path, entry, claim, build, sandbox, keep, contain=False)
+                    else:
+                        pool.submit(_worker, path, entry, claim, build, sandbox, keep, slots)
+                        handed_off = True
+                finally:
+                    if not handed_off:
+                        slots.release()
+        finally:
+            if pool is not None:
+                pool.shutdown(wait=True)  # the runner lock is held until every worker has posted
+    if pool is not None:
+        posted.sort(key=lambda row: row["seq"])
     return posted
 
 
@@ -606,6 +785,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--stub", action="append", default=[], type=Path,
                         help="precheck: a JSON file mapping repo path -> known-good content (repeatable)")
     parser.add_argument("--argv", help="precheck: JSON list, the test command (default: python -m pytest -q TEST)")
+    parser.add_argument("--max-concurrent", type=int,
+                        help=f"run: items processed at once (default: ${CONCURRENCY_ENV}, else "
+                             "config/nara_lane.json max_concurrent_items, else 1; capped at the server's "
+                             "max_running_requests - 1)")
     args = parser.parse_args(argv)
     if args.command == "status":
         view = {k: {"title": v["item"]["body"]["title"], "state": v["state"]}
@@ -626,7 +809,7 @@ def main(argv: list[str] | None = None) -> int:
                           ("test_sha256", "test_path", "base_sha", "red_run", "green_run", "green_receipt")},
                          indent=2))
         return 0 if report["green_run"] else 1
-    for receipt in run_queue():
+    for receipt in run_queue(max_concurrent=args.max_concurrent):
         print(json.dumps({"re": receipt["in_reply_to"], "state": receipt["body"]["state"],
                           "reason": receipt["body"].get("reason") or receipt["body"].get("reasons")}))
     return 0

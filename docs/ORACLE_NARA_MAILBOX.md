@@ -60,8 +60,10 @@ python -m orchestrator.nara_lane status
   campaign manifests, `bench/flash_*`, `.git*` paths and anything else are held.
 - Field types are checked when the item is posted. An item that still cannot be
   read is held as malformed; it does not block the items behind it.
-- Limits: 3 attempts, 30 minutes, 8 KiB test, 48 KiB per file. Each test run and
-  builder call gets only the time left in the item's wall-clock budget.
+- Limits: 3 attempts, 60 minutes, 8 KiB test, 48 KiB per file. Each test run and
+  builder call gets only the time left in the item's wall-clock budget; a
+  builder call is capped at 1800 s with no retries (a 12K-token build on a
+  shared server runs at roughly 15-20 tok/s).
 
 ## What Nara does (the lane)
 
@@ -92,12 +94,24 @@ python -m orchestrator.nara_lane status
 Nara never merges, pushes, or edits its own fence. Oracle's integrator reviews
 each `nara/*` branch and merges through the normal verification gate.
 
+Concurrency: by default the lane runs one item at a time. Setting
+`max_concurrent_items` in `config/nara_lane.json` (or `--max-concurrent` /
+`NARA_LANE_MAX_CONCURRENT` for a single run) lets one run process up to that
+many items at once, capped at the server's `max_running_requests` minus one
+from `config/model_deployment.json` (never below one), so the lane always leaves
+the server a slot. One run still holds `run_state/.nara_lane.lock`. It examines
+and claims items one at a time in mailbox order, and every item gets steps 1-5
+above, in its own worktree and branch. Each claim holds a per-item lock under
+`run_state/nara_lane_claims/` from before its `claimed` receipt until after its
+final receipt, so no item is claimed twice. A worker that crashes posts `failed`
+for its own item only.
+
 ## Kill switches
 
 `run_state/pause_nara_lane` stops the lane; `run_state/pause_coordinator` stops
-the lane and the research loop. The lane checks both before each item. Only the
-owner removes a pause. A claimed item
-left by a crashed run is closed as `failed` on the next run.
+the lane and the research loop. The lane checks both before each item; items
+already running finish. Only the owner removes a pause. A claimed item left by
+a crashed run (its claim lock is free) is closed as `failed` on the next run.
 
 ## Not yet in place
 

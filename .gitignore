@@ -141,4 +141,5 @@ run_state/daily_ops_agent_context.md
 run_state/oracle_nara_mailbox.jsonl
 run_state/.oracle_nara_mailbox.lock
 run_state/.nara_lane.lock
+run_state/nara_lane_claims/
 run_state/pause_nara_lane
