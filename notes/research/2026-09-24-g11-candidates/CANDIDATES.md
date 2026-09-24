@@ -8,7 +8,7 @@
 
 **Lens:** Lens 1 (Behavioral economics): Investigates anchoring and base-rate neglect in LLM agents under complete information.
 
-**Prior work:** 2609.25701
+**Prior work:** none in the lab store
 
 **Theory:** Decision problem: Multi-agent disclosure game with verifiable timestamps. Benchmark: Nash equilibrium with perfect information. Preregistered rule: Agents anchor on first disclosed value if provenance is explicit, ignoring subsequent updates.
 
@@ -24,7 +24,7 @@
 
 **Cost:** 4 Flash hours for simulation setup and analysis.
 
-**Conviction:** p_pass_T=0.8 (strong theoretical basis), p_pass_S=0.7 (clear experimental design), p_pass_A=0.6 (data availability uncertain), p_dead_end=0.1 (low risk of null result), interest_0_10=8 (high relevance to mechanism design).
+**Conviction:** p_pass_T=0.8 (strong theoretical basis), p_pass_S=0.7 (clear experimental design), p_pass_A=0.6 (data availability uncertain), p_dead_end=0.1 (low risk the question is closed out rather than answered either way), interest_0_10=8 (high relevance to mechanism design).
 
 **Builds on:** iter-2026-09-23-041 (extension)
 
@@ -34,9 +34,9 @@
 
 **Question:** Do order effects in question presentation alter agent strategies in approval-based committee elections beyond classical probability predictions?
 
-**Lens:** Lens 2 (Quantum info and belief): Tests interference between sequential voting questions using a formal quantum-probability model plus a classical Bayesian baseline making different testable predictions via QQ-equality tests.
+**Lens:** Lens 2 (Quantum info and belief): Tests interference between sequential voting questions using a formal quantum-probability model (complex amplitudes for the two question orders; probabilities from squared moduli, so the sequential order terms interfere) plus a classical Bayesian baseline that updates on the same evidence with commutative order and so predicts no order effect. The two models make different testable predictions, tested by the published QQ-equality test.
 
-**Prior work:** 2609.16270
+**Prior work:** none in the lab store
 
 **Theory:** Decision problem: Sequential approval voting game. Benchmark: Equilibrium under simultaneous vs. sequential presentation. Preregistered rule: Violation of commutativity in preference aggregation indicates order effects.
 
@@ -52,9 +52,9 @@
 
 **Cost:** 6 Flash hours for model implementation and statistical testing.
 
-**Conviction:** p_pass_T=0.7 (novel application of lens), p_pass_S=0.8 (robust experimental design), p_pass_A=0.5 (data scarcity risk), p_dead_end=0.2 (moderate risk of inconclusive results), interest_0_10=9 (high theoretical novelty).
+**Conviction:** p_pass_T=0.7 (novel application of lens), p_pass_S=0.8 (robust experimental design), p_pass_A=0.5 (data scarcity risk), p_dead_end=0.2 (moderate risk the lens is closed out by a null, which is not itself a dead end), interest_0_10=9 (high theoretical novelty).
 
-**Builds on:** iter-2026-09-19-003 (new)
+**Builds on:** iter-2026-09-19-003 (extension)
 
 ## Candidate 3: Exploitability of Generalist Strategies in Coordination Games
 
@@ -64,11 +64,11 @@
 
 **Lens:** Lens 3 (Agents in strategic games): Analyzes counter-picking and metagame adaptation in solvable coordination games.
 
-**Prior work:** 2609.26552
+**Prior work:** none in the lab store
 
 **Theory:** Decision problem: 3-agent coordination game with frozen solo-optimal strategy. Benchmark: Nash equilibrium in mixed strategies. Preregistered rule: Specialist strategies achieve higher payoff against fixed opponents than generalists.
 
-**Semi-synthetic:** Arms: Generalist policy vs. specialist policy trained on specific opponent. n=2000 episodes. Outcome: Average reward differential. Missing rule: No dynamic adaptation to opponent specialization.
+**Semi-synthetic:** Arms: Generalist policy vs. specialist policy: a prompted, scripted policy hard-coded to the specific opponent's fixed strategy (no model training anywhere in this arm). n=2000 episodes. Outcome: Average reward differential. Missing rule: No dynamic adaptation to opponent specialization.
 
 **Applied:** Prediction market venue with simulated trading agents. Data: Historical trading logs from decentralized exchanges.
 
@@ -78,8 +78,8 @@
 - Cause: Specialists overfit to training opponents. Next test: Evaluate against unseen opponent types.
 - Cause: Generalists fail to exploit predictable patterns. Next test: Introduce adversarial perturbations to specialist strategies.
 
-**Cost:** 5 Flash hours for reinforcement learning experiments.
+**Cost:** 5 Flash hours for prompted and scripted policy play and analysis.
 
-**Conviction:** p_pass_T=0.85 (well-grounded in game theory), p_pass_S=0.9 (controlled environment), p_pass_A=0.7 (simulated data sufficient), p_dead_end=0.05 (low risk), interest_0_10=7 (practical implications for agent design).
+**Conviction:** p_pass_T=0.85 (well-grounded in game theory), p_pass_S=0.9 (controlled environment), p_pass_A=0.7 (simulated data sufficient), p_dead_end=0.05 (low risk the question cannot be answered with the lab's solvable games), interest_0_10=7 (practical implications for agent design).
 
 **Builds on:** iter-2026-09-23-026 (extension)
