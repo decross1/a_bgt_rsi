@@ -122,8 +122,13 @@ def test_k_defaults_to_one_and_is_capped_by_the_deployment(repo, monkeypatch):
     assert lane.lane_concurrency() == 3 and lane.lane_concurrency(2) == 2  # the argument wins over the env
     monkeypatch.setenv(lane.CONCURRENCY_ENV, "9")
     assert lane.lane_concurrency() == 3
-    monkeypatch.setenv(lane.CONCURRENCY_ENV, "two")
-    assert lane.lane_concurrency() == 1
+    for malformed in ("two", "\u00b2", "\u0663", "-1", "0"):  # superscript two and Arabic-Indic three are isdigit()
+        monkeypatch.setenv(lane.CONCURRENCY_ENV, malformed)
+        assert lane.lane_concurrency() == 1, malformed
+    monkeypatch.delenv(lane.CONCURRENCY_ENV)
+    _deployment(repo, 16)
+    _policy(repo, max_concurrent_items=8)
+    assert lane.lane_concurrency() == lane.MAX_CONCURRENT_ITEMS == 4 and lane.lane_concurrency(10) == 4
 
 
 def test_cli_passes_max_concurrent_to_the_runner(monkeypatch):
@@ -227,11 +232,21 @@ def test_every_check_still_runs_per_item_under_concurrency(repo):
 
 def test_racing_runners_never_double_claim(repo, monkeypatch):
     """Three runners race with the runner lock bypassed, so only the per-item
-    claim locks stand between them: every item is still claimed exactly once."""
+    claim locks stand between them: every item is still claimed exactly once.
+    Each `claimed` post is delayed, so a runner that re-read the item as open
+    without holding its claim lock would post a second claim in that window."""
     _deployment(repo, 4)
     _policy(repo, max_concurrent_items=2)
     lock_ids = itertools.count()
     monkeypatch.setattr(lane, "_lane_lock_path", lambda: repo.parent / f"runner-{next(lock_ids)}.lock")
+    real_receipt = lane._receipt
+
+    def slow_claim(path, msg_id, body):
+        if body["state"] == "claimed":
+            time.sleep(0.3)
+        return real_receipt(path, msg_id, body)
+
+    monkeypatch.setattr(lane, "_receipt", slow_claim)
     path = repo / "run_state/mb.jsonl"
     items = [mailbox.post("oracle", "plan_item", _plan(title=f"item {n}"), to="nara", path=path) for n in range(4)]
     go, results = threading.Barrier(3), []
@@ -398,3 +413,144 @@ def test_pause_stops_new_claims_while_workers_finish(repo):
     posted = lane.run_queue(path, build=build, sandbox=_fake_sandbox, ready=lambda: True)
     assert _by_item(posted) == {i["msg_id"]: ["claimed", "validated"] for i in items[:2]}
     assert mailbox.fold(mailbox.read(path))[items[2]["msg_id"]]["state"] == "open"
+
+
+# --- review amendments (2026-09-24): pass budget, git serialization, claim lifetime, mailbox reads ----
+
+def _run_log(repo):
+    return [json.loads(line) for line in (repo.parent / "run.jsonl").read_text().splitlines()]
+
+
+def _lock_is_free(lock_path: Path) -> bool:
+    with lock_path.open("a") as probe:
+        try:
+            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            return False
+
+
+def test_default_pass_budget_fits_the_service_timeout(repo, monkeypatch):
+    assert lane.pass_budget_s() == lane.DEFAULT_PASS_BUDGET_S == 5100
+    service = (LANE_ROOT / "systemd/nara-lane.service").read_text()
+    assert "TimeoutStartSec=5400" in service and lane.DEFAULT_PASS_BUDGET_S < 5400
+    _policy(repo, pass_budget_s=900)
+    assert lane.pass_budget_s() == 900
+    monkeypatch.setenv(lane.PASS_BUDGET_ENV, "1200")
+    assert lane.pass_budget_s() == 1200
+    for malformed in ("soon", "\u00b2", "0"):
+        monkeypatch.setenv(lane.PASS_BUDGET_ENV, malformed)
+        assert lane.pass_budget_s() == 5100, malformed
+    monkeypatch.delenv(lane.PASS_BUDGET_ENV)
+    for bad in (0, -5, True, "900", 90.5):
+        _policy(repo, pass_budget_s=bad)
+        assert lane.pass_budget_s() == 5100, bad
+
+
+@pytest.mark.parametrize("k", [1, 2])
+def test_a_pass_stops_claiming_before_an_item_would_outrun_it(repo, monkeypatch, k):
+    """With a 900 s pass and 600 s items, a second wave would run past the pass,
+    so its item is left open for the next run instead of being cut off."""
+    _deployment(repo, 4)
+    _policy(repo, max_concurrent_items=k, pass_budget_s=900)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(lane, "_clock", lambda: clock["now"])
+    path = repo / "run_state/mb.jsonl"
+    items = [mailbox.post("oracle", "plan_item", _plan(title=f"item {n}", budget={"attempts": 1, "wall_clock_minutes": 10}),
+                          to="nara", path=path) for n in range(k + 1)]
+    wave = threading.Barrier(k)
+
+    def build(body, worktree, feedback, timeout=0):
+        wave.wait(30)  # the whole first wave is claimed before the clock moves
+        clock["now"] += 400
+        return dict(GOOD)
+
+    posted = lane.run_queue(path, build=build, sandbox=_fake_sandbox, ready=lambda: True)
+    assert _by_item(posted) == {i["msg_id"]: ["claimed", "validated"] for i in items[:k]}
+    assert mailbox.fold(mailbox.read(path))[items[k]["msg_id"]]["state"] == "open"
+    assert any(r["status"] == "deferred" and "pass budget" in r["observable_actual"] for r in _run_log(repo))
+    clock["now"] = 0.0  # a fresh run has a fresh budget and takes the item
+    later = lane.run_queue(path, build=_slow_builder({}, 0), sandbox=_fake_sandbox, ready=lambda: True)
+    assert _by_item(later) == {items[k]["msg_id"]: ["claimed", "validated"]}
+
+
+def test_git_worktree_creation_and_commits_never_overlap(repo, monkeypatch):
+    """Worktree creation (with its base read) and commits touch the shared repo;
+    concurrent items must take them one at a time."""
+    _deployment(repo, 4)
+    _policy(repo, max_concurrent_items=3)
+    real_git, active, peak, guard = lane._git, [0], [0], threading.Lock()
+
+    def watched_git(*args, cwd=None):
+        shared = args[0] in {"worktree", "add", "commit"} or "commit" in args or (
+            args[:2] == ("rev-parse", "HEAD") and cwd is None)
+        if not shared:
+            return real_git(*args, cwd=cwd)
+        with guard:
+            active[0] += 1
+            peak[0] = max(peak[0], active[0])
+        try:
+            time.sleep(0.15)  # widen the window an unserialized call would share
+            return real_git(*args, cwd=cwd)
+        finally:
+            with guard:
+                active[0] -= 1
+
+    monkeypatch.setattr(lane, "_git", watched_git)
+    path = repo / "run_state/mb.jsonl"
+    items = [mailbox.post("oracle", "plan_item", _plan(title=f"item {n}"), to="nara", path=path) for n in range(3)]
+    posted = lane.run_queue(path, build=_slow_builder({}, 0), sandbox=_fake_sandbox, ready=lambda: True)
+    assert _by_item(posted) == {i["msg_id"]: ["claimed", "validated"] for i in items}
+    assert peak[0] == 1, f"{peak[0]} shared-repo git calls ran at once"
+
+
+@pytest.mark.parametrize("k", [1, 2])
+def test_the_claim_lock_is_held_while_the_final_receipt_is_posted(repo, monkeypatch, k):
+    """A free claim lock on a `claimed` item reads as abandoned, so the lock must
+    outlive the final receipt: a probe at that moment must find it held."""
+    _deployment(repo, 4)
+    _policy(repo, max_concurrent_items=k)
+    real_receipt, probes = lane._receipt, []
+
+    def probing(path, msg_id, body):
+        if body["state"] in mailbox.TERMINAL:
+            probes.append((msg_id, "free" if _lock_is_free(lane._claim_lock_path(msg_id)) else "held"))
+        return real_receipt(path, msg_id, body)
+
+    monkeypatch.setattr(lane, "_receipt", probing)
+    path = repo / "run_state/mb.jsonl"
+    abandoned = mailbox.post("oracle", "plan_item", _plan(title="abandoned"), to="nara", path=path)
+    mailbox.post("nara", "receipt", {"state": "claimed"}, to="oracle", in_reply_to=abandoned["msg_id"], path=path)
+    items = [mailbox.post("oracle", "plan_item", _plan(title=f"item {n}"), to="nara", path=path) for n in range(2)]
+    posted = lane.run_queue(path, build=_slow_builder({}, 0), sandbox=_fake_sandbox, ready=lambda: True)
+    assert _by_item(posted)[abandoned["msg_id"]] == ["failed"]
+    assert sorted(probes) == sorted((i["msg_id"], "held") for i in [abandoned, *items])
+
+
+def test_a_mailbox_torn_mid_pass_stops_claiming_cleanly(repo):
+    path = repo / "run_state/mb.jsonl"
+    for title in ("one", "two"):
+        mailbox.post("oracle", "plan_item", _plan(title=title), to="nara", path=path)
+
+    def tearing():
+        with path.open("a") as handle:
+            handle.write("{torn\n")
+        return True
+
+    assert lane.run_queue(path, build=lambda *a, **k: pytest.fail("never built"), sandbox=_fake_sandbox,
+                          ready=tearing) == []
+    assert any(r["task_id"] == "nara-lane:mailbox" and "mid-pass" in r["observable_actual"] for r in _run_log(repo))
+    assert all(_lock_is_free(p) for p in (repo / "run_state/nara_lane_claims").glob("*.lock"))
+
+
+def test_lane_reads_wait_for_the_mailbox_writer_lock(repo):
+    path = repo / "run_state/mb.jsonl"
+    mailbox.post("oracle", "plan_item", _plan(), to="nara", path=path)
+    done = threading.Event()
+    with (path.parent / ".oracle_nara_mailbox.lock").open("a") as writer:
+        fcntl.flock(writer, fcntl.LOCK_EX)  # a post() in progress
+        reader = threading.Thread(target=lambda: (lane._read_mailbox(path), done.set()))
+        reader.start()
+        assert not done.wait(0.3)
+    assert done.wait(10)
+    reader.join()

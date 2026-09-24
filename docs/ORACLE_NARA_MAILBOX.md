@@ -97,9 +97,13 @@ each `nara/*` branch and merges through the normal verification gate.
 Concurrency: by default the lane runs one item at a time. Setting
 `max_concurrent_items` in `config/nara_lane.json` (or `--max-concurrent` /
 `NARA_LANE_MAX_CONCURRENT` for a single run) lets one run process up to that
-many items at once, capped at the server's `max_running_requests` minus one
-from `config/model_deployment.json` (never below one), so the lane always leaves
-the server a slot. One run still holds `run_state/.nara_lane.lock`. It examines
+many items at once. That number is capped at the server's
+`max_running_requests` minus one from `config/model_deployment.json` and at 4,
+and is never below one, so the lane always leaves the server a slot. At any
+setting, a run stops claiming once the time it has run plus the next item's
+budget would exceed its pass budget (`pass_budget_s` in the config or
+`NARA_LANE_PASS_BUDGET_S`; default 5100 s, the service's 5400 s stop timeout
+less a margin). Items it does not claim stay open for the next run. One run still holds `run_state/.nara_lane.lock`. It examines
 and claims items one at a time in mailbox order, and every item gets steps 1-5
 above, in its own worktree and branch. Each claim holds a per-item lock under
 `run_state/nara_lane_claims/` from before its `claimed` receipt until after its

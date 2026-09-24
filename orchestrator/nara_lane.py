@@ -88,6 +88,11 @@ MAX_TEST_BYTES, MAX_FILE_BYTES, BUILDER_MAX_TOKENS = 8 * 1024, 48 * 1024, 12000
 TEST_TIMEOUT_S = 300
 BUILDER_TIMEOUT_S = 1800.0
 CONCURRENCY_ENV = "NARA_LANE_MAX_CONCURRENT"
+MAX_CONCURRENT_ITEMS = 4  # hard ceiling, whatever the config or the server says
+# nara-lane.service stops a pass at TimeoutStartSec=5400; a pass stops claiming
+# before an item's full budget would run past that, less a safety margin.
+PASS_BUDGET_ENV = "NARA_LANE_PASS_BUDGET_S"
+DEFAULT_PASS_BUDGET_S = 5400 - 300
 _GIT_SERIAL = threading.Lock()  # worktree creation and commits, one at a time per runner
 _LOG_SERIAL = threading.Lock()
 
@@ -445,6 +450,12 @@ def _left(deadline: float, cap: float) -> float:
     return min(cap, max(5.0, deadline - time.monotonic()))
 
 
+def item_budget_s(body: dict) -> int:
+    """An item's wall-clock budget in seconds, as implement() enforces it."""
+    budget = body.get("budget") or {}
+    return 60 * min(budget.get("wall_clock_minutes", MAX_WALL_MINUTES), MAX_WALL_MINUTES)
+
+
 def implement(entry: dict, build=builder, sandbox=sandbox_run) -> dict:
     """Run one admitted item to a terminal receipt body; never raises."""
     item = entry["item"]
@@ -452,7 +463,7 @@ def implement(entry: dict, build=builder, sandbox=sandbox_run) -> dict:
     acceptance = body["acceptance"]
     test_path, argv = acceptance["test_path"], acceptance["test_argv"]
     budget = body.get("budget") or {}
-    deadline = time.monotonic() + 60 * min(budget.get("wall_clock_minutes", MAX_WALL_MINUTES), MAX_WALL_MINUTES)
+    deadline = time.monotonic() + item_budget_s(body)
     attempts_allowed = min(budget.get("attempts", MAX_ATTEMPTS), MAX_ATTEMPTS)
     worktree, branch = WORKTREES / msg_id, f"nara/{msg_id}"
     base_sha = None
@@ -548,6 +559,14 @@ def server_slots() -> int:
     return _positive_int(deployment.get("max_running_requests") if isinstance(deployment, dict) else None) or 1
 
 
+def _env_int(name: str) -> int | None:
+    """A positive decimal integer from the environment; None when unset, 0 when malformed."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return None
+    return int(raw) if raw.isascii() and raw.isdigit() else 0
+
+
 def lane_concurrency(requested: int | None = None) -> int:
     """How many items one run may process at once.
 
@@ -555,16 +574,39 @@ def lane_concurrency(requested: int | None = None) -> int:
     NARA_LANE_MAX_CONCURRENT environment variable, else `max_concurrent_items` in
     config/nara_lane.json, else 1; anything that is not a positive integer counts
     as 1. It is then capped at server_slots() - 1 so the lane always leaves the
-    server a slot, with a floor of 1 so a single-slot server keeps today's serial
-    lane.
+    server a slot, and at MAX_CONCURRENT_ITEMS, with a floor of 1 so a
+    single-slot server keeps today's serial lane.
     """
     if requested is None:
-        raw = os.environ.get(CONCURRENCY_ENV, "").strip()
-        if raw:
-            requested = int(raw) if raw.isdigit() else 1
+        requested = _env_int(CONCURRENCY_ENV)
     if requested is None:
         requested = _policy().get("max_concurrent_items", 1)
-    return max(1, min(_positive_int(requested) or 1, server_slots() - 1))
+    return max(1, min(_positive_int(requested) or 1, server_slots() - 1, MAX_CONCURRENT_ITEMS))
+
+
+def pass_budget_s() -> int:
+    """Seconds one run may spend before it stops claiming: NARA_LANE_PASS_BUDGET_S,
+    else `pass_budget_s` in config/nara_lane.json, else DEFAULT_PASS_BUDGET_S
+    (the service's TimeoutStartSec less a margin). Malformed values use the default."""
+    value = _env_int(PASS_BUDGET_ENV)
+    if value is None:
+        value = _policy().get("pass_budget_s")
+    return _positive_int(value) or DEFAULT_PASS_BUDGET_S
+
+
+def _clock() -> float:
+    """The pass clock, separate from implement()'s deadlines so tests can drive it."""
+    return time.monotonic()
+
+
+def _read_mailbox(path: Path) -> list[dict]:
+    """mailbox.read() under a shared hold of the mailbox's own lock (the file
+    oracle_mailbox.post() holds exclusively), so a row being appended is never
+    read half-written."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with (path.parent / ".oracle_nara_mailbox.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_SH)
+        return mailbox.read(path)
 
 
 def _lane_lock_path() -> Path:
@@ -584,7 +626,8 @@ def _claim(path: Path, msg_id: str, expected: str):
     re-read under it; otherwise None. A live claimant holds this lock from before
     its `claimed` receipt until after its terminal one, so a held lock means the
     item is in progress and a free lock on a `claimed` item means it was abandoned.
-    flock is per open file, so this excludes other threads as well as processes."""
+    flock is per open file, so this excludes other threads as well as processes.
+    Raises MailboxError, with the claim released, when the mailbox is unreadable."""
     lock_path = _claim_lock_path(msg_id)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     handle = os.fdopen(os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o644), "a")
@@ -594,7 +637,7 @@ def _claim(path: Path, msg_id: str, expected: str):
         handle.close()
         return None
     try:
-        current = mailbox.fold(mailbox.read(path)).get(msg_id)
+        current = mailbox.fold(_read_mailbox(path)).get(msg_id)
     except BaseException:
         handle.close()
         raise
@@ -678,6 +721,11 @@ def run_queue(path: Path | None = None, build=builder, sandbox=sandbox_run, read
     examines, admits and claims items one at a time in mailbox order, but hands
     each claimed item to a pool worker and waits only for a free slot, checking
     the pause files and Flash readiness again just before each claim.
+
+    At any K, the run stops claiming once the time it has run plus the next
+    item's budget would pass pass_budget_s(), so the service's stop timeout never
+    cuts an item short; unclaimed items stay open for the next run. An unreadable
+    mailbox mid-pass stops claiming as well.
     """
     if _paused():
         return []
@@ -691,6 +739,7 @@ def run_queue(path: Path | None = None, build=builder, sandbox=sandbox_run, read
         with posted_lock:
             posted.append(receipt)
 
+    pass_started, pass_budget = _clock(), pass_budget_s()
     lock_path = _lane_lock_path()
     with lock_path.open("a") as lock:
         try:
@@ -698,7 +747,7 @@ def run_queue(path: Path | None = None, build=builder, sandbox=sandbox_run, read
         except BlockingIOError:
             return []
         try:
-            rows = mailbox.read(path)
+            rows = _read_mailbox(path)
             entries = sorted(mailbox.fold(rows).values(), key=lambda e: e["item"]["seq"])
         except mailbox.MailboxError as exc:
             log("mailbox", "failed", f"mailbox unreadable: {exc}", "readable mailbox")
@@ -715,7 +764,11 @@ def run_queue(path: Path | None = None, build=builder, sandbox=sandbox_run, read
                     break
                 msg_id = entry["item"]["msg_id"]
                 if entry["state"] == "claimed":  # a lane process died mid-item, unless its claim is still held
-                    claim = _claim(path, msg_id, "claimed")
+                    try:
+                        claim = _claim(path, msg_id, "claimed")
+                    except mailbox.MailboxError as exc:
+                        log("mailbox", "failed", f"mailbox unreadable mid-pass: {exc}", "readable mailbox")
+                        break
                     if claim is None:
                         continue
                     with claim:
@@ -743,10 +796,19 @@ def run_queue(path: Path | None = None, build=builder, sandbox=sandbox_run, read
                 try:
                     if pool is not None and _paused():  # a pause may have landed while waiting for a slot
                         break
+                    elapsed = _clock() - pass_started
+                    if elapsed + item_budget_s(entry["item"]["body"]) > pass_budget:
+                        log(msg_id, "deferred", f"pass budget: {elapsed:.0f} s run + item budget "
+                            f"{item_budget_s(entry['item']['body'])} s > {pass_budget} s", "time left in the pass")
+                        break
                     if not ready():
                         log(msg_id, "deferred", "Flash resident not ready", "Flash ready")
                         break
-                    claim = _claim(path, msg_id, "open")
+                    try:
+                        claim = _claim(path, msg_id, "open")
+                    except mailbox.MailboxError as exc:
+                        log("mailbox", "failed", f"mailbox unreadable mid-pass: {exc}", "readable mailbox")
+                        break
                     if claim is None:  # withdrawn, expired or claimed elsewhere since the fold was read
                         continue
                     try:
