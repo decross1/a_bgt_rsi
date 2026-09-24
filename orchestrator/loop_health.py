@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 from datetime import datetime, timezone
@@ -665,34 +666,54 @@ def main(argv: list[str] | None = None) -> int:
 
 def cycle_durations(events: list, window_hours: float,
                     now: str | datetime) -> dict:
-    """Percentile cycle duration of the daily loop, from start/finish events.
+    """Percentile cycle duration of the daily loop, from journal start/finish events.
 
-    The 2026-09-24 loop-latency investigation (run_state/gap_scan_2026-09-24.sh)
-    found the oracle cycle firing on a 300s timer with gaps up to 2,820s. The
-    timer is `OnUnitInactiveSec=5min`, so a cycle cannot restart until the
-    previous one ENDS plus five minutes: long cycles are the gap, and the timer
-    is not at fault. What was never measured is how long a cycle takes, so
-    nothing could tell a 0s cycle from a 2,502s one. This is that measurement.
+    Why: the 2026-09-24 loop-cadence question (mailbox oracle-acd9d1f742e36e83, seq
+    213; reviewer's answer claude-1ae07fbb893a002b, seq 217; withdrawn at seq 224).
+    This morning's plan named "a 498-second gap in the 300s loop cadence,
+    unexplained" as its first bottleneck; that claim was wrong and was withdrawn -
+    the two timer units in the comparison were replaced at 06:13:12Z. What IS true,
+    measured by hand out of the live journal: 24 cycle starts in six hours with a
+    median gap of 330s and a max of 2,820s, and the timer is
+    OnUnitInactiveSec=5min, so a cycle restarts only five minutes after the previous
+    one ENDS. The long cycles ARE the gaps. What no code in the lab could compute
+    was how long a cycle takes - six of the last 23 ran over 1,200s and the longest,
+    2,502s, was indistinguishable from a 60s one. This is that measurement, so the
+    question is a number and not an argument. The reviewer called the A/B choice
+    low-stakes, so this ships as the measurement only: it changes no timer, no
+    service and no unit file.
 
-    `events` are journal-style rows, each with a `ts` (or `timestamp`) and a
-    `message` (or `summary`): a " Starting " opens a cycle, a " Finished " or
-    "Deactivated successfully" closes it. Rows are judged in the order given; a
-    close without an open, or an open never closed inside the window, is
-    discarded, never guessed at (rule 4).
+    `events` are systemd-journal rows: a mapping with a `ts` (or `timestamp`) and a
+    `message` (or `summary`) holding the MESSAGE field verbatim. systemd writes the
+    field starting at the word, so a cycle OPENS on a message beginning "Starting "
+    and CLOSES on one beginning "Finished ", "Deactivated successfully" or
+    "Failed with result" (review claude-7132f8f7704f440d, seq 229, amendment 1: the
+    first cut matched ' Starting ' with a leading space, which is what a hand-written
+    fixture emits and the journal does not, so the function returned zero cycles on
+    real data). A failed or timed-out cycle is the longest kind there is
+    (TimeoutStartSec=7200 in the installed unit) and is counted, not dropped: the
+    return carries `failed` alongside `cycles`.
 
-    Returns {"cycles": int, "median_s": float, "p95_s": float, "max_s": float,
-    "over_1200s": int} — the acceptance line for the uptime loop is p95_s <
-    1,200s. Pure: no disk, no clock, no model.
+    Returns {"cycles", "median_s", "p95_s", "max_s", "over_1200s", "failed"} over
+    the last `window_hours`; p95 is the nearest-rank percentile, math.ceil(q*n)-1
+    (amendment 2: int(q*n)-1 is the p90 on ten samples and drops a single 2,500s
+    cycle out of twenty). An open cycle with no close is discarded, never guessed at
+    as infinite - the journal of a running loop always ends mid-cycle - and a close
+    without an open, an untimestamped row, a row outside the window, no rows and an
+    unparseable `now` all yield zeros, because a caller that polls the journal must
+    not die on a bad argument. Pure: no disk, no clock, no model.
     """
     stamp = _parse_ts(now) if isinstance(now, str) else now
     if stamp is not None and stamp.tzinfo is None:
         stamp = stamp.replace(tzinfo=timezone.utc)
+    empty = {"cycles": 0, "median_s": 0.0, "p95_s": 0.0, "max_s": 0.0,
+             "over_1200s": 0, "failed": 0}
     if stamp is None or not isinstance(window_hours, (int, float)):
-        return {"cycles": 0, "median_s": 0.0, "p95_s": 0.0, "max_s": 0.0,
-                "over_1200s": 0}
+        return empty
     cutoff = stamp.timestamp() - float(window_hours) * 3600.0
     open_at: datetime | None = None
     durs: list[float] = []
+    failed = 0
     for row in events:
         if not isinstance(row, dict):
             continue
@@ -704,24 +725,30 @@ def cycle_durations(events: list, window_hours: float,
             when = when.replace(tzinfo=timezone.utc)
         if when.timestamp() < cutoff or when.timestamp() > stamp.timestamp():
             continue
-        if " Starting " in text:
+        head = text.lstrip()
+        if head.startswith("Starting "):
             open_at = when                     # an unclosed cycle is dropped later
-        elif (" Finished " in text or "Deactivated successfully" in text):
-            if open_at is not None:
-                durs.append((when - open_at).total_seconds())
-                open_at = None
+        elif (head.startswith("Finished ") or head.startswith("Deactivated ")
+              or head.startswith("Failed ") or "Failed with result" in head):
+            if open_at is None:
+                continue                       # a close without an open is skipped
+            durs.append((when - open_at).total_seconds())
+            if head.startswith("Failed ") or "Failed with result" in head:
+                failed += 1
+            open_at = None
     if not durs:
-        return {"cycles": 0, "median_s": 0.0, "p95_s": 0.0, "max_s": 0.0,
-                "over_1200s": 0}
+        return empty
     durs.sort()
+
     def _pct(q: float) -> float:
-        idx = max(0, min(len(durs) - 1, int(q * len(durs)) - 1))
-        return float(durs[idx])
+        return float(durs[max(0, math.ceil(q * len(durs)) - 1)])
+
     mid = len(durs) // 2
     median = (durs[mid] if len(durs) % 2 else (durs[mid - 1] + durs[mid]) / 2.0)
     return {"cycles": len(durs), "median_s": float(median), "p95_s": _pct(0.95),
             "max_s": float(durs[-1]),
-            "over_1200s": sum(1 for d in durs if d > 1200.0)}
+            "over_1200s": sum(1 for d in durs if d > 1200.0),
+            "failed": failed}
 
 
 if __name__ == "__main__":
