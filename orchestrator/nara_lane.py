@@ -407,7 +407,8 @@ def _dotgit(worktree: Path) -> bytes:
     return pointer.read_bytes()
 
 
-def builder(body: dict, worktree: Path, feedback: str, timeout: float = BUILDER_TIMEOUT_S) -> dict[str, str]:
+def builder(body: dict, worktree: Path, feedback: str, timeout: float = BUILDER_TIMEOUT_S, *,
+            caller_tag: str = "nara_lane_builder") -> dict[str, str]:
     """One local-Flash call proposing full contents for the allowed files."""
     from agent_wrapper.wrapper import call_sync
 
@@ -429,7 +430,7 @@ def builder(body: dict, worktree: Path, feedback: str, timeout: float = BUILDER_
             "the writable_paths. Never modify the acceptance test. Standard library only unless the file "
             "already imports something else.")},
          {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)}],
-        temperature=0.2, max_tokens=BUILDER_MAX_TOKENS, caller_tag="nara_lane_builder",
+        temperature=0.2, max_tokens=BUILDER_MAX_TOKENS, caller_tag=caller_tag,
         extra_body={"chat_template_kwargs": {"enable_thinking": False}}, request_timeout_s=timeout,
         log_path=os.environ.get("LOOP_V0_CALLS_LOG", str(ROOT / "logs/calls.jsonl")))  # durable provenance
     text = record["completion"]
@@ -486,7 +487,10 @@ def implement(entry: dict, build=builder, sandbox=sandbox_run) -> dict:
         while attempts < attempts_allowed and time.monotonic() < deadline:
             attempts += 1
             try:
-                files = build(body, worktree, output, timeout=_left(deadline, BUILDER_TIMEOUT_S))
+                kwargs = {"timeout": _left(deadline, BUILDER_TIMEOUT_S)}
+                if build is builder:  # custom builders keep the historic four-argument seam
+                    kwargs["caller_tag"] = f"nara_lane_builder:{msg_id}"
+                files = build(body, worktree, output, **kwargs)
             except LaneError:
                 raise
             except Exception as exc:  # recorded as feedback for the next attempt
@@ -858,10 +862,24 @@ def run_queue(path: Path | None = None, build=builder, sandbox=sandbox_run, read
                 try:
                     if pool is not None and _paused():  # a pause may have landed while waiting for a slot
                         break
-                    elapsed = _clock() - pass_started
-                    if elapsed + item_budget_s(entry["item"]["body"]) > pass_budget:
+                    elapsed, budget_s = _clock() - pass_started, item_budget_s(entry["item"]["body"])
+                    if budget_s > pass_budget:
+                        reason = (f"item wall-clock budget {budget_s} s exceeds pass budget {pass_budget} s; "
+                                  "withdraw and repost with a fitting budget")
+                        try:
+                            held = _hold_open(path, entry, [reason])
+                        except mailbox.MailboxError as exc:
+                            log("mailbox", "failed", f"mailbox unreadable mid-pass: {exc}", "readable mailbox")
+                            break
+                        if held is not None:
+                            keep(held)
+                            log(msg_id, "held", reason, "item budget fits the pass")
+                        else:
+                            log(msg_id, "deferred", "item changed before held receipt", "open item")
+                        continue
+                    if elapsed + budget_s > pass_budget:
                         log(msg_id, "deferred", f"pass budget: {elapsed:.0f} s run + item budget "
-                            f"{item_budget_s(entry['item']['body'])} s > {pass_budget} s", "time left in the pass")
+                            f"{budget_s} s > {pass_budget} s", "time left in the pass")
                         break
                     if not ready():
                         log(msg_id, "deferred", "Flash resident not ready", "Flash ready")

@@ -167,6 +167,26 @@ def test_builder_timeout_is_1800_s_with_no_retries_and_the_wall_clock_fits_it(re
     assert 1700 < seen[0] <= 1800
 
 
+def test_concurrent_builder_calls_are_tagged_with_their_plan_item_ids(repo, monkeypatch):
+    """Two identical plan bodies still produce separately attributable call records."""
+    _deployment(repo, 4)
+    _policy(repo, max_concurrent_items=2)
+    calls, together = [], threading.Barrier(2)
+
+    def fake_call_sync(_messages, **kwargs):
+        calls.append(kwargs["caller_tag"])
+        together.wait(30)
+        return {"completion": json.dumps({"files": GOOD})}
+
+    import agent_wrapper.wrapper as wrapper
+    monkeypatch.setattr(wrapper, "call_sync", fake_call_sync)
+    path = repo / "run_state/mb.jsonl"
+    items = [mailbox.post("oracle", "plan_item", _plan(title="same body"), to="nara", path=path) for _ in range(2)]
+    posted = lane.run_queue(path, build=lane.builder, sandbox=_fake_sandbox, ready=lambda: True)
+    assert _by_item(posted) == {item["msg_id"]: ["claimed", "validated"] for item in items}
+    assert set(calls) == {f"nara_lane_builder:{item['msg_id']}" for item in items}
+
+
 # --- behaviour ---------------------------------------------------------------
 
 def test_k1_is_the_serial_lane(repo, monkeypatch):
@@ -374,18 +394,24 @@ def test_a_crashed_worker_fails_its_own_item_only(repo):
     path = repo / "run_state/mb.jsonl"
     doomed = mailbox.post("oracle", "plan_item", _plan(title="doomed"), to="nara", path=path)
     fine = mailbox.post("oracle", "plan_item", _plan(title="fine"), to="nara", path=path)
-    started = threading.Event()
+    queued = mailbox.post("oracle", "plan_item", _plan(title="queued"), to="nara", path=path)
+    fine_started, queued_started = threading.Event(), threading.Event()
 
     def build(body, worktree, feedback, timeout=0):
         if body["title"] == "doomed":
-            assert started.wait(30)
+            assert fine_started.wait(30)
             raise _Boom("worker died")
-        started.set()
-        time.sleep(1.0)
+        if body["title"] == "fine":
+            fine_started.set()
+            assert queued_started.wait(30)  # the dead worker's released slot dispatches the third item
+        else:
+            queued_started.set()
         return dict(GOOD)
 
     posted = lane.run_queue(path, build=build, sandbox=_fake_sandbox, ready=lambda: True)
-    assert _by_item(posted) == {doomed["msg_id"]: ["claimed", "failed"], fine["msg_id"]: ["claimed", "validated"]}
+    assert _by_item(posted) == {doomed["msg_id"]: ["claimed", "failed"], fine["msg_id"]: ["claimed", "validated"],
+                                queued["msg_id"]: ["claimed", "validated"]}
+    assert queued_started.is_set()
     assert _mailbox_states(path) == _by_item(posted)
     reason = next(r["body"]["reason"] for r in posted if r["body"]["state"] == "failed")
     assert "lane worker crashed: _Boom" in reason
@@ -575,6 +601,22 @@ def test_a_pass_stops_claiming_before_an_item_would_outrun_it(repo, monkeypatch,
     clock["now"] = 0.0  # a fresh run has a fresh budget and takes the item
     later = lane.run_queue(path, build=_slow_builder({}, 0), sandbox=_fake_sandbox, ready=lambda: True)
     assert _by_item(later) == {items[k]["msg_id"]: ["claimed", "validated"]}
+
+
+def test_an_item_that_cannot_fit_any_pass_is_held_once(repo):
+    """A 16-minute item cannot fit a 15-minute pass, so leaving it open would loop forever."""
+    _policy(repo, pass_budget_s=900)
+    path = repo / "run_state/mb.jsonl"
+    item = mailbox.post("oracle", "plan_item", _plan(budget={"attempts": 1, "wall_clock_minutes": 16}),
+                        to="nara", path=path)
+    posted = lane.run_queue(path, build=lambda *a, **k: pytest.fail("never built"), sandbox=_fake_sandbox,
+                            ready=lambda: True)
+    assert _by_item(posted) == {item["msg_id"]: ["held"]}
+    reason = posted[0]["body"]["reasons"]
+    assert reason == ["item wall-clock budget 960 s exceeds pass budget 900 s; withdraw and repost with a fitting budget"]
+    assert mailbox.fold(mailbox.read(path))[item["msg_id"]]["state"] == "held"
+    assert lane.run_queue(path, build=lambda *a, **k: pytest.fail("never built"), sandbox=_fake_sandbox,
+                          ready=lambda: True) == []
 
 
 def test_git_worktree_creation_and_commits_never_overlap(repo, monkeypatch):
