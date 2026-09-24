@@ -939,3 +939,66 @@ def test_a_chunk_with_no_id_of_its_own_on_a_single_id_line_still_uses_that_id(tm
     out = report(tmp_path, text)
     works = out["candidates"][0]["works"]
     assert works and works[0]["status"] == "VERIFIED", works
+
+
+def test_two_correct_parenthetical_citations_on_one_line_are_clean(tmp_path):
+    text = candidate(
+        "Parenthetical pair",
+        "Order effects in judgment under uncertainty (arXiv:2609.11111); "
+        "Quantum probability models of cognition: a review (arXiv:2609.11112)",
+    )
+    out = report(tmp_path, text)
+    works = works_of(out)
+    assert len(works) == 2 and [w["status"] for w in works] == ["VERIFIED", "VERIFIED"], works
+    assert [w["arxiv_id"] for w in works] == ["2609.11111", "2609.11112"], works
+    assert out["totals"] == {"unverifiable": 0, "uningested": 0, "partial": 0, "mismatch": 0}
+    set_path = tmp_path / "CANDIDATES.md"
+    assert cs.main(["--set", str(set_path), "--store", str(tmp_path / "arxiv_ingestion")]) == 0
+
+
+def test_two_correct_id_first_citations_on_one_line_are_clean(tmp_path):
+    text = candidate(
+        "Id-first pair",
+        "2609.11111 - Order effects in judgment under uncertainty; "
+        "2609.11112 - Quantum probability models of cognition: a review",
+    )
+    out = report(tmp_path, text)
+    works = works_of(out)
+    assert len(works) == 2 and [w["status"] for w in works] == ["VERIFIED", "VERIFIED"], works
+    assert [w["arxiv_id"] for w in works] == ["2609.11111", "2609.11112"], works
+    assert out["totals"] == {"unverifiable": 0, "uningested": 0, "partial": 0, "mismatch": 0}
+
+
+def test_second_invented_id_first_title_is_mismatch_never_partial(tmp_path):
+    text = candidate(
+        "Id-first forgery",
+        "2609.11111 - Order effects in judgment under uncertainty; "
+        "2609.11112 - Quantum probability models of cognition in LLM agents",
+    )
+    out = report(tmp_path, text)
+    works = works_of(out)
+    assert len(works) == 2 and [w["status"] for w in works] == ["VERIFIED", "MISMATCH"], works
+    assert works[1]["arxiv_id"] == "2609.11112", works
+    assert out["totals"] == {"unverifiable": 0, "uningested": 0, "partial": 0, "mismatch": 1}
+
+
+def test_two_correct_titles_without_ids_on_one_line_are_clean(tmp_path):
+    text = candidate(
+        "Title pair",
+        "Order effects in judgment under uncertainty; "
+        "Quantum probability models of cognition: a review",
+    )
+    out = report(tmp_path, text)
+    works = works_of(out)
+    assert len(works) == 2 and [w["status"] for w in works] == ["VERIFIED", "VERIFIED"], works
+    assert out["totals"] == {"unverifiable": 0, "uningested": 0, "partial": 0, "mismatch": 0}
+
+
+def test_bare_prior_work_label_with_clean_list_has_no_gap(tmp_path):
+    text = ("## Candidate: Bare list\n\nPrior work:\n"
+            "- Order effects in judgment under uncertainty (arXiv:2609.11111)\n"
+            "- Quantum probability models of cognition: a review (arXiv:2609.11112)\n")
+    out = report(tmp_path, text)
+    works = works_of(out)
+    assert len(works) == 2 and [w["status"] for w in works] == ["VERIFIED", "VERIFIED"], works
+    assert out["totals"] == {"unverifiable": 0, "uningested": 0, "partial": 0, "mismatch": 0}

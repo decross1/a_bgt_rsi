@@ -130,8 +130,10 @@ def field_lines(block: str) -> list[str]:
             # Review claude-a857cd9b3f5b6c33 (seq 187), amendment 1. 'Title:' stays out:
             # a title is not a prior-work citation, and screening it manufactures rows.
             tail = stripped.split(":", 1)[1].strip()
-            lines.append(BULLET.sub("", tail) if tail else stripped)
+            if tail:
+                lines.append(BULLET.sub("", tail))
             capture = True
+            in_field = False
             continue
         match = ANY_LABELLED_FIELD.match(stripped)
         if match:
@@ -446,38 +448,43 @@ def screen(set_path: Path, store: PaperStore) -> dict:
             # uningested id still binds its own chunk instead of falling to the title arm.
             PARENTHETICAL = r"\((arxiv[:.\s]*\d{4}\.\d{4,5}(?:v\d+)?(?:,\s*arxiv[:.\s]*\d{4}\.\d{4,5}(?:v\d+)?)*)\)"
             pieces = re.split(PARENTHETICAL, line, flags=re.I)
-            for index, chunk in enumerate(pieces):
-                chunk = chunk.strip(" \t-*|").strip()
-                if len(normalize(chunk)) < MIN_CITED_CHUNK or normalize(chunk) in seen_titles:
-                    continue
-                seen_titles.add(normalize(chunk))
+            for index in range(0, len(pieces), 2):
+                piece = pieces[index]
                 beside = pieces[index + 1] if index + 1 < len(pieces) else ""
-                own = [a for a in ARXIV_ANY.findall(beside or "")
-                       if re.search(r"(?i)\b%s\b" % re.escape(a), line)]
-                carried = own or ([a for a in titled_ids if a in chunk] if len(titled_ids) == 1 else [])
-                if carried:
-                    pair, pair_paper, stored_title = pair_status(chunk, carried[0], store)
-                    if pair == "NO_TITLE":
-                        # an id with no title text beside it is the id arm's business; do
-                        # not invent a title-citation row for it
+                subchunks = piece.split(";")
+                for subindex, chunk in enumerate(subchunks):
+                    chunk = chunk.strip(" \t-*|").strip()
+                    if len(normalize(chunk)) < MIN_CITED_CHUNK or normalize(chunk) in seen_titles:
                         continue
-                    cited_only = title_without_ids(chunk, carried)
+                    seen_titles.add(normalize(chunk))
+                    own = ARXIV_ANY.findall(chunk)
+                    if beside and subindex == len(subchunks) - 1:
+                        own = ARXIV_ANY.findall(beside) or own
+                    carried = (own or [a for a in titled_ids if a in chunk]
+                               or (titled_ids if len(titled_ids) == 1 else []))
+                    if carried:
+                        pair, pair_paper, stored_title = pair_status(chunk, carried[0], store)
+                        if pair == "NO_TITLE":
+                            # an id with no title text beside it is the id arm's business; do
+                            # not invent a title-citation row for it
+                            continue
+                        cited_only = title_without_ids(chunk, carried)
+                        works.append({"cited": chunk[:200],
+                                      "cited_title": cited_title(cited_only),
+                                      "status": pair,
+                                      "match_kind": "id_title" if pair == "VERIFIED" else "id_title_" + pair.lower(),
+                                      "arxiv_id": carried[0],
+                                      "matched_title": (pair_paper or {}).get("title"),
+                                      "store_title": stored_title or None,
+                                      "detail": stored_title if pair == "MISMATCH" else None})
+                        continue
+                    status, paper, kind = store.resolve_title(chunk)
                     works.append({"cited": chunk[:200],
-                                  "cited_title": cited_title(cited_only),
-                                  "status": pair,
-                                  "match_kind": "id_title" if pair == "VERIFIED" else "id_title_" + pair.lower(),
-                                  "arxiv_id": carried[0],
-                                  "matched_title": (pair_paper or {}).get("title"),
-                                  "store_title": stored_title or None,
-                                  "detail": stored_title if pair == "MISMATCH" else None})
-                    continue
-                status, paper, kind = store.resolve_title(chunk)
-                works.append({"cited": chunk[:200],
-                              "cited_title": cited_title(chunk),
-                              "status": status,
-                              "match_kind": kind,
-                              "arxiv_id": (paper or {}).get("arxiv_id"),
-                              "matched_title": (paper or {}).get("title")})
+                                  "cited_title": cited_title(chunk),
+                                  "status": status,
+                                  "match_kind": kind,
+                                  "arxiv_id": (paper or {}).get("arxiv_id"),
+                                  "matched_title": (paper or {}).get("title")})
         per_candidate.append({"label": label, "ids": ids, "works": works,
                               "unverifiable": sum(1 for w in works if w["status"] == "UNVERIFIABLE"),
                               "partial": sum(1 for w in works if w["status"] == "PARTIAL"),
