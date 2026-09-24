@@ -47,9 +47,12 @@ def _summary():
         }],
         "waiting_on_you": [{
             "kind": "question", "id": "claude-0000000000000003", "title": "Two rulings",
+            "question": "Which two rulings should proceed?", "context": None,
+            "choices": [], "recommendation": None, "consequence": None,
             "asked_by": "claude", "asked_at": NOW, "msg_id": "claude-0000000000000003",
             "cli": "python -m orchestrator.oracle_mailbox post --kind answer",
         }],
+        "question_updates": [],
         "accomplishments": [{"id": "2026-09-20:d1", "kind": "merged", "title": "d1 merged",
                              "at": NOW, "evidence": "2cbe6dbe8a39"}],
         "improvements": [{"sha": "2cbe6dbe8a39", "at": NOW, "subject": "Merge d1 (G7.1)",
