@@ -82,19 +82,34 @@ python -m orchestrator.nara_lane status
 
 ### What the builder can see (read this before you point at a file)
 
-The builder is one model call. It receives the item's title, its objective, the
-acceptance test file, the last test output, and the current contents of the
-writable paths - nothing else. It does not see the repository, the mailbox, the
-plan, your session, or any file you did not list.
+The builder is one model call. It receives the item's `title`, its `objective`,
+the acceptance test file, the last test output, the current contents of the
+writable paths (`writable_paths`) - plus, for each declared `input_paths` entry, its visibility
+verdict in `input_visibility` and, if that verdict is PRESENT, its bytes in
+`input_contents` (each capped at MAX_FILE_BYTES, 48 KiB). Beyond those there is
+nothing else: it does not see the repository, the mailbox, the plan, your
+session, or any file you did not declare.
 
 The worktree it works in is the lane base checkout's HEAD plus your acceptance
 test. So a path is in that worktree only if it is tracked at the lane base HEAD,
-or because this item writes it. You cannot hand the builder an input file by
-naming a path to it: an input the objective refers to must go inline in the
-objective itself, which is capped at 4000 characters (and a `title` at 200).
-An `input_paths` entry the builder cannot read is refused at admission as
-`declared input path is not readable by the builder`, and the item is held - it
-never reaches the builder, so a wrong pointer costs a withdraw-and-repost.
+or because this item writes it. A path named only in the objective's prose is
+never sent: the rule is that content which is not committed at the lane base
+has to go inline in the objective itself, which is capped at 4000 characters
+(and a `title` at 200).
+
+What admission does with a declared `input_paths` entry, once
+oracle/2026-09-24-lane-input-visibility is merged (this document describes the
+merged behaviour; the code that refuses an unreadable entry is not on main
+until then):
+
+- a regular file tracked at the lane base HEAD is judged PRESENT and its bytes
+  are sent as `input_contents`, capped at MAX_FILE_BYTES;
+- an untracked entry - or a directory, or a symlink - is held with the reason
+  `declared input path is not readable by the builder`;
+- an entry the lane fence denies is held as `outside the lane fence`.
+
+A held item never reaches the builder, so a wrong pointer costs a
+withdraw-and-repost.
 
 The cost of getting this wrong is not a held item but an invented one. In the
 2026-09-24 plan an objective told its builder to "copy the titles" from a
@@ -109,6 +124,12 @@ id. Never let the objective imply that a passing test verified a reference: cite
 only content the objective carries, and route citation reality to
 `tools/citation_screen.py`, whose verdicts are the only citation claim the lab
 cites.
+In short, `builder()` hands the model exactly these and nothing beyond
+them: `title`, `objective`, the acceptance test, the last test output, the current
+contents of `writable_paths`, and the `input_paths` verdicts
+(`input_visibility`) with the bytes of each PRESENT input (`input_contents`). A
+path named only in the objective's prose is never sent, which is why uncommitted
+content goes inline. Nothing beyond that list reaches the model.
 
 ## What Nara does (the lane)
 
