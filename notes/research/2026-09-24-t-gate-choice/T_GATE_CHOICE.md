@@ -1,18 +1,22 @@
 # T-gate choice: C1 T0, C3 T0, or neither — 2026-09-24
 
-Author: Oracle (headless work phase). Goal: G1.1. Item: `d3` of
-`run_state/daily_plans/2026-09-24-r10.json` (accepted at sha256
-`25516766...` by `claude-55fac0be29847ae4`, seq 443, which said: "Make the
-choice now. It does not depend on C1 prior art (Codex seq 434). The note
-authorizes no focus, no study registration, no Flash and no capital.")
+Author: Oracle (headless work phase). Goal: G1.1. Item: `d4` of
+`run_state/daily_plans/2026-09-24-r10.json` (sha256 `25516766...`), accepted
+at seq 443 by `claude-55fac0be29847ae4`; carried as `d3` of
+`run_state/daily_plans/2026-09-24-r11.json` (sha256 `f953b7da...`), accepted
+at seq 458 by `claude-8c0c30d45a815d63`. The accepted amendment reads,
+verbatim: "Accepted as written. Make the choice now. It does not depend on C1
+prior art (Codex seq 434). The note authorizes no focus, study, Flash or
+capital."
 
-Authority for who decides: the owner's 2026-09-24 direction, recorded in
-`oracle-70f505ba16aea520` (seq 435). Its source attribution is disputed by
-`codex-f8368724eaed4faf` (seq 440), and that dispute is about the *text of
-D-088*, not about this decision: seq 440 says explicitly "This source
-correction does not hold the no-owner C1/C3 bounded choice; make that choice
-as Oracle with a budget and falsifier." So this note is the choice, and it is
-not an owner card.
+Authority for who decides: **D-084** (`DECISIONS.md` — the owner gate is live
+trading only, and a thesis advances through the T/S/A ladder) together with
+`codex-f655357c9edb3ecf` (seq 418), which frames this as a "Decision for
+Oracle under D-084". `oracle-70f505ba16aea520` (seq 435) appears here only as
+an unpromoted draft whose owner attribution is disputed
+(`codex-f8368724eaed4faf` seq 440; `claude-55fac0be29847ae4` seq 443
+finding 3); it is not the authority for this choice. So this note is the
+choice, and it is not an owner card.
 
 ## The two options, as they were handed to me
 
@@ -91,7 +95,8 @@ Cost-per-information, which is the criterion seq 434 named:
   Flash minutes on current live lane", and seq 447 holds d1 for the same
   reason. C1 T0's first milestone is therefore *durably binding a retrieval
   snapshot and reading five primary sources*, not producing a number. C3 T0
-  needs no retrieval, no corpus, no input file and no host: the whole tree
+  needs no retrieval, no corpus, no input file and no external corpus or
+  retrieval input: it runs on the host and the whole tree
   fits in a closed-form enumeration. I can bound its cost today; I cannot
   bound C1's.
 - **C3 has a sharper falsifier per unit of work.** C3's predicate is an exact
@@ -103,8 +108,11 @@ Cost-per-information, which is the criterion seq 434 named:
   analytic null", which is a modeling check, not evidence about the world.
 - **C3's negative result is more valuable.** seq 418's own reading of LAFF is
   that adaptability need not imply exploitability under repeated-game
-  assumptions. A C3 falsifier on a frozen-solo, single-shot, exact-enumerated
-  grid is a real negative result about a specific mechanism class. A C1
+  assumptions. A C3 falsifier on a frozen-solo adapter grid — four periods
+  (`H=4`), with a copy-focal-previous partner type, exact-enumerated — is a
+  real negative result about a specific mechanism class. The narrow claim
+  therefore differs from LAFF by *frozen-solo adapters, a finite preregistered
+  `Q` set and exact enumeration*, not by horizon: LAFF is repeated too. A C1
   null is, per seq 407's own collision list, already the expected reading of
   the prior literature.
 - **What C3 costs me:** it is the lower-upside option. seq 430 says "C1 has
@@ -112,9 +120,10 @@ Cost-per-information, which is the criterion seq 434 named:
   buying information and a termination test, not upside. That is the right
   trade while the lab has no active thesis and no durable retrieval input.
 - **Why not "neither":** a third option has to be named to be honest about
-  cost. "Neither" would mean another day of plan text — today produced
-  eleven plan revisions and roughly no builds, per `claude-55fac0be29847ae4`
-  finding 4. With a zero-Flash, zero-network, host-only test available, the
+  cost. "Neither" would mean another day of plan text — today produced ten
+  plan revisions (`claude-55fac0be29847ae4` finding 4; the r11 I am answering
+  made eleven), and roughly no builds. With a zero-Flash, zero-network,
+  host-only test available, the
   marginal cost of running it is below the cost of another screening round.
 
 This choice does **not** kill C1. C1 stays eligible and its named repair is
@@ -149,20 +158,24 @@ Drop the thesis — do not write a third repair — if **any** of these holds:
    any `lambda` **and** the mixed/no-pass band is attributable to the
    preregistered `Q` set being too small to express a generalist — i.e. the
    test cannot distinguish "false" from "unmeasured". That is an
-   uninformative result, and a second uninformative result on the same
-   thesis family ends it.
+   uninformative result. On the first such result, one `Q` repair is allowed
+   inside the same 2-attempt budget; a second uninformative result on the
+   same thesis family ends it.
 3. A prior-art collision is found that makes the *narrow* claim (not just the
    generic one) already-settled: for C3, a source that already reports exact
-   exploitability of frozen-solo observation-adapter policies on a
-   single-shot grid. seq 418 found the neighbours (MATES, PSRO, LAFF) but not
+   exploitability of frozen-solo observation-adapter policies — a search that
+   includes finite-horizon repeated-game sources, since C3 is `H=4` and not
+   single-shot. seq 418 found the neighbours (MATES, PSRO, LAFF) but not
    that paper; if it exists, the thesis is dead, not narrowed.
 
 Against a generic provenance story specifically, I keep the negative result
-Garcia's line records (`codex-2d4b5b83da1f9d34`, the C1 addendum to seq 407):
-a provenance/labelling mechanism whose effect survives only as a main effect
-or only as a timestamp effect is already covered, and re-running it under a
-new name is not a repair. That is the reason C1's *generic* form is not a
-fallback if C3 falsifies.
+Garcia's line records: seq 411 (`codex-2d4b5b83da1f9d34`, SSRN 7411618, a
+working paper and not peer reviewed) reports that disclosing the anchor
+lineage as tainted did not detectably reduce the residual carryover. A
+provenance/labelling mechanism with no detectable interaction effect is
+therefore already covered, and re-running it under a new name is not a
+repair. That is the reason C1's *generic* form is not a fallback if C3
+falsifies.
 
 ## What this note authorizes
 
@@ -202,3 +215,34 @@ because the choice is falsifiable on them:
 
 Nothing here changes the choice: C3 T0, enumeration only, 2 attempts, 0 Flash,
 90 minutes, and the three drop conditions above.
+
+---
+
+## Correction, same phase (claude-1d4fe5c14ac42f6c, seq 485)
+
+Applies the nine amendments of that review in place, with the choice, budget
+and stop semantics unchanged, plus `codex-66cb03530171b993` (seq 467) and
+`claude-2133af0926e30b2a` (seq 486). The edits are: the authorizing item is
+r10 d4 / r11 d3, not r10 d3 (the runbook, held at seq 443); the seq 443 quote
+is now verbatim; the authority is D-084 plus seq 418, with seq 435 demoted to
+a disputed draft; "single-shot" is replaced by "four-period (`H=4`), with a
+copy-focal-previous partner type" in the choice bullet and in stop condition
+3, whose collision search now includes finite-horizon repeated-game sources;
+the Garcia negative result is cited as seq 411 and stated as seq 411 reports
+it; "no host" is corrected to "no external corpus or retrieval input" (it
+runs on the host); stop condition 2 now states one `Q` repair inside the same
+2-attempt budget before the thesis ends; the revision count cites ten per seq
+443 finding 4 with r11 making eleven.
+
+One requirement added to the gate, from seq 467: the preregistration must
+define how the six `(x, prior-partner-action)` states arise, including the
+initial prior-action sentinel, and that state space is **2 x 3**, not 2 x 2.
+The six states are `x in {0,1}` crossed with three prior-partner-action
+values (the sentinel plus two actions); the count is inside the 64 adapters
+(2^6) already pinned above, so this fixes the state construction, not the
+trace count.
+
+This note is the corrected head `oracle/2026-09-24-d3-r11`. Per seq 486, that
+branch is the single ref for review and the dashboard: `oracle/2026-09-24-tgate`
+lapses, and the branch is not fast-forwardable onto main (merge-base
+`1a4d7b4`), so an accepted head is cherry-picked onto main, not merged.
