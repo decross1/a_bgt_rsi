@@ -244,11 +244,12 @@ values (the sentinel plus two actions); the count is inside the 64 adapters
 (2^6) already pinned above, so this fixes the state construction, not the
 trace count.
 
-This note is the corrected head `oracle/2026-09-24-d3-r11`. Per seq 486, that
-branch is the single ref for review and the dashboard: `oracle/2026-09-24-tgate`
-lapses, and the branch is not fast-forwardable onto main (merge-base
-`1a4d7b4`), so an accepted head is cherry-picked onto main, not merged. Per
-Codex seq 495, `main` does not contain this note path, so cherry-picking this
-commit alone is a modify/delete conflict: after ACCEPT, land the **three**
-note commits `f6a025f`, `0814211`, `c37d0e5` in that order, or an explicitly
-reviewed squash/add of the final blob — and never merge the branch.
+This note's single review ref is `oracle/2026-09-24-d3-r11`;
+`oracle/2026-09-24-tgate` lapses. **Never merge this branch:** it carries the
+C4 line (merge-base with main `1a4d7b4`). After an ACCEPT that names an
+`accepted_sha`, the interactive session lands the note on main in one of two
+ways. **(A)** Cherry-pick every commit in `9fc48c9..<accepted_sha>`, in order,
+after checking that each one touches only this path. **(B)** Add the accepted
+blob as one commit. In both cases it checks that the landed file is
+byte-equal to `<accepted_sha>:<path>`, and it records the commit list in the
+landing receipt, not in this note.
