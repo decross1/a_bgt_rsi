@@ -12,6 +12,7 @@ import copy
 import hashlib
 import json
 import os
+import stat
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -413,6 +414,18 @@ def load_active_campaign(
         if repo_root == REPO_ROOT
         else repo_root / closure_relative
     )
+    # A missing closure directory is the normal pre-closure state. An existing
+    # non-directory or symlink is lifecycle evidence that cannot safely be
+    # treated as absent, even when its child path does not lexically exist.
+    try:
+        closure_directory = closure_path.parent.lstat()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        raise CampaignError("campaign closure directory cannot be read safely") from exc
+    else:
+        if not stat.S_ISDIR(closure_directory.st_mode):
+            raise CampaignError("campaign closure directory is redirected or not a directory")
     if os.path.lexists(closure_path):
         if closure_path == repo_root / closure_relative:
             _closure_path, closure_bytes = _read_regular(
