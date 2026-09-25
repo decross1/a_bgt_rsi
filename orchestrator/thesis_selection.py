@@ -1130,8 +1130,9 @@ def verify_selection_sources(root: Path, receipt: dict) -> None:
     rows = _mailbox_rows(root / "run_state/oracle_nara_mailbox.jsonl")
     cutoff_seq = receipt.get("mailbox_cutoff_seq")
     cutoff_sha = receipt.get("mailbox_cutoff_sha256")
-    if (type(cutoff_seq) is not int or cutoff_seq < 1 or cutoff_seq > len(rows)
-            or rows[cutoff_seq - 1].get("row_sha256") != cutoff_sha):
+    if (type(cutoff_seq) is not int or cutoff_seq < 1
+            or not any(row.get("seq") == cutoff_seq and row.get("row_sha256") == cutoff_sha
+                       for row in rows)):
         raise ThesisSelectionError("focus mailbox cutoff is not present in the verified mailbox")
     candidate_set = _load(root, "candidate_sets", receipt["candidate_set_sha256"])
     validate_candidate_set(candidate_set)
