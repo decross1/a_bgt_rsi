@@ -190,7 +190,7 @@ describe("DailyOpsPanel", () => {
     expect(screen.getByTestId("daily-work-card-d2")).toHaveTextContent("Depends ond1");
   });
 
-  it("lists what is waiting on the owner as plain questions with decision buttons, no commands", () => {
+  it("keeps the full decision actions on plan decisions and unstructured mailbox questions", () => {
     show();
     const waiting = screen.getByTestId("daily-waiting-on-you");
     expect(within(waiting).getByRole("heading", { name: "Waiting on you" })).toBeInTheDocument();
@@ -198,18 +198,20 @@ describe("DailyOpsPanel", () => {
     expect(planDecision).toHaveTextContent("plan decision");
     expect(planDecision).not.toHaveTextContent("--kind answer");
     expect(planDecision).not.toHaveTextContent(".venv-chroma/bin/python");
-    expect(within(planDecision).queryByRole("button", { name: "Approve" })).toBeNull();
-    expect(within(planDecision).queryByRole("button", { name: "Decline" })).toBeNull();
-    expect(within(planDecision).queryByRole("button", { name: "Defer" })).toBeNull();
+    expect(within(planDecision).getByRole("button", { name: "Approve" })).toBeInTheDocument();
+    expect(within(planDecision).getByRole("button", { name: "Decline" })).toBeInTheDocument();
+    expect(within(planDecision).getByRole("button", { name: "Defer" })).toBeInTheDocument();
     expect(within(planDecision).getByRole("button", { name: "Reply…" })).toBeInTheDocument();
     const question = screen.getByTestId("daily-waiting-claude-18ae939243e70e7d");
     expect(question).toHaveTextContent("Two authority rulings");
     expect(question).not.toHaveTextContent("answer claude-18ae939243e70e7d");
-    expect(within(question).queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(within(question).getByRole("button", { name: "Approve" })).toBeInTheDocument();
+    expect(within(question).getByRole("button", { name: "Decline" })).toBeInTheDocument();
+    expect(within(question).getByRole("button", { name: "Defer" })).toBeInTheDocument();
     expect(within(question).getByRole("button", { name: "Reply…" })).toBeInTheDocument();
   });
 
-  it("shows the decision, context, options and recommendation instead of a log-derived title", () => {
+  it("shows structured mailbox choices as a reply-only decision", () => {
     const base = summary();
     D.summary = summary({ waiting_on_you: [{
       ...base.waiting_on_you[1], title: "Choose review shape",
@@ -264,17 +266,15 @@ describe("DailyOpsPanel", () => {
     expect(within(updates).queryByRole("button", { name: "Approve" })).toBeNull();
   });
 
-  it("sends an owner decision on a waiting item and shows it was sent", async () => {
+  it("sends approval for a plan decision and shows it was sent", async () => {
     sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
     show();
     const planDecision = screen.getByTestId(`daily-waiting-${PLAN}:d5`);
-    fireEvent.click(within(planDecision).getByRole("button", { name: "Reply…" }));
+    fireEvent.click(within(planDecision).getByRole("button", { name: "Approve" }));
     const editor = screen.getByTestId("daily-decision-editor");
-    fireEvent.change(within(editor).getByLabelText("Your reply"), { target: { value: "Proceed with the reviewed plan." } });
-    fireEvent.click(within(editor).getByRole("button", { name: "Send reply" }));
+    fireEvent.click(within(editor).getByRole("button", { name: "Send approval" }));
     await waitFor(() => expect(D.postDecision).toHaveBeenCalledWith(expect.objectContaining({
-      accessKey: "owner-secret", targetKind: "question", targetId: "claude-81a020b8a67564fb", action: "reply",
-      note: "Proceed with the reviewed plan.",
+      accessKey: "owner-secret", targetKind: "question", targetId: "claude-81a020b8a67564fb", action: "approve",
       expectedPlanRevision: PLAN,
     })));
     expect(await within(editor).findByText(/Sent to Oracle|Request queued/)).toBeInTheDocument();
