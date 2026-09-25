@@ -4,6 +4,7 @@ import {
   DailyOpsError,
   getDailyOpsMessages,
   getDailyOpsSummary,
+  getDailyOpsV3Summary,
   postDailyOpsDecision,
   postDailyOpsMessage,
   type DailyOpsIntent,
@@ -16,9 +17,11 @@ import DailyDecisionCards, {
   type DailyWorkCard,
   type EvidenceKind,
 } from "./DailyDecisionCards";
+import { admitDailyOpsV3Summary, DailyOpsV3Panel } from "./DailyOpsV3Panel";
 import { ResearchOpsCard } from "./ResearchOpsCard";
 
 const SUMMARY_KEY = "daily_ops_summary";
+const V3_SUMMARY_KEY = "daily_ops_v3_summary";
 const MESSAGES_KEY = "daily_ops_messages";
 const OWNER_KEY = "oracle-lab-owner-access-key";
 const STATUS = new Set(["planned", "in_progress", "blocked", "done", "awaiting_owner"]);
@@ -432,11 +435,15 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
   const [accessKey, setAccessKey] = useState(() =>
     typeof sessionStorage === "undefined" ? "" : sessionStorage.getItem(OWNER_KEY) ?? "");
   const summaryPoll = usePolled(SUMMARY_KEY, getDailyOpsSummary, { intervalMs: 60_000 });
+  // v3 is a separate read-only projection.  Keeping this poll independent
+  // makes an absent new endpoint an honest, non-disruptive v2 fallback.
+  const v3SummaryPoll = usePolled(V3_SUMMARY_KEY, getDailyOpsV3Summary, { intervalMs: 60_000 });
   const messagesPoll = usePolled(MESSAGES_KEY, () => getDailyOpsMessages(accessKey), {
     intervalMs: 15_000,
     enabled: accessKey.length > 0,
   });
   const summary = admitDailyOpsSummary(summaryPoll.data);
+  const v3Summary = admitDailyOpsV3Summary(v3SummaryPoll.data);
   const messages = admitMessages(messagesPoll.data);
   const [intent, setIntent] = useState<DailyOpsIntent>("question");
   const [text, setText] = useState("");
@@ -568,6 +575,11 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
     }
   }
 
+  if (v3Summary) {
+    return <DailyOpsV3Panel summary={v3Summary} legacyResearchOps={legacyResearchOps}
+      legacyFailing={legacyFailing} />;
+  }
+
   if (!summary || !summary.available) {
     return <div className="mb-4" data-testid="daily-ops-fallback">
       <div className="mb-3 rounded-lg border border-[var(--border-1)] bg-[var(--surface-1)] p-4">
@@ -576,6 +588,7 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
         <p className="mt-2 text-sm text-[var(--fg-muted)]">
           {summaryPoll.error ? "The current brief could not be read. Existing research operations remain visible below." : "Waiting for the first source-bound daily snapshot. Existing research operations remain visible below."}
         </p>
+        <p className="mt-2 text-xs text-[var(--fg-muted)]" data-testid="daily-ops-v3-fallback">The richer v3 mailbox view is unavailable; showing the compatible view when available.</p>
       </div>
       <ResearchOpsCard data={legacyResearchOps} failing={legacyFailing} />
     </div>;
@@ -600,6 +613,10 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
       <span className="font-semibold">Authored daily notes are from {notesDay} UTC.</span>{" "}
       Their statuses reflect that update. The current sealed agenda, thesis, and agent observations update separately.
     </div>}
+
+    <p role="status" data-testid="daily-ops-v3-fallback" className="mt-4 rounded border border-[var(--border-2)] p-3 text-sm text-[var(--fg-muted)]">
+      The richer v3 mailbox view is unavailable; this compatible v{summary.workCards === null ? "1" : "2"} brief remains in use.
+    </p>
 
     {summary.warnings.length > 0 && <div role="status" className="mt-4 rounded border border-[var(--status-warn)] bg-[var(--status-warn-bg)] p-3 text-sm">
       {summary.warnings.map(warning => <p key={warning}>{warning}</p>)}
