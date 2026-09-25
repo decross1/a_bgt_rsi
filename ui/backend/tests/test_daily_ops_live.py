@@ -50,6 +50,29 @@ class Box:
         return oracle_mailbox.post(actor, kind, body, to=to, in_reply_to=reply, path=self.path)
 
 
+def _contest(box, resolution, *, reporter="oracle"):
+    """Append the two structured self-reports and conservative reviewer contest used by seq680."""
+    first = box.post(reporter, "note", {
+        "title": "NOT MINE", "text": "I used the wrong actor label.",
+        "ref": {"posted_row": f"{resolution['msg_id']} (seq {resolution['seq']})",
+                "command": f"oracle_mailbox post --as {resolution['actor']}"},
+    })
+    second = box.post(reporter, "note", {
+        "title": "Plan note with self-report", "text": "Preserve the contaminated row.",
+        "ref": {"self_reported_fault":
+                f"seq {resolution['seq']} posted with --as {resolution['actor']} by this session"},
+    })
+    contest = box.post("codex", "note", {
+        "title": "Contested attribution", "text": "Preserve the row and reopen the question.",
+        "provenance_contestation": {
+            "contested_msg_id": resolution["msg_id"], "claimed_actor": resolution["actor"],
+            "reported_actual_actor": reporter, "basis_msg_ids": [first["msg_id"], second["msg_id"]],
+            "effect": "invalidate_for_projection",
+        },
+    }, reply=resolution["msg_id"])
+    return first, second, contest
+
+
 def _git(repo, *args):
     subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True,
                    env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
@@ -375,6 +398,125 @@ def test_projection_closes_only_for_human_answer_or_valid_original_asker_resolut
     assert [row["id"] for row in live.waiting_on_you("p", base, claimed, [question, relay], None)] == ["p:d1"]
     assert live.waiting_on_you("p", base, claimed, [question, relay, human], None) == []
     assert live.waiting_on_you("p", base, claimed, [question, asker_resolution], None) == []
+
+
+def test_live_seq604_prefix_contest_reopens_card_and_projects_non_action_update():
+    """Regression fixture for live seq604/672/673/675/680; labels are not authentication."""
+    question = {
+        "seq": 604, "msg_id": "claude-dcc5a13d09fea05b", "actor": "claude", "to": "owner",
+        "kind": "question", "in_reply_to": "claude-3b286b92313f21d9",
+        "ts": "2026-09-25T03:13:18.072254+00:00",
+        "body": {"title": "Put the lab checkout back where it was? Oracle moved it by accident at 03:01"},
+    }
+    resolution = {
+        "seq": 672, "msg_id": "claude-7baa7cbad84ef310", "actor": "claude", "to": "owner",
+        "kind": "question_resolution", "in_reply_to": question["msg_id"],
+        "ts": "2026-09-25T05:14:48.020437+00:00",
+        "body": {"disposition": "superseded", "summary": "The restore already happened.",
+                 "reason": "The claimed asker rechecked the checkout."},
+    }
+    first = {
+        "seq": 673, "msg_id": "oracle-1adbcf744dad346b", "actor": "oracle", "to": "all",
+        "kind": "note", "in_reply_to": None, "ts": "2026-09-25T05:15:17.292300+00:00",
+        "body": {"ref": {"posted_row": f"{resolution['msg_id']} (seq 672)",
+                           "command": "python -m orchestrator.oracle_mailbox post --as claude"}},
+    }
+    second = {
+        "seq": 675, "msg_id": "oracle-23f01c1d12a41d66", "actor": "oracle", "to": "all",
+        "kind": "note", "in_reply_to": None, "ts": "2026-09-25T05:19:29.493710+00:00",
+        "body": {"ref": {"self_reported_fault":
+                           "seq 672 posted with --as claude by this session, disowned at seq 673"}},
+    }
+    contest = {
+        "seq": 680, "msg_id": "codex-8fbb6371871c852c", "actor": "codex", "to": "all",
+        "kind": "note", "in_reply_to": resolution["msg_id"],
+        "ts": "2026-09-25T05:24:14.856582+00:00",
+        "body": {"title": "Contested attribution for seq672; preserve and reopen seq604 in projections",
+                 "text": "Pi self-reported that it posted seq672 with --as claude.",
+                 "provenance_contestation": {
+                     "contested_msg_id": resolution["msg_id"], "claimed_actor": "claude",
+                     "reported_actual_actor": "oracle",
+                     "basis_msg_ids": [first["msg_id"], second["msg_id"]],
+                     "effect": "invalidate_for_projection",
+                 }},
+    }
+    rows = [question, resolution, first, second, contest]
+
+    assert oracle_mailbox.is_valid_question_resolution(question, resolution, rows[:-1]) is True
+    assert oracle_mailbox.is_valid_question_resolution(question, resolution, rows) is False
+    assert live._question_resolution(question, rows) is None
+    waiting = live.waiting_on_you("2026-09-25-r4", [{
+        "id": "d5", "status": "waiting_on_you", "evidence_msg_id": question["msg_id"],
+        "title": "Lane base", "evidence_at": question["ts"],
+    }], {question["msg_id"]: "d5"}, rows, None)
+    assert [card["id"] for card in waiting] == ["2026-09-25-r4:d5"]
+    updates = live.question_updates(rows)
+    assert len(updates) == 1
+    assert updates[0]["id"] == contest["msg_id"]
+    assert updates[0]["disposition"] == "contested"
+    assert updates[0]["evidence_msg_ids"] == [first["msg_id"], second["msg_id"]]
+
+
+def test_contest_requires_structured_evidence_deduplicates_and_yields_to_fresh_terminal(repo):
+    _plan(repo, "2026-09-23.json", [_item("d5", "owner_decision")])
+    box = Box(repo)
+    question = box.post("claude", "question", {"title": "Item d5", "ref": {"item": "d5"}}, to="owner")
+    resolution = box.post("claude", "question_resolution", {
+        "disposition": "superseded", "summary": "Already done.", "reason": "Rechecked.",
+    }, to="owner", reply=question["msg_id"])
+
+    fake_a = box.post("oracle", "note", {"title": "Claim", "text": "I posted it."})
+    fake_b = box.post("oracle", "note", {"title": "Claim again", "text": "Trust me."})
+    box.post("codex", "note", {
+        "title": "Unsubstantiated contest", "text": "Actor labels remain unauthenticated.",
+        "provenance_contestation": {
+            "contested_msg_id": resolution["msg_id"], "claimed_actor": "claude",
+            "reported_actual_actor": "oracle", "basis_msg_ids": [fake_a["msg_id"], fake_b["msg_id"]],
+            "effect": "invalidate_for_projection",
+        },
+    }, reply=resolution["msg_id"])
+    assert _summary(repo)["work_items"][0]["status"] == "resolved"
+
+    _first, _second, contest = _contest(box, resolution)
+    duplicate = box.post("codex", "note", contest["body"], reply=resolution["msg_id"])
+    value = _summary(repo)
+    assert value["work_items"][0]["status"] == "waiting_on_you"
+    updates = [row for row in value["question_updates"] if row["question_id"] == question["msg_id"]]
+    assert len(updates) == 1 and updates[0]["id"] == duplicate["msg_id"]
+
+    fresh = box.post("claude", "question_resolution", {
+        "disposition": "informational", "summary": "Fresh independent recheck.",
+        "reason": "The original asker verified it after the contest.",
+    }, to="owner", reply=question["msg_id"])
+    value = _summary(repo)
+    assert value["work_items"][0]["status"] == "resolved"
+    updates = [row for row in value["question_updates"] if row["question_id"] == question["msg_id"]]
+    assert len(updates) == 1 and updates[0]["id"] == fresh["msg_id"]
+
+    second_question = box.post("claude", "question", {"title": "A second choice"}, to="owner")
+    second_resolution = box.post("claude", "question_resolution", {
+        "disposition": "superseded", "summary": "Already done.", "reason": "Rechecked.",
+    }, to="owner", reply=second_question["msg_id"])
+    _contest(box, second_resolution)
+    box.post("human:derrick", "answer", {"text": "Use the safe path."}, to="claude",
+             reply=second_question["msg_id"])
+    value = _summary(repo)
+    assert second_question["msg_id"] not in {card["msg_id"] for card in value["waiting_on_you"]}
+    assert second_question["msg_id"] not in {row["question_id"] for row in value["question_updates"]}
+
+
+def test_malformed_contest_schema_is_rejected(repo):
+    box = Box(repo)
+    question = box.post("claude", "question", {"title": "Choice"}, to="owner")
+    resolution = box.post("claude", "question_resolution", {
+        "disposition": "superseded", "summary": "Done.", "reason": "Checked.",
+    }, to="owner", reply=question["msg_id"])
+    with pytest.raises(oracle_mailbox.MailboxError, match="provenance_contestation"):
+        box.post("codex", "note", {"provenance_contestation": {
+            "contested_msg_id": resolution["msg_id"], "claimed_actor": "claude",
+            "reported_actual_actor": "oracle", "basis_msg_ids": [],
+            "effect": "invalidate_for_projection",
+        }}, reply=resolution["msg_id"])
 
 
 @pytest.mark.parametrize(("projection", "expected"), [

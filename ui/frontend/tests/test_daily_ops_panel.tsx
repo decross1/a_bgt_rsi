@@ -29,6 +29,7 @@ vi.mock("../src/api/pollhub", () => ({
 }));
 
 import DailyOpsPanel, { makeRequestId, nowLine } from "../src/components/DailyOpsPanel";
+import { DailyOpsError } from "../src/api/dailyOps";
 
 const now = "2026-09-20T08:00:00Z";
 const PLAN = "2026-09-20-r2";
@@ -268,6 +269,22 @@ describe("DailyOpsPanel", () => {
     expect(within(updates).queryByRole("button", { name: "Approve" })).toBeNull();
   });
 
+  it("shows a contested resolution as a non-action provenance update", () => {
+    D.summary = summary({ waiting_on_you: [], question_updates: [{
+      id: "codex-contest-1", question_id: "claude-question-1", title: "Restore the checkout?",
+      question: "Restore the checkout?", disposition: "contested",
+      summary: "Contested attribution; the owner question is open again.",
+      reason: "Two later self-reports say the resolution used another actor label.",
+      blocking_artifact: null, resolved_by: "codex", resolved_at: now,
+      evidence_msg_ids: ["oracle-self-report-1", "oracle-self-report-2"],
+    }] });
+    show();
+    const update = screen.getByTestId("daily-question-update-codex-contest-1");
+    expect(update).toHaveTextContent("contested");
+    expect(update).toHaveTextContent("the owner question is open again");
+    expect(within(update).queryByRole("button")).toBeNull();
+  });
+
   it("sends an owner decision on a waiting item and shows it was sent", async () => {
     sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
     show();
@@ -366,6 +383,39 @@ describe("DailyOpsPanel", () => {
     await waitFor(() => expect(D.postDecision).toHaveBeenCalledTimes(3));
     expect(D.postDecision.mock.calls[2][0]).toEqual(expect.objectContaining({
       requestId: freshId, expectedPlanRevision: newerRevision,
+    }));
+  });
+
+  it("captures the editor revision before rollover and blocks resubmit after a stale 409", async () => {
+    sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
+    D.postDecision.mockRejectedValueOnce(new DailyOpsError(409, "plan revision changed"));
+    const view = show();
+    fireEvent.click(within(screen.getByTestId("daily-work-card-d2")).getByRole("button", { name: "Ask to modify" }));
+    let editor = screen.getByTestId("daily-decision-editor");
+    fireEvent.change(within(editor).getByLabelText("Required change"), { target: { value: "Wait for d1." } });
+
+    const newerRevision = "2026-09-21-r1";
+    const base = summary();
+    D.summary = summary({ current_plan_revision: newerRevision, daily_plan: {
+      ...base.daily_plan, id: newerRevision, date: "2026-09-21", revision: "r1",
+      path: `run_state/daily_plans/${newerRevision}.json`,
+    } });
+    view.rerender(<MemoryRouter><DailyOpsPanel legacyResearchOps={null} /></MemoryRouter>);
+    editor = screen.getByTestId("daily-decision-editor");
+    fireEvent.click(within(editor).getByRole("button", { name: "Queue modification request" }));
+    expect(await within(editor).findByText(/This decision is stale/)).toBeInTheDocument();
+    expect(D.postDecision).toHaveBeenCalledWith(expect.objectContaining({ expectedPlanRevision: PLAN }));
+    expect(within(editor).getByRole("button", { name: "Queue modification request" })).toBeDisabled();
+    fireEvent.click(within(editor).getByRole("button", { name: "Queue modification request" }));
+    expect(D.postDecision).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(within(editor).getByRole("button", { name: "Cancel" }));
+    fireEvent.click(within(screen.getByTestId("daily-work-card-d4")).getByRole("button", { name: "Ask to skip" }));
+    editor = screen.getByTestId("daily-decision-editor");
+    fireEvent.click(within(editor).getByRole("button", { name: "Queue skip request" }));
+    await waitFor(() => expect(D.postDecision).toHaveBeenCalledTimes(2));
+    expect(D.postDecision.mock.calls[1][0]).toEqual(expect.objectContaining({
+      expectedPlanRevision: newerRevision,
     }));
   });
 

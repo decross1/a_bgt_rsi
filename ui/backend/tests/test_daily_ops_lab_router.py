@@ -14,7 +14,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
-from backend import daily_ops_live as live
+from backend import daily_ops_bridge, daily_ops_live as live
 from backend.app import create_app
 from backend.daily_ops_bridge import LabMailboxRouter
 
@@ -172,6 +172,7 @@ def test_reply_to_a_question_posts_an_answer_in_reply_to_it(repo, config):
     assert answer["to"] == "oracle"
     assert answer["in_reply_to"] == question["msg_id"]
     assert answer["body"]["text"] == "Do the safe thing."
+    assert answer["body"]["expected_plan_revision"] == REVISION
     retry = router.route_decision({
         "request_id": "33333333-3333-3333-3333-333333333333",
         "target_kind": "question", "target_id": question["msg_id"], "action": "reply",
@@ -186,6 +187,49 @@ def test_reply_to_a_question_posts_an_answer_in_reply_to_it(repo, config):
             "expected_plan_revision": REVISION, "note": "A second answer.",
         })
     assert len(oracle_mailbox.read(mailbox)) == 2
+
+
+def test_question_retry_binds_expected_plan_revision(repo, config):
+    mailbox = repo / "run_state" / "oracle_nara_mailbox.jsonl"
+    question = oracle_mailbox.post("oracle", "question", {"title": "What next?"}, to="owner", path=mailbox)
+    router = LabMailboxRouter(config, repo_root=repo)
+    payload = {
+        "request_id": "35333333-3333-3333-3333-333333333333",
+        "target_kind": "question", "target_id": question["msg_id"], "action": "reply",
+        "expected_plan_revision": REVISION, "note": "Do the safe thing.",
+    }
+    assert router.route_decision(payload)["duplicate"] is False
+    assert router.route_decision(payload)["duplicate"] is True
+    with pytest.raises(HTTPException, match="idempotency_key") as caught:
+        router.route_decision({**payload, "expected_plan_revision": "2026-09-24"})
+    assert caught.value.status_code == 409
+    assert len(oracle_mailbox.read(mailbox)) == 2
+
+
+def test_plan_append_rechecks_currentness_at_its_linearization_point(repo, config, monkeypatch):
+    router = LabMailboxRouter(config, repo_root=repo)
+    original = daily_ops_bridge.current_plan
+    calls = 0
+
+    def rollover(root):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return original(root)
+        newer = _install_plan(root)
+        newer["date"] = "2026-09-24"
+        return "2026-09-24", newer
+
+    monkeypatch.setattr(daily_ops_bridge, "current_plan", rollover)
+    with pytest.raises(HTTPException, match="plan revision changed") as caught:
+        router.route_decision({
+            "request_id": "36333333-3333-3333-3333-333333333333",
+            "target_kind": "work_card", "target_id": "d1", "action": "approve",
+            "expected_plan_revision": REVISION, "note": "Proceed.",
+        })
+    assert caught.value.status_code == 409
+    assert calls == 2
+    assert not (repo / "run_state" / "oracle_nara_mailbox.jsonl").exists()
 
 
 def test_approve_on_a_question_posts_a_direct_human_answer(repo, config):

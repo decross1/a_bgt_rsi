@@ -234,7 +234,7 @@ function questionUpdates(value: unknown): DailyQuestionUpdate[] {
   return value.slice(0, 10).flatMap((item): DailyQuestionUpdate[] => {
     if (!record(item) || !bounded(item.id, 80) || !bounded(item.question_id, 80) || !bounded(item.title, 300) ||
         !bounded(item.question, 300) ||
-        !["withdrawn", "superseded", "prerequisite", "informational"].includes(String(item.disposition)) ||
+        !["withdrawn", "superseded", "prerequisite", "informational", "contested"].includes(String(item.disposition)) ||
         !bounded(item.summary, 1200) || !bounded(item.reason, 1200) || !bounded(item.resolved_by, 60) ||
         !timestamp(item.resolved_at)) return [];
     const blockingArtifact = nullableText(item.blocking_artifact, 240);

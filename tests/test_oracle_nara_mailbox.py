@@ -45,6 +45,47 @@ def _race_post_once(path, question_id, requests):
     return [results.get(timeout=5) for _ in processes]
 
 
+def _terminal_process(path_text, question_id, terminal, gate, results):
+    """Race an owner answer against the asker's non-answer resolution."""
+    try:
+        if not gate.wait(10):
+            results.put(("error", "Timeout", "start gate did not open"))
+            return
+        if terminal == "answer":
+            row, _duplicate = mailbox.post_once(
+                "human:derrick", "answer",
+                {"text": "approve", "decision": "approve", "request_id": "race-answer"},
+                to="oracle", in_reply_to=question_id, idempotency_key="race-answer",
+                require_open_question=True, path=Path(path_text),
+            )
+        else:
+            row = mailbox.post(
+                "oracle", "question_resolution",
+                {"disposition": "withdrawn", "summary": "No action remains.",
+                 "reason": "The premise was superseded."},
+                to="owner", in_reply_to=question_id, path=Path(path_text),
+            )
+        results.put(("ok", terminal, row["msg_id"]))
+    except Exception as exc:  # result is asserted in the parent process
+        results.put(("error", type(exc).__name__, str(exc)))
+
+
+def _race_terminals(path, question_id):
+    context = multiprocessing.get_context("spawn")
+    gate, results = context.Event(), context.Queue()
+    processes = [context.Process(
+        target=_terminal_process, args=(str(path), question_id, terminal, gate, results),
+    ) for terminal in ("answer", "resolution")]
+    for process in processes:
+        process.start()
+    gate.set()
+    for process in processes:
+        process.join(15)
+        assert not process.is_alive(), "concurrent terminal writer did not finish"
+        assert process.exitcode == 0
+    return [results.get(timeout=5) for _ in processes]
+
+
 def _plan(**over):
     body = {
         "title": "Add a slugify helper", "objective": "Create tools/slug.py with slugify(text).",
@@ -129,6 +170,66 @@ def test_question_resolution_is_explicit_and_preserves_question_provenance(tmp_p
         mailbox.post("oracle", "question_resolution", {
             "disposition": "withdrawn", "summary": "No action.", "reason": "wrong parent",
         }, to="owner", in_reply_to=withdrawn["msg_id"], path=path)
+
+
+def test_question_terminal_writes_are_single_winner_and_contest_reopens(tmp_path):
+    path = tmp_path / "mb.jsonl"
+    answered = mailbox.post("oracle", "question", {"question": "Proceed?"}, to="owner", path=path)
+    mailbox.post("human:derrick", "answer", {"text": "yes"}, to="oracle",
+                 in_reply_to=answered["msg_id"], path=path)
+    with pytest.raises(mailbox.MailboxError, match="no longer open"):
+        mailbox.post("oracle", "question_resolution", {
+            "disposition": "withdrawn", "summary": "No action.", "reason": "Too late.",
+        }, to="owner", in_reply_to=answered["msg_id"], path=path)
+
+    resolved = mailbox.post("oracle", "question", {"question": "Still proceed?"}, to="owner", path=path)
+    resolution = mailbox.post("oracle", "question_resolution", {
+        "disposition": "withdrawn", "summary": "No action.", "reason": "Superseded.",
+    }, to="owner", in_reply_to=resolved["msg_id"], path=path)
+    with pytest.raises(mailbox.MailboxError, match="no longer open"):
+        mailbox.post("oracle", "question_resolution", {
+            "disposition": "informational", "summary": "A second terminal.", "reason": "Too late.",
+        }, to="owner", in_reply_to=resolved["msg_id"], path=path)
+    with pytest.raises(mailbox.MailboxError, match="no longer open"):
+        mailbox.post("human:derrick", "answer", {"text": "yes"}, to="oracle",
+                     in_reply_to=resolved["msg_id"], path=path)
+
+    first = mailbox.post("nara", "note", {
+        "title": "Self-report", "text": "Wrong actor label.",
+        "ref": {"posted_row": f"{resolution['msg_id']} (seq {resolution['seq']})",
+                "command": "oracle_mailbox post --as oracle"},
+    }, to="all", path=path)
+    second = mailbox.post("nara", "note", {
+        "title": "Second self-report", "text": "The row was mine.",
+        "ref": {"self_reported_fault":
+                f"seq {resolution['seq']} posted with --as oracle by this session"},
+    }, to="all", path=path)
+    mailbox.post("codex", "note", {
+        "title": "Contest attribution", "text": "Preserve the row but reopen the question.",
+        "provenance_contestation": {
+            "contested_msg_id": resolution["msg_id"], "claimed_actor": "oracle",
+            "reported_actual_actor": "nara", "basis_msg_ids": [first["msg_id"], second["msg_id"]],
+            "effect": "invalidate_for_projection",
+        },
+    }, to="all", in_reply_to=resolution["msg_id"], path=path)
+    # A contest is conservative invalidation, never actor authentication: once
+    # the old terminal is distrusted, a fresh owner answer may be appended.
+    mailbox.post("human:derrick", "answer", {"text": "yes"}, to="oracle",
+                 in_reply_to=resolved["msg_id"], path=path)
+    assert mailbox.read(path)[-1]["kind"] == "answer"
+
+
+def test_answer_and_resolution_race_has_one_terminal_winner(tmp_path):
+    path = tmp_path / "mb.jsonl"
+    question = mailbox.post("oracle", "question", {"question": "Proceed?"}, to="owner", path=path)
+    outcomes = _race_terminals(path, question["msg_id"])
+
+    assert len([result for result in outcomes if result[0] == "ok"]) == 1
+    errors = [result for result in outcomes if result[0] == "error"]
+    assert len(errors) == 1 and errors[0][1] == "MailboxError" and "no longer open" in errors[0][2]
+    rows = mailbox.read(path)
+    assert len(rows) == 2
+    assert rows[-1]["kind"] in {"answer", "question_resolution"}
 
 
 def test_post_once_is_idempotent_and_an_owner_question_closes_only_for_human_answer(tmp_path):

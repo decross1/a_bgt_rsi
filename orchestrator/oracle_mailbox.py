@@ -15,6 +15,7 @@ import hashlib
 import json
 import re
 import sys
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -47,6 +48,7 @@ TERMINAL = {"validated", "failed", "withdrawn"}
 VERDICTS = {"accept", "amend", "reject"}
 TASK_CLASSES = {"documentation", "tests", "tooling", "experiment_code", "lab_organization"}
 QUESTION_RESOLUTIONS = {"withdrawn", "superseded", "prerequisite", "informational"}
+PROVENANCE_CONTEST_EFFECT = "invalidate_for_projection"
 
 
 class MailboxError(ValueError):
@@ -113,8 +115,41 @@ def validate_question_resolution(body: dict) -> None:
             raise MailboxError(f"question_resolution {key} must be a non-empty string <= 240 characters")
 
 
-def is_valid_question_resolution(question: dict, resolution: dict, rows: list[dict]) -> bool:
-    """Whether a recorded resolution has valid schema, authority and ordering."""
+def validate_provenance_contestation(body: dict) -> None:
+    """Validate a conservative, evidence-bound challenge to an actor label.
+
+    This does not authenticate either named actor.  A valid contest can only
+    make consumers distrust an earlier resolution; it cannot answer a question
+    or confer authority.
+    """
+    if not isinstance(body, dict) or not isinstance(body.get("provenance_contestation"), dict):
+        raise MailboxError("provenance_contestation must be an object")
+    contest = body["provenance_contestation"]
+    keys = {"contested_msg_id", "claimed_actor", "reported_actual_actor", "basis_msg_ids", "effect"}
+    if set(contest) != keys:
+        raise MailboxError(f"provenance_contestation fields must be exactly {sorted(keys)}")
+    for key in ("contested_msg_id", "claimed_actor", "reported_actual_actor"):
+        if not isinstance(contest[key], str) or not contest[key].strip() or len(contest[key]) > 80:
+            raise MailboxError(f"provenance_contestation {key} must be a non-empty string <= 80 characters")
+    if not _actor_ok(contest["claimed_actor"]) or not _actor_ok(contest["reported_actual_actor"]):
+        raise MailboxError("provenance_contestation actors must use mailbox actor labels")
+    if contest["claimed_actor"] == contest["reported_actual_actor"]:
+        raise MailboxError("provenance_contestation must report a different actual actor")
+    evidence = contest["basis_msg_ids"]
+    if (not isinstance(evidence, list) or not 2 <= len(evidence) <= 8 or len(set(evidence)) != len(evidence)
+            or not all(isinstance(value, str) and value.strip() and len(value) <= 80 for value in evidence)):
+        raise MailboxError("provenance_contestation basis_msg_ids must be 2-8 distinct message ids")
+    if contest["effect"] != PROVENANCE_CONTEST_EFFECT:
+        raise MailboxError(f"provenance_contestation effect must be {PROVENANCE_CONTEST_EFFECT!r}")
+
+
+def _positions(rows: list[dict]) -> dict[str, int]:
+    return {str(row.get("msg_id")): position for position, row in enumerate(rows)
+            if isinstance(row, dict) and isinstance(row.get("msg_id"), str)}
+
+
+def _valid_question_resolution_record(question: dict, resolution: dict, rows: list[dict]) -> bool:
+    """Schema/authority/order check before any later provenance contest."""
     if (not isinstance(question, dict) or not isinstance(resolution, dict)
             or question.get("kind") != "question"
             or resolution.get("kind") != "question_resolution"
@@ -127,8 +162,7 @@ def is_valid_question_resolution(question: dict, resolution: dict, rows: list[di
     actor = resolution.get("actor")
     if not (isinstance(actor, str) and (actor == question.get("actor") or actor.startswith("human:"))):
         return False
-    positions = {str(row.get("msg_id")): position for position, row in enumerate(rows)
-                 if isinstance(row, dict) and isinstance(row.get("msg_id"), str)}
+    positions = _positions(rows)
     question_position = positions.get(str(question.get("msg_id")))
     resolution_position = positions.get(str(resolution.get("msg_id")))
     if question_position is None or resolution_position is None or question_position >= resolution_position:
@@ -136,6 +170,100 @@ def is_valid_question_resolution(question: dict, resolution: dict, rows: list[di
     evidence = resolution["body"].get("evidence_msg_ids")
     return evidence is None or all(positions.get(value, resolution_position) < resolution_position
                                    for value in evidence)
+
+
+def _structured_self_report(evidence: dict, resolution: dict, claimed_actor: str,
+                            reported_actual_actor: str) -> bool:
+    """Recognize the two explicit self-report shapes used as contest evidence."""
+    if evidence.get("kind") != "note" or evidence.get("actor") != reported_actual_actor:
+        return False
+    body = evidence.get("body")
+    ref = body.get("ref") if isinstance(body, dict) else None
+    if not isinstance(ref, dict):
+        return False
+    posted = ref.get("posted_row")
+    command = ref.get("command")
+    exact = (isinstance(posted, str) and posted.split(" ", 1)[0] == resolution.get("msg_id")
+             and isinstance(command, str) and f"--as {claimed_actor}" in command)
+    fault = ref.get("self_reported_fault")
+    by_seq = (isinstance(resolution.get("seq"), int) and isinstance(fault, str)
+              and f"seq {resolution['seq']}" in fault and f"--as {claimed_actor}" in fault
+              and "by this session" in fault)
+    return exact or by_seq
+
+
+def is_valid_provenance_contestation(resolution: dict, contest_row: dict, rows: list[dict]) -> bool:
+    """Whether a later reviewer/human note conservatively contests one resolution.
+
+    Mailbox actor fields remain unauthenticated.  Two ordered, structured
+    self-reports make the earlier label unsafe to trust; they do not prove the
+    identity asserted by the contest.
+    """
+    if (not isinstance(resolution, dict) or resolution.get("kind") != "question_resolution"
+            or not isinstance(contest_row, dict) or contest_row.get("kind") != "note"
+            or contest_row.get("in_reply_to") != resolution.get("msg_id")
+            or contest_row.get("to") not in {"all", "owner"}):
+        return False
+    actor = contest_row.get("actor")
+    if not (actor in REVIEWERS or isinstance(actor, str) and actor.startswith("human:")):
+        return False
+    try:
+        validate_provenance_contestation(contest_row.get("body"))
+    except MailboxError:
+        return False
+    contest = contest_row["body"]["provenance_contestation"]
+    if (contest["contested_msg_id"] != resolution.get("msg_id")
+            or contest["claimed_actor"] != resolution.get("actor")):
+        return False
+    positions = _positions(rows)
+    resolution_position = positions.get(str(resolution.get("msg_id")))
+    contest_position = positions.get(str(contest_row.get("msg_id")))
+    if resolution_position is None or contest_position is None or resolution_position >= contest_position:
+        return False
+    by_id = {row.get("msg_id"): row for row in rows if isinstance(row, dict)}
+    evidence = [by_id.get(value) for value in contest["basis_msg_ids"]]
+    return all(isinstance(row, dict)
+               and resolution_position < positions.get(str(row.get("msg_id")), -1) < contest_position
+               and _structured_self_report(row, resolution, contest["claimed_actor"],
+                                           contest["reported_actual_actor"])
+               for row in evidence)
+
+
+def latest_provenance_contest(resolution: dict, rows: list[dict]) -> dict | None:
+    """Newest valid conservative contest of ``resolution``, if any."""
+    for row in reversed(rows):
+        if is_valid_provenance_contestation(resolution, row, rows):
+            return row
+    return None
+
+
+def is_valid_question_resolution(question: dict, resolution: dict, rows: list[dict]) -> bool:
+    """Whether a recorded resolution remains valid after later contest evidence."""
+    return (_valid_question_resolution_record(question, resolution, rows)
+            and latest_provenance_contest(resolution, rows) is None)
+
+
+def latest_question_contest(question: dict, rows: list[dict]) -> dict | None:
+    """Newest valid contest of this question's otherwise-valid resolutions."""
+    found = []
+    for resolution in rows:
+        if _valid_question_resolution_record(question, resolution, rows):
+            contest = latest_provenance_contest(resolution, rows)
+            if contest is not None:
+                found.append(contest)
+    positions = _positions(rows)
+    return max(found, key=lambda row: positions.get(str(row.get("msg_id")), -1)) if found else None
+
+
+def is_question_closed(question: dict, rows: list[dict]) -> bool:
+    """One direct human answer or one uncontested valid resolution is terminal."""
+    if question.get("kind") != "question":
+        return False
+    return any(
+        is_valid_question_resolution(question, row, rows)
+        or (row.get("in_reply_to") == question.get("msg_id") and row.get("kind") == "answer"
+            and isinstance(row.get("actor"), str) and row["actor"].startswith("human:"))
+        for row in rows)
 
 
 def read(path: Path = PATH) -> list[dict]:
@@ -182,6 +310,10 @@ def _validate_post(actor: str, kind: str, body: dict, to: str, in_reply_to: str 
         raise MailboxError(f"{kind} must reply to a message")
     if kind == "question_resolution":
         validate_question_resolution(body)
+    if "provenance_contestation" in body:
+        if kind != "note":
+            raise MailboxError("provenance_contestation is valid only on a note")
+        validate_provenance_contestation(body)
 
 
 def _append_locked(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | None,
@@ -199,6 +331,13 @@ def _append_locked(actor: str, kind: str, body: dict, *, to: str, in_reply_to: s
             raise MailboxError("question_resolution must reply to a question")
         if not (actor.startswith("human:") or actor == original.get("actor")):
             raise MailboxError("question_resolution must be posted by the question asker or a human")
+        if is_question_closed(original, rows):
+            raise MailboxError("question is no longer open")
+    if kind == "answer" and actor.startswith("human:"):
+        original = next((row for row in rows if row.get("msg_id") == in_reply_to), None)
+        if (original is not None and original.get("kind") == "question"
+                and is_question_closed(original, rows)):
+            raise MailboxError("question is no longer open")
     now = datetime.now(timezone.utc)
     row = {
         "schema": SCHEMA, "seq": len(rows) + 1, "ts": now.isoformat(), "actor": actor, "to": to,
@@ -228,8 +367,14 @@ def post(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | None 
 
 def post_once(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | None = None,
               idempotency_key: str, require_open_question: bool = False,
-              expires_hours: float | None = None, path: Path = PATH) -> tuple[dict, bool]:
-    """Atomically append one owner-UI request and return a durable retry receipt."""
+              expires_hours: float | None = None, path: Path = PATH,
+              linearization_check: Callable[[], None] | None = None) -> tuple[dict, bool]:
+    """Atomically append one owner-UI request and return a durable retry receipt.
+
+    ``linearization_check`` runs under the writer lock immediately before a
+    new append.  A caller may bind acceptance to mutable external state at
+    that instant; durable retries return their existing row before the check.
+    """
     _validate_post(actor, kind, body, to, in_reply_to)
     if not isinstance(idempotency_key, str) or not idempotency_key:
         raise MailboxError("idempotency_key must be a non-empty string")
@@ -252,13 +397,10 @@ def post_once(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | 
                              and row.get("kind") == "question" and row.get("to") == "owner"), None)
             if question is None:
                 raise MailboxError("owner question is no longer open")
-            closed = any(
-                is_valid_question_resolution(question, row, rows)
-                or (row.get("in_reply_to") == question["msg_id"] and row.get("kind") == "answer"
-                    and isinstance(row.get("actor"), str) and row["actor"].startswith("human:"))
-                for row in rows)
-            if closed:
+            if is_question_closed(question, rows):
                 raise MailboxError("owner question is no longer open")
+        if linearization_check is not None:
+            linearization_check()
         row = _append_locked(actor, kind, body, to=to, in_reply_to=in_reply_to,
                              expires_hours=expires_hours, path=path, rows=rows)
         return row, False

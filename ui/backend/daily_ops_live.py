@@ -66,6 +66,7 @@ FOLD_STATUS = {"open": "awaiting_review", "held": "held", "claimed": "building",
                "expired": "expired"}
 VERDICT_STATUS = {"accept": "accepted", "amend": "amend_requested", "reject": "rejected"}
 QUESTION_RESOLUTIONS = {"withdrawn", "superseded", "prerequisite", "informational"}
+QUESTION_UPDATE_DISPOSITIONS = {*QUESTION_RESOLUTIONS, "contested"}
 _git_lock = threading.Lock()
 _git_cache: dict = {}
 
@@ -138,6 +139,12 @@ def _question_resolution(question: dict, rows: list[dict]) -> dict | None:
     return None
 
 
+def _question_contest(question: dict, rows: list[dict]) -> dict | None:
+    """Newest evidence-bound contest when no later valid terminal replaces it."""
+    oracle_mailbox, _ = _orchestrator()
+    return oracle_mailbox.latest_question_contest(question, rows)
+
+
 def _question_choice(value: object) -> str | None:
     if isinstance(value, str):
         return _clip(value, 300)
@@ -190,21 +197,43 @@ def question_updates(rows: list[dict]) -> list[dict]:
     for question in rows:
         if question.get("kind") != "question" or question.get("to") != "owner":
             continue
-        resolution = _question_resolution(question, rows)
-        if resolution is None:
+        # A direct owner answer is the terminal view; provenance disputes over
+        # an older non-answer disposition no longer need a status-only card.
+        if _human_answer(question, rows) is not None:
             continue
-        body = _body(resolution)
+        resolution = _question_resolution(question, rows)
+        contest = None if resolution is not None else _question_contest(question, rows)
+        if resolution is None and contest is None:
+            continue
         card = _question_card(question)
+        if resolution is not None:
+            body = _body(resolution)
+            update = {
+                "id": resolution["msg_id"], "disposition": body["disposition"],
+                "summary": _clip(body.get("summary"), 1200), "reason": _clip(body.get("reason"), 1200),
+                "blocking_artifact": _clip(body.get("blocking_artifact"), 240),
+                "resolved_by": _clip(str(resolution.get("actor")), 60) or "?",
+                "resolved_at": _stamp(resolution.get("ts")),
+                "evidence_msg_ids": [value for value in body.get("evidence_msg_ids", [])
+                                     if isinstance(value, str)][:8],
+            }
+        else:
+            body = _body(contest)
+            provenance = body["provenance_contestation"]
+            update = {
+                "id": contest["msg_id"], "disposition": "contested",
+                "summary": _clip(body.get("title"), 1200)
+                or "A later evidence-bound provenance contest reopened this question.",
+                "reason": _clip(body.get("text"), 1200)
+                or "The contested resolution's actor label is not safe to treat as authenticated.",
+                "blocking_artifact": None,
+                "resolved_by": _clip(str(contest.get("actor")), 60) or "?",
+                "resolved_at": _stamp(contest.get("ts")),
+                "evidence_msg_ids": provenance["basis_msg_ids"][:8],
+            }
         found.append({
-            "id": resolution["msg_id"], "question_id": question["msg_id"],
+            **update, "question_id": question["msg_id"],
             "title": card["title"], "question": card["question"],
-            "disposition": body["disposition"], "summary": _clip(body.get("summary"), 1200),
-            "reason": _clip(body.get("reason"), 1200),
-            "blocking_artifact": _clip(body.get("blocking_artifact"), 240),
-            "resolved_by": _clip(str(resolution.get("actor")), 60) or "?",
-            "resolved_at": _stamp(resolution.get("ts")),
-            "evidence_msg_ids": [value for value in body.get("evidence_msg_ids", [])
-                                 if isinstance(value, str)][:8],
         })
     found.sort(key=lambda row: row["resolved_at"] or "", reverse=True)
     return found[:10]
@@ -788,7 +817,7 @@ def validate_live(value: dict, agents_ok) -> None:
                                                "resolved_at", "evidence_msg_ids"}, 10, lambda r: (
                                                    _text(r["id"], 80) and _text(r["question_id"], 80)
                                                    and _text(r["title"], 300) and _text(r["question"], 300)
-                                                   and r["disposition"] in QUESTION_RESOLUTIONS
+                                                   and r["disposition"] in QUESTION_UPDATE_DISPOSITIONS
                                                    and _text(r["summary"], 1200) and _text(r["reason"], 1200)
                                                    and _text(r["blocking_artifact"], 240, optional=True)
                                                    and _text(r["resolved_by"], 60) and _time(r["resolved_at"])

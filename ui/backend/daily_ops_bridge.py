@@ -897,7 +897,10 @@ class LabMailboxRouter:
     reading the same private ``owner.key``). It does not touch the (dead) Pi
     relay's admission/envelope machinery; it writes directly to
     ``run_state/oracle_nara_mailbox.jsonl`` via the mailbox's locked,
-    idempotent append path.
+    idempotent append path. A new plan-target request linearizes at the final
+    ``current_plan`` read under that writer lock. The row is non-executing and
+    remains bound to ``body.target.plan``; any later consumer must ignore it
+    after that revision stops being current.
     """
 
     def __init__(self, config: dict, *, repo_root: Path):
@@ -947,7 +950,8 @@ class LabMailboxRouter:
         note = payload.get("note") or ""
         if target_kind == "question":
             body = {"text": note or action, "via": "owner-ui", "authority": "owner, D-084",
-                    "request_id": payload["request_id"], "target_kind": target_kind}
+                    "request_id": payload["request_id"], "target_kind": target_kind,
+                    "expected_plan_revision": payload["expected_plan_revision"]}
             if action != "reply":
                 body["decision"] = action
             exact = (row.get("actor") == self.owner_actor and row.get("kind") == "answer"
@@ -998,7 +1002,8 @@ class LabMailboxRouter:
             # A click on a concrete question is a direct owner answer. Posting
             # a detached note would leave the card open while claiming success.
             body = {"text": note or action, "via": "owner-ui", "authority": "owner, D-084",
-                    "request_id": payload["request_id"], "target_kind": target_kind}
+                    "request_id": payload["request_id"], "target_kind": target_kind,
+                    "expected_plan_revision": payload["expected_plan_revision"]}
             if action != "reply":
                 body["decision"] = action
             try:
@@ -1034,10 +1039,27 @@ class LabMailboxRouter:
             }
             if action == "reprioritize":
                 body["priority"] = payload["priority"]
+
+            def linearize_on_current_plan() -> None:
+                """The last currentness read before append is this request's linearization point.
+
+                A plan rollover after this check overlaps the request and orders
+                after it.  The durable row remains revision-scoped in ``target``;
+                consumers must never apply it to another plan revision.
+                """
+                latest = current_plan(self.repo_root)
+                if latest is None or latest[0] != payload["expected_plan_revision"]:
+                    raise oracle_mailbox.MailboxError("plan revision changed; refresh before requesting changes")
+                latest_id, latest_plan = latest
+                still_present = (target_id == latest_id if target_kind == "agenda" else
+                                 any(candidate.get("id") == target_id for candidate in latest_plan["items"]))
+                if not still_present:
+                    raise oracle_mailbox.MailboxError("owner decision target is no longer current")
             try:
                 row, duplicate = oracle_mailbox.post_once(
                     self.owner_actor, "note", body, to=to,
-                    idempotency_key=payload["request_id"], path=mailbox_path)
+                    idempotency_key=payload["request_id"], path=mailbox_path,
+                    linearization_check=linearize_on_current_plan)
             except oracle_mailbox.MailboxError as exc:
                 raise HTTPException(409, str(exc)) from exc
         return self._decision_receipt(row, payload, duplicate=duplicate)

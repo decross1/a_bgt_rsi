@@ -55,7 +55,7 @@ export type DailyQuestionUpdate = {
   questionId: string;
   title: string;
   question: string;
-  disposition: "withdrawn" | "superseded" | "prerequisite" | "informational";
+  disposition: "withdrawn" | "superseded" | "prerequisite" | "informational" | "contested";
   summary: string;
   reason: string;
   blockingArtifact: string | null;
@@ -75,11 +75,16 @@ export type DailyDecisionRequest = {
   priority?: DailyOpsDecisionPriority;
 };
 
-type EditorTarget = {
+type EditorSelection = {
   kind: DailyOpsDecisionTarget;
   id: string;
   title: string;
   action: DailyOpsDecisionAction;
+};
+
+type EditorTarget = EditorSelection & {
+  /** Snapshot at editor-open time; a later poll must not silently retarget it. */
+  expectedPlanRevision: string;
 };
 
 type SubmitState =
@@ -130,7 +135,7 @@ const statusLabel: Record<WorkStatus, string> = {
 function badgeStyle(value: string): React.CSSProperties {
   if (["merged", "validated", "accepted", "answered", "resolved"].includes(value))
     return { color: "var(--status-ok)", background: "var(--status-ok-bg)" };
-  if (["held", "failed", "rejected", "amend_requested", "waiting_on_you", "expired", "prerequisite"].includes(value))
+  if (["held", "failed", "rejected", "amend_requested", "waiting_on_you", "expired", "prerequisite", "contested"].includes(value))
     return { color: "var(--status-warn)", background: "var(--status-warn-bg)" };
   if (["building", "awaiting_review"].includes(value))
     return { color: "var(--status-info)", background: "var(--status-info-bg)" };
@@ -151,7 +156,7 @@ function timeLabel(value: string): string {
 function WorkCard({ card, requestAvailable, openEditor }: {
   card: DailyWorkCard;
   requestAvailable: boolean;
-  openEditor: (target: EditorTarget, trigger: HTMLButtonElement) => void;
+  openEditor: (target: EditorSelection, trigger: HTMLButtonElement) => void;
 }) {
   const headline = cardHeadline(card.summary, card.title);
   const mergedAt = card.status === "merged" ? card.evidenceAt : null;
@@ -200,7 +205,7 @@ const WAITING_ACTIONS: DailyOpsDecisionAction[] = ["approve", "decline", "defer"
 function WaitingOnYou({ items, requestAvailable, openEditor }: {
   items: DailyWaitingItem[];
   requestAvailable: boolean;
-  openEditor: (target: EditorTarget, trigger: HTMLButtonElement) => void;
+  openEditor: (target: EditorSelection, trigger: HTMLButtonElement) => void;
 }) {
   return <section aria-labelledby="daily-waiting-heading" data-testid="daily-waiting-on-you"
     className="mt-4 rounded border border-[var(--status-warn)] p-3">
@@ -293,6 +298,7 @@ export function DailyDecisionCards({ cards, waiting, updates, planRevision, requ
   const [note, setNote] = useState("");
   const [priority, setPriority] = useState<DailyOpsDecisionPriority>("next");
   const [submit, setSubmit] = useState<SubmitState>({ kind: "idle" });
+  const [staleEditor, setStaleEditor] = useState(false);
   const [retry, setRetry] = useState<{
     fingerprint: string;
     requestId: string;
@@ -311,14 +317,16 @@ export function DailyDecisionCards({ cards, waiting, updates, planRevision, requ
     editorGeneration.current += 1;
   }, []);
 
-  function openEditor(target: EditorTarget, trigger: HTMLButtonElement) {
+  function openEditor(target: EditorSelection, trigger: HTMLButtonElement) {
+    if (!planRevision) return;
     editorGeneration.current += 1;
     triggerRef.current = trigger;
-    setEditor(target);
+    setEditor({ ...target, expectedPlanRevision: planRevision });
     setNote("");
     setPriority("next");
     setSubmit({ kind: "idle" });
     setRetry(null);
+    setStaleEditor(false);
   }
 
   function closeEditor() {
@@ -327,13 +335,14 @@ export function DailyDecisionCards({ cards, waiting, updates, planRevision, requ
     setNote("");
     setSubmit({ kind: "idle" });
     setRetry(null);
+    setStaleEditor(false);
     window.setTimeout(() => triggerRef.current?.focus(), 0);
   }
 
   async function send(event: React.FormEvent) {
     event.preventDefault();
     const generation = editorGeneration.current;
-    if (!editor || !planRevision || !canRequest || ["submitting", "queued"].includes(submit.kind) ||
+    if (!editor || staleEditor || !canRequest || ["submitting", "queued"].includes(submit.kind) ||
         inFlightGeneration.current === generation ||
         (["modify", "reply"].includes(editor.action) && !note.trim())) return;
     const normalizedNote = note.trim();
@@ -343,7 +352,7 @@ export function DailyDecisionCards({ cards, waiting, updates, planRevision, requ
     ]);
     const prior = retry?.fingerprint === fingerprint ? retry : null;
     const ident = prior?.requestId ?? requestId();
-    const expectedPlanRevision = prior?.expectedPlanRevision ?? planRevision;
+    const expectedPlanRevision = prior?.expectedPlanRevision ?? editor.expectedPlanRevision;
     inFlightGeneration.current = generation;
     setSubmit({ kind: "submitting" });
     try {
@@ -364,6 +373,7 @@ export function DailyDecisionCards({ cards, waiting, updates, planRevision, requ
       const detail = error instanceof DailyOpsError ? error.detail : String(error);
       const uncertain = !(error instanceof DailyOpsError) || error.status >= 500;
       setRetry(uncertain ? { fingerprint, requestId: ident, expectedPlanRevision } : null);
+      setStaleEditor(error instanceof DailyOpsError && error.status === 409);
       setSubmit({ kind: "failed", message: uncertain
         ? `Delivery unconfirmed; retry safely with the same request ID. ${detail}`
         : error instanceof DailyOpsError && error.status === 409
@@ -420,8 +430,12 @@ export function DailyDecisionCards({ cards, waiting, updates, planRevision, requ
           <p>{blockedReason ?? "Owner decision controls are unavailable."}</p>
           <button type="button" onClick={onRequireAccess} className="mt-1 text-[var(--accent)]">Open owner access controls ↓</button>
         </div>}
+        {staleEditor && <p data-testid="daily-decision-stale"
+          className="mt-2 rounded border border-[var(--status-warn)] bg-[var(--status-warn-bg)] p-2 text-sm">
+          This editor is bound to an older plan or target. Cancel it and reopen the current card before sending again.
+        </p>}
         <div className="mt-3 flex flex-wrap items-center gap-3">
-          <button type="submit" disabled={!canRequest || ["submitting", "queued"].includes(submit.kind) ||
+          <button type="submit" disabled={!canRequest || staleEditor || ["submitting", "queued"].includes(submit.kind) ||
             (["modify", "reply"].includes(editor.action) && !note.trim())}
             className="rounded bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--accent-fg)] disabled:cursor-not-allowed disabled:opacity-50">
             {submit.kind === "submitting" ? "Sending…" : submitLabel[editor.action]}
