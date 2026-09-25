@@ -3866,6 +3866,13 @@ unchanged. This maintenance decision does not promote a model/runtime, relax
 research gates, convert local CPU controls into validated findings, or authorize
 paid frontier API calls. The weekly Spark cap remains 120 minutes.
 
+> **2026-09-25 source-port/reconciliation note.** The D-084–D-087 bodies below
+> are historical text copied byte-for-byte from committed Flash sources; this
+> note is not part of those bodies. Their current implementation status,
+> host-service boundary, and current-session thesis-selection instruction are
+> qualified in
+> [docs/v2/THESIS_GOVERNANCE_RECONCILIATION_2026-09-25.md](docs/v2/THESIS_GOVERNANCE_RECONCILIATION_2026-09-25.md).
+
 ## D-084 — Owner authority narrows to live trading; theses pass a T/S/A validation ladder (owner direction, 2026-09-22)
 
 **Authority.** Derrick's direct instructions in the primary Claude session on

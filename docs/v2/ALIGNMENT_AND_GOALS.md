@@ -1,5 +1,12 @@
 # v2 alignment audit and lab goals (2026-09-22)
 
+> **Historical source port — reconciliation required (2026-09-25).** The body
+> below is the exact committed `a4ccb77e` source snapshot and contains
+> point-in-time implementation/status statements. It is not a present-state
+> report or activation authority. Read
+> [the reconciliation](THESIS_GOVERNANCE_RECONCILIATION_2026-09-25.md) before
+> relying on it operationally.
+
 Status: **ratified as D-084 (owner, 2026-09-22).** The goal plan in §6 is wired into
 Oracle's daily contract (`oracle_system/prompts/daily_loop.md`) and the meta-oracle's
 review (`agent/prompts/meta_oracle.md`).

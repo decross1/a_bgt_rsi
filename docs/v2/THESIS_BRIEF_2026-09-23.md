@@ -1,5 +1,11 @@
 # Thesis brief: information and beliefs (owner direction, 2026-09-23)
 
+> **Historical source port — reconciliation required (2026-09-25).** The body
+> below is the exact committed `a4ccb77e` source snapshot. Its historical
+> owner-selection wording is not the current operating procedure and it grants
+> no focus-selection or activation authority. Read
+> [the reconciliation](THESIS_GOVERNANCE_RECONCILIATION_2026-09-25.md) first.
+
 Status: **the brief for goal G1.1.** Nara generates 3–5 candidate theses from
 it on local weights. Oracle screens them, the meta-oracle reviews the screen,
 and the owner picks one; it becomes the focus through the G0.2 selection CLI.

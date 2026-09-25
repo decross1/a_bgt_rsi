@@ -1,9 +1,10 @@
 # D-084–D-087 source-port reconciliation (2026-09-25)
 
 **Status:** implementation-status note. It does not amend or rewrite the
-historical decisions, owner quotations, or the two source documents. It records
-which statements are historical, what a current operator may rely on, and what
-remains unimplemented on this branch.
+historical decisions or owner quotations. It records which statements are
+historical, what a current operator may rely on, and what remains unimplemented
+on this branch. The imported working documents carry added reconciliation
+banners; their original committed blob IDs below preserve the unmodified source.
 
 ## Provenance and scope
 
@@ -17,18 +18,23 @@ This branch ported only the following committed Flash sources onto
 | D-086 | `12ef9c63` | `DECISIONS.md` `8c80eafd8fa33fa691d9de182b3ed036206f7a2a` |
 | D-087 and the final source documents | `a4ccb77e` | `DECISIONS.md` `adc0491ca083c14cb660a8ca20aee2b61924a967`; alignment `11e969cf4a8e7f28d557aa15499e2c8ba127830a`; brief `524ae8f8f89f5ad5e91dd616ca2caa5c96f86c99` |
 
-The committed decision text is preserved verbatim in [DECISIONS.md](../../DECISIONS.md).
-`ALIGNMENT_AND_GOALS.md` and `THESIS_BRIEF_2026-09-23.md` are source snapshots,
-not a claim that every dated implementation/status sentence holds on current
-`main`. Current runtime or implementation state must be established from the
-current commit, receipts, and tests.
+The D-084–D-087 decision bodies are preserved verbatim in
+[DECISIONS.md](../../DECISIONS.md). The working copies of
+`ALIGNMENT_AND_GOALS.md` and `THESIS_BRIEF_2026-09-23.md` add only prominent
+reconciliation banners; their body text remains the recorded source snapshot.
+Neither document claims that every dated implementation/status sentence holds on
+current `main`. Current runtime or implementation state must be established from
+the current commit, receipts, and tests.
 
-## Effective interpretation after the 2026-09-25 owner direction
+## Current-session operating instruction (unverified attribution)
 
-The owner clarified that they do not want to participate in choosing the next
-thesis: "it should be a decision of nara or oracle." This changes the operating
-procedure implicit in the historical phrases "the owner picks one" and "selected
-by the owner"; it does not alter the preserved quotations or the T/S/A ladder.
+This steward recorded the current conversation instruction: "it should be a
+decision of nara or oracle." It is model-asserted conversation attribution with
+no authenticated repository transcript, ratification record, or activation
+receipt. It is therefore a reported operating instruction, not evidence that an
+implementation is ratified, active, or safe to use. It changes the procedure
+implicit in the historical phrases "the owner picks one" and "selected by the
+owner"; it does not alter the preserved quotations or the T/S/A ladder.
 
 For a future, properly implemented selection path:
 
@@ -36,28 +42,33 @@ For a future, properly implemented selection path:
    direction and the thesis brief template.
 2. Oracle screens and selects one after the required upstream evidence and
    review; the meta-oracle independently reviews the proposed selection.
-3. No Derrick decision card is required for that non-live research choice.
+3. The reported procedure has no Derrick decision card for that non-live
+   research choice.
 4. A live-trading path still requires Derrick's explicit approval. The T/S/A
    ladder, preregistration, independent review, negative-result retention, and
    kill/reopening receipts remain required.
 
-This is an operating clarification, not proof that the current implementation
-can safely make the selection. A same-UID mailbox sender can currently imitate
-roles, and the selection port under separate review is not approved for merge or
-use. Until a default-deny, independently attributable reviewer/role mechanism is
-verified and the selector's guard chain is tested, no code path may treat this
-note as authorization to activate or select a focus.
+This reported procedure is not proof that the current implementation can safely
+make the selection. A same-UID mailbox sender can currently imitate roles, and
+the selection port under separate review is not approved for merge or use. Until
+a default-deny, independently attributable reviewer/role mechanism is verified
+and the selector's guard chain is tested, no code path may treat this note as
+authorization to activate or select a focus.
 
 ## Host and scheduler boundary
 
 D-084's historical phrase that "timers ... may proceed" does not authorize a
 host-service, scheduler, security-policy, credential, or persistent-service
-change. The repository `AGENTS.md` operating contract governs that boundary and
-requires explicit human gating for host lifecycle changes. In particular, its
-five-minute Oracle timer rule requires a reviewed commit-pinned verified runtime
-snapshot before it can be active. The currently disabled Nara, Pi/Oracle, and
-related loop timers remain disabled; this source-only documentation port changes
-none of them.
+change. The applicable `a_bgt_rsi` `AGENTS.md` runtime boundary governs its own
+model/runtime-cutover and service changes; it must be reverified at the time of
+any action. Separately, the committed `oracle_system` contract at
+`9619b881c3ce4b8a8250cd2cfff6a70e20b3104a`, `AGENTS.md` §21 (lines 64–68),
+requires its five-minute timer to stay inactive until a reviewed-commit,
+private verified runtime snapshot has the specified read/write boundaries. That
+is an Oracle-specific rule, not an `a_bgt_rsi` rule. Reverify both current
+contracts and any contemporaneous service state at action time. This source-only
+documentation port performed no service action and makes no present-tense claim
+about which units are enabled or disabled.
 
 ## Implementation gaps carried forward
 
