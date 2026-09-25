@@ -294,10 +294,10 @@ def _path_ok(path: str) -> bool:
 # the model as current_contents[path] = None, which reads as "an empty file to fill in":
 # review claude-e347ce59ca643116 (seq 165), material - plan 2026-09-24 d1 told its builder
 # to copy 19 paper titles from a reading list that exists nowhere, because implement()
-# creates the worktree as checkout HEAD plus the acceptance test and builder() shows
+# creates the worktree as its captured lane base plus the acceptance test and builder() shows
 # contents only for writable paths.
-INPUT_MISSING = ("NOT PRESENT in this worktree: it is not committed at the checkout HEAD, and "
-                 "a worktree is created from HEAD plus the acceptance test only. Do not copy, "
+INPUT_MISSING = ("NOT PRESENT in this worktree: it is not committed at the captured lane base, and "
+                 "a worktree is created from that base plus the acceptance test only. Do not copy, "
                  "quote or invent its content; report the missing input in your output instead.")
 INPUT_PRESENT = "PRESENT"
 INPUT_OUTSIDE_FENCE = ("OUTSIDE THE LANE FENCE: the sandbox denies this path, so its content "
@@ -326,20 +326,18 @@ def _tree_kind(rev: str, rel: str, *, cwd: Path | None = None) -> str | None:
 
 
 def _input_visibility(input_paths: list, writable: list, *, cwd: Path | None = None,
-                      worktree: Path | None = None) -> dict[str, str]:
+                      worktree: Path | None = None, rev: str = "HEAD") -> dict[str, str]:
     """Per declared input: can builder() actually hand it over? Readable means a blob
-    tracked at the checkout HEAD, or a writable path already present in the worktree.
+    tracked at the captured lane base, or a writable path already present in the worktree.
     A path the lane fence denies gets its own verdict: it is not a readability question,
-    and calling it 'not a file tracked at the checkout HEAD' is false (review
+    and calling it 'not a file tracked at the lane base' is false (review
     claude-80ce66157b935e62 seq 188, amendment 3 - run_state/secrets.json can be tracked)."""
-    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(cwd or ROOT),
-                          capture_output=True, text=True).stdout.strip()
     verdicts: dict[str, str] = {}
     for rel in input_paths:
         if not isinstance(rel, str) or (not _path_ok(rel) and f"{rel}/" not in ALLOWED_PREFIXES):
             verdicts[rel] = INPUT_OUTSIDE_FENCE
             continue
-        if _tree_kind(head, rel, cwd=cwd) != "blob":
+        if _tree_kind(rev, rel, cwd=cwd) != "blob":
             if not (isinstance(rel, str) and rel in writable and worktree is not None
                     and (worktree / rel).is_file()):
                 verdicts[rel] = INPUT_MISSING
@@ -356,17 +354,25 @@ def admission(item: dict, *, repo_root: Path | None = None) -> list[str]:
     for path in body["allowed_write_paths"]:
         if not _path_ok(path):
             reasons.append(f"path outside the lane fence: {path}")
+    declared = body.get("thesis_candidate_source") is not None
+    base = None
+    if declared:
+        try:
+            base = _item_base(item, cwd=repo_root)
+        except LaneError as exc:
+            reasons.append(str(exc))
     # Declared inputs must be readable by the builder. An input that is not tracked at the
-    # checkout HEAD makes the objective unexecutable, and the path fence cannot catch it:
+    # captured lane base makes the objective unexecutable, and the path fence cannot catch it:
     # notes/... is inside the fence. Checked before the precheck rule so the held receipt
     # names the real cause instead of a missing receipt.
     for path, verdict in _input_visibility(body.get("input_paths") or [],
-                                          list(body["allowed_write_paths"]), cwd=repo_root).items():
+                                          list(body["allowed_write_paths"]), cwd=repo_root,
+                                          rev=base[0] if base else "HEAD").items():
         if verdict == INPUT_OUTSIDE_FENCE:
             reasons.append(f"declared input path is outside the lane fence: {path}")
         elif verdict == INPUT_MISSING:
             reasons.append(f"declared input path is not readable by the builder: {path} (not a "
-                           f"file tracked at the checkout HEAD); put the content inline in the "
+                           f"file tracked at the captured lane base); put the content inline in the "
                            f"objective instead")
     acceptance = body["acceptance"]
     test_path, argv = acceptance["test_path"], acceptance["test_argv"]
@@ -386,11 +392,15 @@ def admission(item: dict, *, repo_root: Path | None = None) -> list[str]:
             reasons.extend(check_fixtures(item))
         except FixtureCheckError as exc:
             reasons.append(f"fixture_sources cannot be checked: {exc}")
-    if not reasons and not _prechecked(item):  # last, so it never masks an earlier reason
-        sha = test_sha256(acceptance["test_content"])
-        reasons.append(f"no green precheck receipt for test descriptor (content sha256 {sha}) at this exact checkout HEAD: run "
-                       "`python -m orchestrator.nara_lane precheck --test-path P --test-file F --stub S`; "
-                       "the receipt is keyed by test content, argv, and the exact checkout base")
+    if not reasons:  # last, so it never masks an earlier reason
+        prechecked = (_prechecked(item, base=base) if declared and base is not None else
+                      _prechecked(item) if not declared else False)
+        if not prechecked:
+            sha = test_sha256(acceptance["test_content"])
+            suffix = f" --base-sha {base[0]}" if declared and base is not None else ""
+            reasons.append(f"no green precheck receipt for test descriptor (content sha256 {sha}) at this exact lane base: run "
+                           f"`python -m orchestrator.nara_lane precheck --test-path P --test-file F --stub S{suffix}`; "
+                           "the receipt is keyed by test content, argv, and the exact checkout base")
     return reasons
 
 
@@ -407,8 +417,40 @@ def _receipt_dir(root: Path | None = None) -> Path:
 
 def _build_base(*, cwd: Path | None = None) -> tuple[str, str]:
     """Exact commit/tree identity shared by precheck and implementation."""
-    base = _git("rev-parse", "--verify", "HEAD^{commit}", cwd=cwd).strip()
-    return base, _git("rev-parse", "--verify", f"{base}^{{tree}}", cwd=cwd).strip()
+    return _base_at("HEAD", cwd=cwd)
+
+
+def _base_at(revision: str, *, cwd: Path | None = None) -> tuple[str, str]:
+    """Resolve one immutable commit/tree pair, refusing aliases for declared SHAs."""
+    try:
+        base = _git("rev-parse", "--verify", f"{revision}^{{commit}}", cwd=cwd).strip()
+        tree = _git("rev-parse", "--verify", f"{base}^{{tree}}", cwd=cwd).strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise LaneError(f"lane base commit is unavailable: {revision}") from exc
+    if not re.fullmatch(r"[0-9a-f]{40}", base) or not re.fullmatch(r"[0-9a-f]{40}", tree):
+        raise LaneError(f"lane base commit/tree identity is malformed: {revision}")
+    if re.fullmatch(r"[0-9a-f]{40}", revision) and base != revision:
+        raise LaneError(f"declared lane base does not resolve to itself: {revision}")
+    return base, tree
+
+
+def _declared_base_sha(item: dict) -> str | None:
+    """Return a thesis plan's immutable source base, if it declares one."""
+    declaration = item.get("body", {}).get("thesis_candidate_source")
+    if declaration is None:
+        return None
+    if not isinstance(declaration, dict):
+        raise LaneError("thesis_candidate_source must be an object with a declared base_sha")
+    base_sha = declaration.get("base_sha")
+    if not isinstance(base_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", base_sha):
+        raise LaneError("thesis_candidate_source is missing a canonical base_sha")
+    return base_sha
+
+
+def _item_base(item: dict, *, cwd: Path | None = None) -> tuple[str, str]:
+    """The base admission, precheck and implementation must all share."""
+    declared = _declared_base_sha(item)
+    return _base_at(declared, cwd=cwd) if declared is not None else _build_base(cwd=cwd)
 
 
 def _argv_sha256(argv: list[str]) -> str:
@@ -427,11 +469,11 @@ def receipt_path(receipt_sha: str, *, root: Path | None = None) -> Path:
 
 
 def _prechecked(item: dict, *, base: tuple[str, str] | None = None) -> bool:
-    """True only when the receipt binds this exact current HEAD and tree."""
+    """True only when the receipt binds this item's exact lane-base commit and tree."""
     acceptance = item["body"]["acceptance"]
     try:
         base_sha, tree_sha = base or _build_base()
-    except (OSError, subprocess.SubprocessError):
+    except (LaneError, OSError, subprocess.SubprocessError):
         # A receipt cannot bind a redirected/non-repository root.  This is a
         # precheck-gate refusal, not a malformed-plan exception.
         return False
@@ -465,10 +507,10 @@ class PrecheckError(RuntimeError):
 
 def precheck(test_path: str, test_content: str, test_argv: list[str], *,
              stubs: list[dict[str, str]] | None = None, sandbox=None,
-             timeout: float = TEST_TIMEOUT_S) -> dict:
+             timeout: float = TEST_TIMEOUT_S, base_sha: str | None = None) -> dict:
     """Run an acceptance test's discrimination claim in the sandbox before posting it.
 
-    Draws a fixture worktree from the captured checkout HEAD, writes the test, and runs it with no
+    Draws a fixture worktree from the captured lane base, writes the test, and runs it with no
     implementation (must be red) and once per supplied stub (a green stub makes
     the item prechecked). Reports each run's output so a non-discriminating test
     is diagnosable, and writes a receipt named by the test/build-base descriptor
@@ -481,7 +523,7 @@ def precheck(test_path: str, test_content: str, test_argv: list[str], *,
     shown, so they are refused here (review claude-c0a841a1831ad8a6): a stub may
     not write the acceptance test - it would overwrite the test whose sha the
     receipt names, so the passing run would not be the posted test - and every
-    stub runs on a worktree reset to its captured checkout HEAD, including
+    stub runs on a worktree reset to its captured lane base, including
     tracked modifications, so a stub never passes on a previous stub's leftover
     edit. The reset uses an exact commit, not a symbolic branch.
 
@@ -510,8 +552,10 @@ def precheck(test_path: str, test_content: str, test_argv: list[str], *,
     reasons = admission_without_receipt(item)
     if reasons:
         raise PrecheckError("; ".join(reasons))
+    if base_sha is not None and not re.fullmatch(r"[0-9a-f]{40}", base_sha):
+        raise PrecheckError("base_sha must be an exact lowercase 40-character commit id")
+    base, base_tree = _base_at(base_sha or "HEAD")
     sha = test_sha256(test_content)
-    base, base_tree = _build_base()
     fixture_root = tempfile.mkdtemp(prefix=f"precheck-{sha[:16]}-", dir=str(_precheck_root()))
     fixture = Path(fixture_root) / "wt"
     try:
@@ -531,7 +575,7 @@ def precheck(test_path: str, test_content: str, test_argv: list[str], *,
                                 + output[-1500:])
         green = None
         for stub in stubs or []:
-            _reset_fixture(fixture)
+            _reset_fixture(fixture, base)
             for path, content in stub.items():
                 _write(fixture, path, content)
             _write(fixture, test_path, test_content)  # last: a stub can never replace the test
@@ -575,15 +619,15 @@ def _precheck_root() -> Path:
     return root
 
 
-def _reset_fixture(worktree: Path) -> None:
-    """Put the fixture back to its captured checkout HEAD, so each stub is checked alone.
+def _reset_fixture(worktree: Path, base_sha: str) -> None:
+    """Put the fixture back to its captured lane base, so each stub is checked alone.
 
     Both halves are needed: `reset --hard` reverts edits to tracked files (clean
     does not, so a later stub would otherwise pass on an earlier stub's leftover),
     and `clean -qfdx` removes untracked ones, including the acceptance test, which
     precheck rewrites after the stub so a stub can never stand in for it.
     """
-    _git("reset", "-q", "--hard", "HEAD", cwd=worktree)
+    _git("reset", "-q", "--hard", base_sha, cwd=worktree)
     _git("clean", "-qfdx", cwd=worktree)
 
 
@@ -701,7 +745,7 @@ def _dotgit(worktree: Path) -> bytes:
 
 
 def builder(body: dict, worktree: Path, feedback: str, timeout: float = BUILDER_TIMEOUT_S, *,
-            caller_tag: str = "nara_lane_builder") -> dict[str, str]:
+            caller_tag: str = "nara_lane_builder", base_sha: str | None = None) -> dict[str, str]:
     """One local-Flash call proposing full contents for the allowed files."""
     from agent_wrapper.wrapper import call_sync
 
@@ -721,16 +765,17 @@ def builder(body: dict, worktree: Path, feedback: str, timeout: float = BUILDER_
     if declared:
         # Judged before current_contents is read as truth: a None under a declared input means
         # "absent", never "an empty file to fill in" (review claude-e347ce59ca643116, seq 165).
-        # cwd is the worktree, because that is where HEAD is read from here: implement()
-        # creates the worktree AT the lane base HEAD, and a process-wide cwd=ROOT would ask
+        # cwd is the worktree, because implement() creates it at the captured lane
+        # base, and a process-wide cwd=ROOT would ask
         # the wrong checkout (review claude-80ce66157b935e62 seq 188 needs the verdict and
         # the bytes to describe the same tree the builder is looking at).
-        visibility = _input_visibility(declared, writable, cwd=worktree, worktree=worktree)
+        visibility = _input_visibility(declared, writable, cwd=worktree, worktree=worktree,
+                                       rev=base_sha or "HEAD")
         prompt["input_visibility"] = visibility
         # A PRESENT verdict must ship the bytes. current_contents covers writable paths only,
         # so a tracked-but-not-writable input used to be announced as PRESENT with no content
         # beside it - review claude-80ce66157b935e62 (seq 188), amendment 1. Read from the
-        # worktree, which IS the checkout HEAD, and only where the file is really there, so
+        # worktree, which is drawn from the lane base, and only where the file is really there, so
         # no bytes are ever claimed for a file that is not present.
         contents: dict[str, str] = {}
         for path, verdict in visibility.items():
@@ -786,22 +831,26 @@ def implement(entry: dict, build=builder, sandbox=sandbox_run) -> dict:
     attempts_allowed = min(budget.get("attempts", MAX_ATTEMPTS), MAX_ATTEMPTS)
     worktree, branch = WORKTREES / msg_id, f"nara/{msg_id}"
     base_sha = None
+    base_tree = None
     try:
+        declared_base = _declared_base_sha(item)
         if worktree.exists():
             return {"state": "failed", "reason": f"worktree already exists: {worktree}"}
         WORKTREES.mkdir(parents=True, exist_ok=True)
         with _GIT_SERIAL:
-            base_sha, base_tree = _build_base()
-            if not _prechecked(item, base=(base_sha, base_tree)):
-                return {"state": "failed", "reason": "precheck receipt does not bind current checkout HEAD/tree",
-                        "branch": branch, "base_sha": base_sha}
+            base_sha, base_tree = _item_base(item)
+            prechecked = (_prechecked(item, base=(base_sha, base_tree)) if declared_base is not None
+                          else _prechecked(item))
+            if not prechecked:
+                return {"state": "failed", "reason": "precheck receipt does not bind the plan's lane-base commit/tree",
+                        "branch": branch, "base_sha": base_sha, "base_tree_oid": base_tree}
             _git("worktree", "add", "-b", branch, str(worktree), base_sha)
-            if _build_base() != (base_sha, base_tree):
+            if declared_base is None and _build_base() != (base_sha, base_tree):
                 return {"state": "failed", "reason": "checkout HEAD moved during worktree creation",
-                        "branch": branch, "base_sha": base_sha}
+                        "branch": branch, "base_sha": base_sha, "base_tree_oid": base_tree}
         if _build_base(cwd=worktree) != (base_sha, base_tree):
             return {"state": "failed", "reason": "worktree does not match captured checkout base",
-                    "branch": branch, "base_sha": base_sha}
+                    "branch": branch, "base_sha": base_sha, "base_tree_oid": base_tree}
         pointer = _dotgit(worktree)
         before = _snapshot(worktree)
         _write(worktree, test_path, acceptance["test_content"])
@@ -809,17 +858,19 @@ def implement(entry: dict, build=builder, sandbox=sandbox_run) -> dict:
         rc, output = sandbox(worktree, argv, timeout=_left(deadline, TEST_TIMEOUT_S))
         if rc == 0:
             return {"state": "failed", "reason": "acceptance test passed before any change (not red-first)",
-                    "branch": branch, "base_sha": base_sha, "test_tail": output[-1500:]}
+                    "branch": branch, "base_sha": base_sha, "base_tree_oid": base_tree,
+                    "test_tail": output[-1500:]}
         attempts = 0
         while attempts < attempts_allowed and time.monotonic() < deadline:
             attempts += 1
-            if _build_base() != (base_sha, base_tree):
+            if declared_base is None and _build_base() != (base_sha, base_tree):
                 return {"state": "failed", "reason": "checkout HEAD moved before builder dispatch",
-                        "branch": branch, "base_sha": base_sha}
+                        "branch": branch, "base_sha": base_sha, "base_tree_oid": base_tree}
             try:
                 kwargs = {"timeout": _left(deadline, BUILDER_TIMEOUT_S)}
                 if build is builder:  # custom builders keep the historic four-argument seam
                     kwargs["caller_tag"] = f"nara_lane_builder:{msg_id}"
+                    kwargs["base_sha"] = base_sha
                 files = build(body, worktree, output, **kwargs)
             except LaneError:
                 raise
@@ -833,7 +884,8 @@ def implement(entry: dict, build=builder, sandbox=sandbox_run) -> dict:
                 break
         after = _snapshot(worktree)
         changed = sorted(k for k in before.keys() | after.keys() if before.get(k) != after.get(k))
-        result = {"branch": branch, "worktree": str(worktree), "base_sha": base_sha, "attempts": attempts,
+        result = {"branch": branch, "worktree": str(worktree), "base_sha": base_sha,
+                  "base_tree_oid": base_tree, "attempts": attempts,
                   "changed_files": changed, "test_tail": output[-1500:]}
         allowed = set(body["allowed_write_paths"]) | {test_path}
         outside = [path for path in changed if path not in allowed]
@@ -849,7 +901,7 @@ def implement(entry: dict, build=builder, sandbox=sandbox_run) -> dict:
         if _dotgit(worktree) != pointer:
             return {**result, "state": "failed", "reason": "worktree .git pointer changed"}
         with _GIT_SERIAL:
-            if _build_base() != (base_sha, base_tree):
+            if declared_base is None and _build_base() != (base_sha, base_tree):
                 return {**result, "state": "failed", "reason": "checkout HEAD moved before commit"}
             _git("add", "--", *changed, cwd=worktree)
             _git("-c", "user.name=Nara (lab lane)", "-c", "user.email=nara@lab.local", "commit", "-q", "-m",
@@ -857,11 +909,15 @@ def implement(entry: dict, build=builder, sandbox=sandbox_run) -> dict:
                  cwd=worktree)
             # Independent Git writers are outside this lane's mutex.  Detect a
             # movement in the final commit window before calling the result valid.
-            if _build_base() != (base_sha, base_tree):
+            if declared_base is None and _build_base() != (base_sha, base_tree):
                 return {**result, "state": "failed", "reason": "checkout HEAD moved during commit"}
-        return {**result, "state": "validated", "head_sha": _git("rev-parse", "HEAD", cwd=worktree).strip()}
+            head_sha = _git("rev-parse", "HEAD", cwd=worktree).strip()
+            if _git("rev-parse", "--verify", f"{head_sha}^", cwd=worktree).strip() != base_sha:
+                return {**result, "state": "failed", "reason": "validated commit does not descend directly from lane base"}
+        return {**result, "state": "validated", "head_sha": head_sha}
     except Exception as exc:
-        return {"state": "failed", "reason": f"{type(exc).__name__}: {exc}", "branch": branch, "base_sha": base_sha}
+        return {"state": "failed", "reason": f"{type(exc).__name__}: {exc}", "branch": branch,
+                "base_sha": base_sha, "base_tree_oid": base_tree}
 
 
 def _policy() -> dict:
@@ -1009,7 +1065,9 @@ def _receipt(path: Path, msg_id: str, body: dict) -> dict:
         return mailbox.post("nara", "receipt", _compact(body), to="oracle", in_reply_to=msg_id, path=path)
     except mailbox.MailboxError as exc:
         return mailbox.post("nara", "receipt", {"state": body["state"], "reason": f"full receipt rejected: {exc}"[:500],
-                                                "branch": body.get("branch"), "head_sha": body.get("head_sha")},
+                                                "branch": body.get("branch"), "head_sha": body.get("head_sha"),
+                                                "base_sha": body.get("base_sha"),
+                                                "base_tree_oid": body.get("base_tree_oid")},
                             to="oracle", in_reply_to=msg_id, path=path)
 
 
@@ -1024,35 +1082,6 @@ def _open_with_verdict(rows: list[dict], item: dict, verdicts: set[str]) -> bool
     return _open_item(rows, item) and meta_verdict(rows, item) in verdicts
 
 
-def _mailbox_post_if(actor: str, kind: str, body: dict, *, to: str,
-                     in_reply_to: str | None = None, expires_hours: float | None = None,
-                     path: Path, condition) -> dict | None:
-    """Append only when ``condition`` accepts the locked mailbox prefix.
-
-    The live Flash/card base has the durable locked append primitives but not the
-    lane's reviewed public ``post_if`` helper.  Keep the compare-and-append at
-    the Nara boundary rather than splitting it into a read followed by
-    ``mailbox.post()``: that gap would let a review or withdrawal land between
-    the meta-verdict check and a ``claimed``/``held`` receipt.  This is pinned to
-    the exact accepted mailbox base; if that base no longer exposes all three
-    primitives, refuse rather than falling back to a non-atomic append.
-    """
-    required = ("_validate_expires_hours", "_validate_post", "_recover_torn_tail_locked", "_append_locked")
-    if any(not callable(getattr(mailbox, name, None)) for name in required):
-        raise LaneError("mailbox lacks the pinned durable conditional-append primitives")
-    mailbox._validate_expires_hours(expires_hours)
-    mailbox._validate_post(actor, kind, body, to, in_reply_to)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with (path.parent / ".oracle_nara_mailbox.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        mailbox._recover_torn_tail_locked(path)
-        rows = mailbox.read(path)
-        if not condition(rows):
-            return None
-        return mailbox._append_locked(actor, kind, body, to=to, in_reply_to=in_reply_to,
-                                      expires_hours=expires_hours, path=path, rows=rows)
-
-
 def _claim_if_meta_accepts(path: Path, entry: dict) -> dict | None:
     """Atomically post ``claimed`` only for the mailbox's current accepting review.
 
@@ -1062,15 +1091,15 @@ def _claim_if_meta_accepts(path: Path, entry: dict) -> dict | None:
     reject in between them.
     """
     item = entry["item"]
-    return _mailbox_post_if("nara", "receipt", {"state": "claimed"}, to="oracle",
-                            in_reply_to=item["msg_id"], path=path,
-                            condition=lambda rows: _open_with_verdict(rows, item, {"accept"}))
+    return mailbox.post_if("nara", "receipt", {"state": "claimed"}, to="oracle",
+                           in_reply_to=item["msg_id"], path=path,
+                           condition=lambda rows: _open_with_verdict(rows, item, {"accept"}))
 
 
 def _post_held(path: Path, entry: dict, reasons: list[str], verdicts: set[str] | None = None) -> dict | None:
     """Append ``held`` only while the item remains open, and optionally rejected."""
     item = entry["item"]
-    return _mailbox_post_if(
+    return mailbox.post_if(
         "nara", "receipt", {"state": "held", "reasons": reasons},
         to="oracle", in_reply_to=item["msg_id"], path=path,
         condition=(lambda rows: _open_with_verdict(rows, item, verdicts)) if verdicts else
@@ -1309,6 +1338,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--stub", action="append", default=[], type=Path,
                         help="precheck: a JSON file mapping repo path -> known-good content (repeatable)")
     parser.add_argument("--argv", help="precheck: JSON list, the test command (default: python -m pytest -q TEST)")
+    parser.add_argument("--base-sha",
+                        help="precheck: exact 40-character commit declared by the plan (default: current HEAD)")
     parser.add_argument("--max-concurrent", type=int,
                         help=f"run: items processed at once (default: ${CONCURRENCY_ENV}, else "
                              "config/nara_lane.json max_concurrent_items, else 1; capped at the server's "
@@ -1325,7 +1356,8 @@ def main(argv: list[str] | None = None) -> int:
         argv_list = json.loads(args.argv) if args.argv else ["python", "-m", "pytest", "-q", args.test_path]
         stubs = [json.loads(path.read_text()) for path in args.stub]
         try:
-            report = precheck(args.test_path, args.test_file.read_text(), argv_list, stubs=stubs)
+            report = precheck(args.test_path, args.test_file.read_text(), argv_list, stubs=stubs,
+                              base_sha=args.base_sha)
         except (PrecheckError, LaneError) as exc:
             print(f"precheck: {exc}", file=sys.stderr)
             return 2

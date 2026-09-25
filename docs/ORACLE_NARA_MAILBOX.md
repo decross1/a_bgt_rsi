@@ -67,11 +67,12 @@ block an ambiguous duplicate. No production daily-loop producer invokes this com
 source contract does not itself make the loop live or repair any prior plan.
 
 The mailbox rejects a pre-existing symlink at the mailbox, adjacent lock, or
-known parent component and opens the leaf files with `O_NOFOLLOW`. This is a
+known parent component. The lock leaf is opened with `O_NOFOLLOW`; the mailbox
+leaf is checked immediately before its ordinary Python file opens. This is a
 same-UID coordination control, not a hostile-same-UID filesystem boundary: a
-concurrent parent-directory rename between inspection and open is outside this
-source-only contract. Keep the mailbox directory owned and writable only by
-the trusted lab account.
+same-UID rename between inspection and a mailbox open, or a concurrent parent-
+directory rename, is outside this source-only contract. Keep the mailbox
+directory owned and writable only by the trusted lab account.
 
 ## Writing a plan item (Oracle)
 
@@ -90,6 +91,35 @@ the trusted lab account.
 }
 ```
 
+### What the builder can see
+
+The lane captures one exact base commit before precheck. A thesis-candidate
+plan declares that commit in `thesis_candidate_source.base_sha`; other items
+capture the checkout `HEAD`. The implementation worktree is that captured base
+plus Oracle's acceptance test. Moving the checkout after a thesis plan is
+posted does not move the plan: Nara uses the declared commit if it is still
+available, and otherwise holds the item.
+
+The builder is given the plan `title`, `objective`, `writable_paths`, the
+acceptance test's path and bytes, the last test output, and the current contents
+of the writable paths. For entries explicitly declared in `input_paths`, it is
+also given `input_visibility` and, when present, `input_contents`; the per-file
+`input_contents` byte limit is `MAX_FILE_BYTES` (48 KiB). It receives nothing beyond
+these inputs. A regular file tracked at the captured lane base is
+`PRESENT` and its bytes are sent. An untracked or absent entry is held as
+"not readable by the builder"; an entry denied by the fence is held as "outside the lane fence".
+A path named only in the objective's prose is never sent. An input
+path cannot be read by the builder merely because the objective names it, so
+put indispensable uncommitted content inline in the objective.
+
+If an acceptance test uses a copied live-state fixture, post matching
+`fixture_sources` and `fixtures` maps keyed by the same fixture names. Optional
+`fixture_enums` entries name non-empty field lists for those fixtures. The
+mailbox rejects incomplete map shapes before queueing, and the lane compares
+the fixture with its declared tracked source. A shape or format test is not a citation check;
+citation identity and substantive source support need their own
+evidence checks.
+
 - `task_class`: documentation, tests, tooling, experiment_code or lab_organization.
 - Oracle writes the acceptance test. It must fail before Nara's change
   (red-first), and Nara may not modify it.
@@ -99,7 +129,7 @@ the trusted lab account.
   campaign manifests, `bench/flash_*`, `.git*` paths and anything else are held.
 - Field types are checked when the item is posted. An item that still cannot be
   read is held as malformed; it does not block the items behind it.
-- Limits: 3 attempts, 30 minutes, 8 KiB test, 48 KiB per file. Each test run and
+- Limits: 3 attempts, 60 minutes, 8 KiB test, 48 KiB per file. Each test run and
   builder call gets only the time left in the item's wall-clock budget.
 
 ## What Nara does (the lane)
@@ -107,9 +137,11 @@ the trusted lab account.
 `python -m orchestrator.nara_lane run` processes every open item once:
 
 1. Holds an inadmissible item with reasons (`held`).
-2. Claims an admissible one, creates a worktree from the main checkout's HEAD on
-   branch `nara/<msg_id>` (the receipt records `base_sha`), writes Oracle's test
-   and confirms it fails.
+2. Claims an admissible one and creates branch `nara/<msg_id>` from the exact
+   prechecked base. For a thesis-candidate plan this is its declared
+   `base_sha`, even if the main checkout has since moved; other items retain the
+   captured-`HEAD` behavior. The terminal receipt records both `base_sha` and
+   `base_tree_oid`. Nara writes Oracle's test and confirms it fails.
 3. Asks the local Flash builder for the allowed files (logged to `logs/calls.jsonl`
    as `nara_lane_builder`), and runs the test in a bubblewrap sandbox with no
    network, no home directory, and only the worktree writable. The worktree's
@@ -130,6 +162,12 @@ the trusted lab account.
 
 Nara never merges, pushes, or edits its own fence. Oracle's integrator reviews
 each `nara/*` branch and merges through the normal verification gate.
+
+The runner is serial by default. A reviewed configuration may raise it to a
+bounded pool, capped at four and at one fewer than the serving runtime's request
+slots. Claims stay in mailbox order, each item keeps its own claim lock through
+its terminal receipt, and the pass stops claiming before its service budget can
+cut an item short.
 
 ## Kill switches
 

@@ -208,6 +208,22 @@ def test_post_if_reads_and_appends_under_one_mailbox_lock(tmp_path):
     assert skipped is None and mailbox.read(path) == [row]
 
 
+def test_post_if_predicate_cannot_mutate_the_verified_prefix_used_for_append(tmp_path):
+    path = tmp_path / "mb.jsonl"
+    first = mailbox.post("oracle", "note", {"text": "first"}, to="all", path=path)
+
+    def mutate_prefix(rows):
+        rows[-1]["row_sha256"] = "0" * 64
+        rows[-1]["body"]["text"] = "rewritten in callback"
+        return True
+
+    second = mailbox.post_if("oracle", "note", {"text": "second"}, to="all", path=path,
+                             condition=mutate_prefix)
+
+    assert second is not None and second["prev_sha256"] == first["row_sha256"]
+    assert mailbox.read(path) == [first, second]
+
+
 @pytest.mark.parametrize(("body", "expected"), [
     ({"title": "Title", "question": "Question", "summary": "Summary", "state": "held", "verdict": "amend", "text": "Text"}, "Title"),
     ({"title": 7, "question": "Question", "summary": "Summary", "state": "held", "verdict": "amend", "text": "Text"}, "Question"),

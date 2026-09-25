@@ -10,6 +10,7 @@ verdict (owner direction 2026-09-22): the lane's gate on plan items, not an owne
 from __future__ import annotations
 
 import argparse
+import copy
 from contextlib import contextmanager
 import fcntl
 import hashlib
@@ -448,6 +449,50 @@ def validate_plan_item(body: dict) -> None:
         raise MailboxError("title and objective must be strings")
     if len(body["objective"]) > 4000 or len(body["title"]) > 200:
         raise MailboxError("title <= 200 and objective <= 4000 characters")
+
+    fixture_fields = {"fixture_sources", "fixture_enums", "fixtures"}
+    if fixture_fields & set(body):
+        sources = body.get("fixture_sources")
+        fixtures = body.get("fixtures")
+        enums = body.get("fixture_enums", {})
+        if not isinstance(sources, dict) or not sources:
+            raise MailboxError("fixture_sources must be a non-empty object")
+        if not isinstance(fixtures, dict) or not fixtures:
+            raise MailboxError("fixtures must be a non-empty object")
+        if not isinstance(enums, dict):
+            raise MailboxError("fixture_enums must be an object")
+        for name, source_path in sources.items():
+            if not isinstance(name, str) or not name or len(name) > 120:
+                raise MailboxError("fixture_sources names must be non-empty strings <= 120 characters")
+            _repo_file_path(source_path, label=f"fixture_sources.{name}")
+        for name, fixture in fixtures.items():
+            if not isinstance(name, str) or not name or len(name) > 120:
+                raise MailboxError("fixtures names must be non-empty strings <= 120 characters")
+            if not isinstance(fixture, dict):
+                raise MailboxError(f"fixtures.{name} must be an object")
+        if set(fixtures) != set(sources):
+            raise MailboxError("fixtures and fixture_sources must name exactly the same fixtures")
+        for name, fields in enums.items():
+            if name not in sources:
+                raise MailboxError(f"fixture_enums.{name} has no matching fixture source")
+            if (not isinstance(fields, list) or not fields
+                    or not all(isinstance(field, str) and field and len(field) <= 120 for field in fields)
+                    or len(set(fields)) != len(fields)):
+                raise MailboxError(f"fixture_enums.{name} must be a non-empty list of distinct field names")
+
+    declaration = body.get("thesis_candidate_source")
+    if declaration is not None:
+        expected = {"schema_version", "set_id", "path", "base_sha"}
+        if not isinstance(declaration, dict) or set(declaration) != expected:
+            raise MailboxError(f"thesis_candidate_source fields must be exactly {sorted(expected)}")
+        if declaration.get("schema_version") != "nara-thesis-candidate-source/v1":
+            raise MailboxError("unsupported thesis_candidate_source schema_version")
+        if (not isinstance(declaration.get("set_id"), str) or not declaration["set_id"]
+                or len(declaration["set_id"]) > 120):
+            raise MailboxError("thesis_candidate_source.set_id must be a non-empty string <= 120 characters")
+        _repo_file_path(declaration.get("path"), label="thesis_candidate_source.path")
+        if not isinstance(declaration.get("base_sha"), str) or not GIT_SHA1.fullmatch(declaration["base_sha"]):
+            raise MailboxError("thesis_candidate_source.base_sha must be a lowercase 40-character Git SHA")
 
 
 def validate_question_resolution(body: dict) -> None:
@@ -961,7 +1006,11 @@ def post_if(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | No
     with _mailbox_lock(path):
         _recover_torn_tail_locked(path)
         rows = read(path)
-        if not condition(rows):
+        # A predicate may inspect the locked prefix but must never receive the
+        # exact mutable objects later handed to _append_locked().  Otherwise a
+        # callback can rewrite prev_sha256/row_sha256 in memory and make this
+        # writer durably append a broken chain while still holding the lock.
+        if not condition(copy.deepcopy(rows)):
             return None
         return _append_locked(actor, kind, body, to=to, in_reply_to=in_reply_to,
                               expires_hours=expires_hours, path=path, rows=rows)

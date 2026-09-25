@@ -4,7 +4,7 @@ Meta-oracle finding, review claude-e347ce59ca643116 (seq 165), severity material
 Plan 2026-09-24 d1 was posted with `notes/research/2026-09-24-g11-candidates/
 READING_LIST.md` in `allowed_write_paths` and an objective telling the builder to
 copy 19 paper titles from that file. The file exists nowhere: `implement()` creates
-the worktree as checkout HEAD plus the acceptance test, and `builder()` reports
+the worktree as the captured lane base plus the acceptance test, and `builder()` reports
 `current_contents` only for writable paths. So the builder was instructed to copy
 titles from a path it saw as `None` - the invented-citation failure mode dressed up
 as an instruction, and the item was posted knowing it (my seq 163 raised the objection).
@@ -13,7 +13,7 @@ Two rules close it:
 
 1. `admission()` refuses an item that declares `input_paths` - paths it names as
    inputs to read - unless each one is readable by the builder: present at the
-   checkout HEAD, or writable and present in the worktree. The lane holds the item
+   captured lane base, or writable and present in the worktree. The lane holds the item
    before it draws a worktree, so no attempt is burned and no receipt is mislabelled.
 2. `builder()` states the verdict in the prompt. A declared input that is absent is
    reported as `NOT PRESENT ... do not copy, quote or invent content for it`, and the
@@ -98,6 +98,22 @@ def test_admission_refuses_an_input_path_that_is_not_at_head(repo) -> None:
 def test_admission_accepts_an_input_path_tracked_at_head(repo) -> None:
     reasons = lane.admission(_item(input_paths=[TRACKED_INPUT]), repo_root=repo)
     assert not any("input" in r and TRACKED_INPUT in r for r in reasons), reasons
+
+
+def test_declared_base_input_visibility_does_not_follow_a_later_head(repo, monkeypatch) -> None:
+    base = _git(repo, "rev-parse", "HEAD").strip()
+    _git(repo, "rm", TRACKED_INPUT)
+    _git(repo, "commit", "-q", "-m", "remove input after plan")
+    declaration = {"schema_version": "nara-thesis-candidate-source/v1", "set_id": "g11",
+                   "path": WRITABLE, "base_sha": base}
+    item = _item(input_paths=[TRACKED_INPUT], thesis_candidate_source=declaration)
+    monkeypatch.setattr(lane, "_prechecked", lambda _item, **_kwargs: True)
+
+    reasons = lane.admission(item, repo_root=repo)
+
+    assert not any(TRACKED_INPUT in reason for reason in reasons), reasons
+    assert lane._input_visibility([TRACKED_INPUT], [], cwd=repo, rev=base)[TRACKED_INPUT] == "PRESENT"
+    assert lane._input_visibility([TRACKED_INPUT], [], cwd=repo)[TRACKED_INPUT].startswith("NOT PRESENT")
 
 
 def test_admission_accepts_a_writable_input_path_that_exists(repo) -> None:

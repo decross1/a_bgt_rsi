@@ -552,7 +552,7 @@ def test_review_posted_at_the_claim_append_boundary_prevents_claim(repo, monkeyp
     path = repo / "run_state/mb.jsonl"
     item = mailbox.post("oracle", "plan_item", _plan(), to="nara", path=path)
     mailbox.post("codex", "review", {"verdict": "accept"}, to="nara", in_reply_to=item["msg_id"], path=path)
-    real_post_if, injected = lane._mailbox_post_if, threading.Event()
+    real_post_if, injected = mailbox.post_if, threading.Event()
 
     def post_review_before_claim(actor, kind, body, **kwargs):
         if body.get("state") == "claimed" and not injected.is_set():
@@ -560,7 +560,7 @@ def test_review_posted_at_the_claim_append_boundary_prevents_claim(repo, monkeyp
             mailbox.post("codex", "review", {"verdict": verdict}, to="nara", in_reply_to=item["msg_id"], path=path)
         return real_post_if(actor, kind, body, **kwargs)
 
-    monkeypatch.setattr(lane, "_mailbox_post_if", post_review_before_claim)
+    monkeypatch.setattr(mailbox, "post_if", post_review_before_claim)
     posted = lane.run_queue(path, build=lambda *a, **k: pytest.fail("never built"), sandbox=_fake_sandbox,
                             ready=lambda: True)
     assert injected.is_set()

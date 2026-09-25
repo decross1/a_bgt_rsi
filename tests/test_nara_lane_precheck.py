@@ -6,7 +6,7 @@ discriminated (red without the tool, green with a correct one) without running
 it; one of those tests failed 9 of 11 checks from a defect in the test itself.
 
 Precheck runs that claim instead of asserting it: it draws a fixture worktree
-from the captured checkout HEAD, writes the acceptance test, runs it with no implementation (it must
+from the captured lane base, writes the acceptance test, runs it with no implementation (it must
 be red), then again with an author-supplied known-good stub (a green stub makes
 the item prechecked), and writes a receipt named for a descriptor of test
 content, path, argv, and exact checkout commit/tree under
@@ -248,13 +248,77 @@ def test_precheck_receipt_is_held_when_head_advances(tmp_path, monkeypatch):
     root = _repo(tmp_path, monkeypatch)
     lane.precheck(TEST_PATH, REPO_TEST, ARGV, stubs=[STUB], sandbox=_host_sandbox)
     _advance_head(root)
-    assert any("exact checkout HEAD" in reason for reason in lane.admission({"actor": "oracle", "body": _plan()}))
+    assert any("exact lane base" in reason for reason in lane.admission({"actor": "oracle", "body": _plan()}))
 
 
 def _advance_head(root):
     """An independent checkout writer changing only the commit identity."""
     subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "advance"],
                    cwd=root, check=True)
+
+
+def _thesis_source(base_sha):
+    return {"schema_version": "nara-thesis-candidate-source/v1", "set_id": "g11-candidates",
+            "path": "notes/nara_candidates.json", "base_sha": base_sha}
+
+
+def test_plan_declared_base_survives_head_move_and_binds_terminal_receipt(tmp_path, monkeypatch):
+    """A reviewed plan can wait in the mailbox while the checkout advances. The
+    declaration, precheck receipt, implementation worktree and terminal result
+    still name the same immutable commit/tree rather than silently switching to
+    the newer HEAD."""
+    root = _repo(tmp_path, monkeypatch)
+    base_sha, base_tree = lane._build_base()
+    lane.precheck(TEST_PATH, REPO_TEST, ARGV, stubs=[STUB], sandbox=_host_sandbox,
+                  base_sha=base_sha)
+    body = _plan(allowed_write_paths=sorted(STUB),
+                 thesis_candidate_source=_thesis_source(base_sha))
+    mailbox_path = root / "run_state/mb.jsonl"
+    plan = mailbox.post("oracle", "plan_item", body, to="nara", path=mailbox_path)
+    monkeypatch.setattr(lane, "meta_verdict", lambda _rows, _item: "accept")
+    _advance_head(root)
+
+    assert lane.admission(plan) == []
+    posted = lane.run_queue(mailbox_path, build=_good_stub_builder, sandbox=_host_sandbox,
+                            ready=lambda: True)
+    result = next(row["body"] for row in posted if row["body"]["state"] == "validated")
+
+    assert (result["base_sha"], result["base_tree_oid"]) == (base_sha, base_tree)
+    assert result["branch"] == f"nara/{plan['msg_id']}"
+    assert subprocess.run(["git", "rev-parse", f"{result['head_sha']}^"], cwd=root, check=True,
+                          capture_output=True, text=True).stdout.strip() == base_sha
+
+
+def test_declared_base_with_only_a_different_precheck_receipt_is_held(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    first, _tree = lane._build_base()
+    lane.precheck(TEST_PATH, REPO_TEST, ARGV, stubs=[STUB], sandbox=_host_sandbox,
+                  base_sha=first)
+    _advance_head(root)
+    second, _tree = lane._build_base()
+    item = {"actor": "oracle", "body": _plan(thesis_candidate_source=_thesis_source(second))}
+
+    reasons = lane.admission(item)
+
+    assert len(reasons) == 1 and "precheck receipt" in reasons[0] and "exact lane base" in reasons[0]
+
+
+def test_unavailable_declared_base_is_held_before_implementation(tmp_path, monkeypatch):
+    _repo(tmp_path, monkeypatch)
+    item = {"actor": "oracle", "body": _plan(thesis_candidate_source=_thesis_source("f" * 40))}
+
+    reasons = lane.admission(item)
+
+    assert len(reasons) == 1 and "lane base commit is unavailable" in reasons[0]
+
+
+@pytest.mark.parametrize("base_sha", ["HEAD", "A" * 40, "a" * 39])
+def test_precheck_refuses_a_noncanonical_explicit_base(tmp_path, monkeypatch, base_sha):
+    _repo(tmp_path, monkeypatch)
+
+    with pytest.raises(lane.PrecheckError, match="exact lowercase 40-character"):
+        lane.precheck(TEST_PATH, REPO_TEST, ARGV, stubs=[STUB], sandbox=_host_sandbox,
+                      base_sha=base_sha)
 
 
 def _real_receipted_entry(tmp_path, monkeypatch, msg_id="base-binding"):
@@ -497,6 +561,26 @@ def test_a_later_stub_cannot_pass_on_an_earlier_stubs_edit_to_a_tracked_file(tmp
         (r["stub"], r["passed"], r["output"][-300:]) for r in report["runs"]]
     assert report["green_run"] is None and report["green_receipt"] is None
     assert not (root / "run_state/precheck_receipts").exists()
+
+
+def test_reset_fixture_returns_to_the_explicit_captured_base(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    base, _tree = lane._build_base()
+    fixture = tmp_path / "reset-fixture"
+    subprocess.run(["git", "worktree", "add", "--detach", str(fixture), base], cwd=root,
+                   check=True, capture_output=True, text=True)
+    try:
+        _advance_head(fixture)
+        assert subprocess.run(["git", "rev-parse", "HEAD"], cwd=fixture, check=True,
+                              capture_output=True, text=True).stdout.strip() != base
+
+        lane._reset_fixture(fixture, base)
+
+        assert subprocess.run(["git", "rev-parse", "HEAD"], cwd=fixture, check=True,
+                              capture_output=True, text=True).stdout.strip() == base
+    finally:
+        subprocess.run(["git", "worktree", "remove", "--force", str(fixture)], cwd=root,
+                       check=True, capture_output=True, text=True)
 
 
 def test_two_prechecks_do_not_delete_each_others_fixtures(tmp_path, monkeypatch):

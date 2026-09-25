@@ -300,6 +300,17 @@ def test_validate_plan_item_accepts_the_new_maps_and_rejects_other_shapes():
         mailbox.validate_plan_item(dict(GOOD_BODY, fixture_sources={}))
 
 
+def test_mailbox_rejects_an_unpaired_fixture_declaration_before_it_is_queued(tmp_path):
+    path = tmp_path / "mailbox.jsonl"
+    incomplete = dict(GOOD_BODY)
+    incomplete.pop("fixtures")
+
+    with pytest.raises(mailbox.MailboxError, match="fixtures"):
+        mailbox.post("oracle", "plan_item", incomplete, to="nara", path=path)
+
+    assert not path.exists()
+
+
 def test_a_declaration_with_no_fixture_behind_it_is_refused(tmp_path, monkeypatch):
     """The same gap one layer down, at admission: `fixtures` was an unknown key to the
     old validate_plan_item, so a bare fixture_sources declaration passed every check
