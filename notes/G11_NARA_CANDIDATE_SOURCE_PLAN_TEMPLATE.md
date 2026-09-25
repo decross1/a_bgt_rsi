@@ -52,9 +52,11 @@ installed and the ordinary meta-review gate accepts the exact posted item.
 ~~~
 
 The publisher must replace test_content with the file's exact contents, not
-the placeholder, and must not add another writable path. The known-good payload
-at tests/fixtures/nara_candidate_source_g11_good.json is precheck evidence
-only; it is never copied into Nara's implementation worktree.
+the placeholder, and must not add another writable path. The known-good
+precheck stub at tests/fixtures/nara_candidate_source_g11_good.json maps exactly
+notes/nara_candidates.json to the 18,323-byte payload. It is directly
+consumable by the lane's --stub option, is evidence only, and is never copied
+into Nara's implementation worktree.
 
 ## Offline discrimination receipt
 
