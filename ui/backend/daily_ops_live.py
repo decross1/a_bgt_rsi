@@ -14,15 +14,17 @@ Nothing here writes, and a quiet producer shows its age rather than old content.
 Match rules (each is tested):
 
 * ``nara_dev`` item -> the newest ``plan_item`` Oracle posted inside the plan's
-  mailbox window whose title equals the item title, or names this item's id as a
-  whole word and no other id of the same plan.  The window runs from the first
-  ``PLAN READY: <date>`` note to the first ``PLAN READY`` note of a later date;
-  without a note it starts at the plan file's first revision time.
-* ``oracle_dev`` item -> ``READY FOR REVIEW`` notes whose ``ref.branch`` (or, with
-  no ref, the title) names ``oracle/<date>-<id>`` (optionally ``-rN``).  The
-  newest of those notes and their ``review`` replies decides the verdict;
-  "merged" when a local branch head of that name is an ancestor of ``main`` or a
-  first-parent ``main`` commit is titled ``Merge oracle/<date>-<id>...``.
+  revision window whose title equals the item title, or names this item's id as
+  a whole word and no other id of the same plan.  A current plan's window is
+  anchored to the exact ``PLAN READY`` receipt whose ``ref.path`` and
+  ``ref.sha256`` identify that immutable plan.  Older receipts without those
+  references retain a fallback only when one receipt maps to one plan revision.
+* ``oracle_dev`` item -> Oracle's newest in-window ``READY FOR REVIEW`` note
+  naming ``oracle/<date>-<id>`` (optionally ``-rN``).  Only an authorized review
+  replying to that exact note decides the verdict.  Current Git ancestry,
+  branch refs, commit timestamps and model-authored ``main_before`` fields do
+  not prove when a merge happened, so this view never upgrades an Oracle item
+  to "merged" without a separately trusted append-only integration receipt.
 * ``owner_decision`` item -> actionable only when a real ``question`` to the
   owner inside the window names the item id (``ref.item`` or a whole-word title
   match). Only a direct human ``answer`` closes it; an explicit
@@ -52,6 +54,10 @@ MAX_WORK_ITEMS = 12
 MAX_ROWS = 16
 MAX_IMPROVEMENTS = 40
 CODE_ROOT = Path(__file__).resolve().parents[2]  # the checkout that ships this UI code
+MAILBOX_ROW_FIELDS = {
+    "schema", "seq", "ts", "actor", "to", "kind", "in_reply_to", "body",
+    "expires_at", "prev_sha256", "msg_id", "row_sha256",
+}
 PLAN_NAME = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:-r(\d+))?\.json$")
 PLAN_READY = re.compile(r"^PLAN READY:\s*(\d{4}-\d{2}-\d{2})")
 GOAL = re.compile(r"\bG\d+(?:\.\d+)?\b")
@@ -287,13 +293,76 @@ def _mailbox(repo: Path) -> list[dict]:
     return oracle_mailbox.read(repo / "run_state" / "oracle_nara_mailbox.jsonl")
 
 
+def _fallback_live_rows(rows: list[dict]) -> list[dict]:
+    """Fail-closed projection adapter until the shared quarantine API lands.
+
+    ``read`` verifies the append-only hash chain but intentionally preserves
+    hash-valid malformed evidence.  UI actions must not treat such a row as
+    live coordination state.  This local boundary is deliberately conservative
+    and can be removed once the reviewed mailbox ``live_rows`` helper is on the
+    release base.
+    """
+    oracle_mailbox, _ = _orchestrator()
+    found = []
+    for position, row in enumerate(rows):
+        if not isinstance(row, dict) or set(row) != MAILBOX_ROW_FIELDS:
+            continue
+        if row.get("schema") != oracle_mailbox.SCHEMA:
+            continue
+        if type(row.get("seq")) is not int or row["seq"] != position + 1:
+            continue
+        actor, recipient = row.get("actor"), row.get("to")
+        kind, body = row.get("kind"), row.get("body")
+        if not isinstance(actor, str) or not oracle_mailbox._actor_ok(actor):
+            continue
+        if not isinstance(recipient, str) or recipient not in oracle_mailbox.RECIPIENTS:
+            continue
+        if not isinstance(kind, str) or kind not in oracle_mailbox.KINDS:
+            continue
+        if not (actor in oracle_mailbox.KINDS[kind]
+                or (actor.startswith("human:") and kind in oracle_mailbox.HUMAN_KINDS)):
+            continue
+        if not isinstance(body, dict) or not isinstance(row.get("msg_id"), str) or not row["msg_id"]:
+            continue
+        reply = row.get("in_reply_to")
+        if reply is not None and not isinstance(reply, str):
+            continue
+        if kind in {"receipt", "withdraw", "answer", "review", "question_resolution"} and not reply:
+            continue
+        at, expires = _when(row.get("ts")), _when(row.get("expires_at"))
+        if at is None or (row.get("expires_at") is not None and expires is None):
+            continue
+        if expires is not None and expires <= at:
+            continue
+        try:
+            if kind == "plan_item":
+                oracle_mailbox.validate_plan_item(body)
+            elif kind == "receipt" and body.get("state") not in oracle_mailbox.RECEIPT_STATES:
+                continue
+            elif kind == "review" and body.get("verdict") not in oracle_mailbox.VERDICTS:
+                continue
+            elif kind == "question_resolution":
+                oracle_mailbox.validate_question_resolution(body)
+        except Exception:
+            continue
+        found.append(row)
+    return found
+
+
+def _projection_rows(rows: list[dict]) -> list[dict]:
+    """Structurally live mailbox rows, without mutating append-only evidence."""
+    oracle_mailbox, _ = _orchestrator()
+    shared = getattr(oracle_mailbox, "live_rows", None)
+    return shared(rows) if callable(shared) else _fallback_live_rows(rows)
+
+
 def _project_focus(repo: Path) -> dict:
     _, research_focus = _orchestrator()
     return research_focus.project_focus(repo)
 
 
 class _Git:
-    """Read-only git facts about ``main``, cached per (main head, oracle branch heads)."""
+    """Read-only git facts pinned to one ``main`` head; branch heads are read each refresh."""
 
     def __init__(self, repo: Path):
         self.repo = repo
@@ -307,15 +376,18 @@ class _Git:
         with _git_lock:
             cached = _git_cache.get(key)
             if cached is None:
-                log = self._run("log", "--first-parent", "main", "--since=8.days", "-n", "400",
-                                "--format=%H%x1f%cI%x1f%s") if self.available else None
-                cached = {"log": [line.split("\x1f", 2) for line in (log or "").splitlines()
-                                  if line.count("\x1f") == 2],
-                          "ancestor": {}}
+                log = self._run("log", "--first-parent", self.main, "--since=8.days", "-n", "400",
+                                "--format=%H%x1f%P%x1f%cI%x1f%s") if self.available else None
+                history = [line.split("\x1f", 3) for line in (log or "").splitlines()
+                           if line.count("\x1f") == 3]
+                cached = {
+                    "history": history,
+                    "log": [[sha, when, subject] for sha, _, when, subject in history],
+                }
                 _git_cache.clear()  # one repo, one main head: keep the cache bounded
                 _git_cache[key] = cached
+        self.history = cached["history"]
         self.log = cached["log"]
-        self._ancestor = cached["ancestor"]
 
     def _run(self, *args: str) -> str | None:
         try:
@@ -324,21 +396,6 @@ class _Git:
         except (OSError, subprocess.SubprocessError):
             return None
         return result.stdout.strip() if result.returncode == 0 else None
-
-    def is_ancestor(self, sha: str) -> bool:
-        if not self.available:
-            return False
-        with _git_lock:
-            if sha not in self._ancestor:
-                try:
-                    code = subprocess.run(["git", "-C", str(self.repo), "merge-base", "--is-ancestor",
-                                           sha, self.main], capture_output=True, timeout=5,
-                                          check=False).returncode
-                except (OSError, subprocess.SubprocessError):
-                    code = 1
-                self._ancestor[sha] = code == 0
-            return self._ancestor[sha]
-
 
 # -- derivations ---------------------------------------------------------------
 
@@ -355,7 +412,8 @@ def plan_windows(rows: list[dict]) -> dict[str, tuple[int, float]]:
     """date -> [first PLAN READY seq for that date, first PLAN READY seq of a later date)."""
     firsts: dict[str, int] = {}
     for row in rows:
-        match = PLAN_READY.match(_title(row)) if row.get("kind") == "note" else None
+        match = (PLAN_READY.match(_title(row))
+                 if row.get("kind") == "note" and row.get("actor") == "oracle" else None)
         if match:
             firsts.setdefault(match.group(1), row["seq"])
     ordered = sorted(firsts.items(), key=lambda pair: pair[0])
@@ -367,6 +425,7 @@ def plan_windows(rows: list[dict]) -> dict[str, tuple[int, float]]:
 
 
 def _window(rows: list[dict], windows: dict, date: str, first_written: datetime | None):
+    """Legacy date-scoped fallback for plans published before hash references."""
     if date in windows:
         return windows[date]
     start = next((row["seq"] for row in rows if first_written and _when(row.get("ts"))
@@ -374,20 +433,128 @@ def _window(rows: list[dict], windows: dict, date: str, first_written: datetime 
     return (start, float("inf"))
 
 
+def _plan_catalog(repo: Path, plans: dict[str, list[tuple[int, str]]]) \
+        -> dict[str, tuple[str, str | None]]:
+    """Known plan paths, dates and content hashes; unreadable files stay ambiguous."""
+    found = {}
+    for date, revisions in plans.items():
+        for _, name in revisions:
+            try:
+                _, sha256, _ = _load_plan(repo, name)
+            except (OSError, ValueError):
+                sha256 = None
+            found[f"run_state/daily_plans/{name}"] = (date, sha256)
+    return found
+
+
+def _plan_ready_date(row: dict) -> str | None:
+    if row.get("actor") != "oracle" or row.get("kind") != "note":
+        return None
+    match = PLAN_READY.match(_title(row))
+    return match.group(1) if match else None
+
+
+def _exact_plan_anchor(row: dict, path: str, date: str, sha256: str | None) -> bool:
+    """A PLAN READY authority boundary names one immutable on-disk plan."""
+    ref = _ref(row)
+    return (_plan_ready_date(row) == date and sha256 is not None
+            and ref.get("path") == path and ref.get("sha256") == sha256)
+
+
+def _legacy_plan_anchors(rows: list[dict], catalog: dict[str, tuple[str, str | None]]) -> dict[str, str]:
+    """Map an unambiguous pre-reference receipt to its sole plan path.
+
+    A structured receipt with a missing or wrong field is evidence of a failed
+    publication, not permission to fall back to date matching.
+    """
+    paths_by_date: dict[str, list[str]] = {}
+    for path, (date, _) in catalog.items():
+        paths_by_date.setdefault(date, []).append(path)
+    receipts_by_date: dict[str, list[dict]] = {}
+    for row in rows:
+        title_date = _plan_ready_date(row)
+        if title_date is None:
+            continue
+        dates = {title_date}
+        path = _ref(row).get("path")
+        if isinstance(path, str) and path in catalog:
+            dates.add(catalog[path][0])
+        for receipt_date in dates:
+            receipts_by_date.setdefault(receipt_date, []).append(row)
+    found = {}
+    for date, paths in paths_by_date.items():
+        receipts = receipts_by_date.get(date, [])
+        legacy = [row for row in receipts
+                  if "path" not in _ref(row) and "sha256" not in _ref(row)]
+        if len(paths) == 1 and len(receipts) == 1 and len(legacy) == 1:
+            found[legacy[0]["msg_id"]] = paths[0]
+    return found
+
+
+def _verified_plan_anchor(row: dict, catalog: dict[str, tuple[str, str | None]],
+                          legacy: dict[str, str]) -> str | None:
+    path = _ref(row).get("path")
+    if isinstance(path, str) and path in catalog:
+        date, sha256 = catalog[path]
+        if _exact_plan_anchor(row, path, date, sha256):
+            return path
+    return legacy.get(row.get("msg_id"))
+
+
+def _revision_window(rows: list[dict], windows: dict, date: str, name: str | None,
+                     sha256: str | None, first_written: datetime | None,
+                     catalog: dict[str, tuple[str, str | None]] | None = None) \
+        -> tuple[int, float, bool]:
+    """Return the evidence interval for one immutable plan revision.
+
+    The exact plan-ready receipt is the authority boundary. Reusing ``d1`` on
+    a later revision cannot pull in an earlier item, ready note, review, branch
+    or owner question. The date window remains only for historical plans whose
+    publication did not carry a path-and-hash reference.
+    """
+    if name is None or sha256 is None:
+        start, end = _window(rows, windows, date, first_written)
+        return start, end, False
+
+    path = f"run_state/daily_plans/{name}"
+    catalog_known = catalog is not None
+    catalog = catalog or {path: (date, sha256)}
+    catalog = {**catalog, path: (date, sha256)}
+    exact = [row for row in rows if _exact_plan_anchor(row, path, date, sha256)]
+    legacy = _legacy_plan_anchors(rows, catalog) if catalog_known else {}
+    anchors = [(row, _verified_plan_anchor(row, catalog, legacy)) for row in rows]
+    anchors = [(row, anchored_path) for row, anchored_path in anchors if anchored_path]
+    if exact:
+        anchor = min(exact, key=lambda row: row["seq"])
+    else:
+        fallback = [row for row, anchored_path in anchors if anchored_path == path
+                    and row.get("msg_id") in legacy]
+        if not fallback:
+            return float("inf"), float("inf"), True
+        anchor = min(fallback, key=lambda row: row["seq"])
+    end = min((row["seq"] for row, anchored_path in anchors
+               if row["seq"] > anchor["seq"] and anchored_path != path), default=float("inf"))
+    return anchor["seq"], end, True
+
+
 def plan_review(rows: list[dict], name: str, sha256: str) -> dict | None:
     path = f"run_state/daily_plans/{name}"
-    notes = [row for row in rows if row.get("kind") == "note" and PLAN_READY.match(_title(row))
-             and _ref(row).get("path") == path]
+    notes = [row for row in rows if _exact_plan_anchor(row, path, name[:10], sha256)]
     if not notes:
         return None
-    note = notes[-1]
-    reviews = [row for row in rows if row.get("kind") == "review" and row.get("in_reply_to") == note["msg_id"]]
-    review = reviews[-1] if reviews else None
+    # Reposting the same receipt cannot discard evidence already attached to
+    # the first immutable publication boundary.
+    note = min(notes, key=lambda row: row["seq"])
+    oracle_mailbox, _ = _orchestrator()
+    reviews = [row for row in rows if row.get("kind") == "review"
+               and row.get("actor") in oracle_mailbox.REVIEWERS
+               and row.get("in_reply_to") == note["msg_id"] and row["seq"] > note["seq"]]
+    review = max(reviews, key=lambda row: row["seq"], default=None)
     body = _body(review) if review else {}
     accepted = body.get("accepted_items") if isinstance(body.get("accepted_items"), list) else []
     return {
         "note_msg_id": note["msg_id"],
-        "sha_matches": _ref(note).get("sha256") == sha256,
+        "sha_matches": True,
         "verdict": body.get("verdict") if body.get("verdict") in VERDICT_STATUS else None,
         "review_msg_id": review["msg_id"] if review else None,
         "reviewed_at": _stamp(review.get("ts")) if review else None,
@@ -418,27 +585,27 @@ def _nara_item(item, ids, rows, window, folded):
     return status, detail + ".", last["msg_id"], (sha or "")[:12] or None, _stamp(last.get("ts"))
 
 
-def _oracle_item(item, date, rows, git):
+def _oracle_item(item, date, rows, git, window, revision_scoped):
     branch = re.compile(rf"oracle/{re.escape(date)}-{re.escape(item['id'])}(?:-r\d+)?(?![\w-])")
-    ready = [row for row in rows if row.get("kind") == "note" and _title(row).startswith("READY FOR REVIEW")
+    ready = [row for row in rows if row.get("actor") == "oracle" and row.get("kind") == "note"
+             and _title(row).startswith("READY FOR REVIEW")
+             and window[0] <= row["seq"] < window[1]
              and (branch.fullmatch(str(_ref(row).get("branch"))) if _ref(row).get("branch")
                   else branch.search(_title(row)))]
-    ready_ids = {row["msg_id"] for row in ready}
-    reviews = [row for row in rows if row.get("kind") == "review" and row.get("in_reply_to") in ready_ids]
-    if item.get("repo", "a_bgt_rsi") == "a_bgt_rsi":
-        for sha, when, subject in git.log:
-            if re.match(r"Merge (?:branch ')?" + branch.pattern, subject):
-                return "merged", _clip(subject, 200), None, sha[:12], _stamp(when)
-        for name, sha in sorted(git.heads.items()):
-            if branch.fullmatch(name) and git.is_ancestor(sha):
-                return "merged", f"Branch {name} is on main.", None, sha[:12], None
     if not ready:
+        if revision_scoped:
+            return "not_started", "No revision-scoped READY FOR REVIEW note yet.", None, None, None
         heads = [name for name in git.heads if branch.fullmatch(name)]
         if heads:
             return "building", f"Branch {heads[-1]} exists; no READY FOR REVIEW note yet.", None, None, None
         return "not_started", "No branch or READY FOR REVIEW note yet.", None, None, None
-    note, review = ready[-1], (reviews[-1] if reviews else None)
-    if review is None or review["seq"] < note["seq"]:
+    note = max(ready, key=lambda row: row["seq"])
+    oracle_mailbox, _ = _orchestrator()
+    reviews = [row for row in rows if row.get("kind") == "review"
+               and row.get("actor") in oracle_mailbox.REVIEWERS
+               and row.get("in_reply_to") == note["msg_id"] and row["seq"] > note["seq"]]
+    review = max(reviews, key=lambda row: row["seq"], default=None)
+    if review is None:
         return "awaiting_review", _clip(_title(note), 200), note["msg_id"], None, _stamp(note.get("ts"))
     verdict = _body(review).get("verdict")
     return (VERDICT_STATUS.get(verdict, "awaiting_review"),
@@ -455,20 +622,24 @@ def _owner_question(item, ids, rows, window):
 
 
 def work_items(plan: dict, rows: list[dict], windows: dict, git: _Git, now: datetime,
-               first_written: datetime | None) -> tuple[list[dict], dict]:
+               first_written: datetime | None, name: str | None = None,
+               sha256: str | None = None,
+               catalog: dict[str, tuple[str, str | None]] | None = None) -> tuple[list[dict], dict]:
     """One row per plan item, and the owner questions those items already claim."""
     oracle_mailbox, _ = _orchestrator()
     folded = oracle_mailbox.fold(rows, now)
     date = plan["date"]
     ids = [item["id"] for item in plan["items"]]
-    window = _window(rows, windows, date, first_written)
+    start, end, revision_scoped = _revision_window(
+        rows, windows, date, name, sha256, first_written, catalog)
+    window = (start, end)
     result, claimed = [], {}
     for item in plan["items"][:MAX_WORK_ITEMS]:
         lane = item.get("lane")
         if lane == "nara_dev":
             status, detail, msg, sha, at = _nara_item(item, ids, rows, window, folded)
         elif lane == "oracle_dev":
-            status, detail, msg, sha, at = _oracle_item(item, date, rows, git)
+            status, detail, msg, sha, at = _oracle_item(item, date, rows, git, window, revision_scoped)
         elif lane == "owner_decision":
             question = _owner_question(item, ids, rows, window)
             if question is not None:
@@ -603,7 +774,7 @@ def _closures(repo: Path) -> list[dict]:
 
 
 def accomplishments(repo: Path, rows: list[dict], windows: dict, git: _Git, now: datetime,
-                    plans: dict) -> list[dict]:
+                    plans: dict, catalog: dict[str, tuple[str, str | None]]) -> list[dict]:
     since = now - timedelta(days=WINDOW_DAYS)
     found = []
     oldest = (now.astimezone(LAB_TZ) - timedelta(days=WINDOW_DAYS)).date().isoformat()
@@ -611,18 +782,27 @@ def accomplishments(repo: Path, rows: list[dict], windows: dict, git: _Git, now:
         if date < oldest:
             continue
         try:
-            plan, _, written = _load_plan(repo, revisions[-1][1])
             first = datetime.fromtimestamp(
                 os.stat(repo / "run_state" / "daily_plans" / revisions[0][1]).st_mtime, timezone.utc)
-        except (OSError, ValueError):
+        except OSError:
             continue
-        items, _ = work_items(plan, rows, windows, git, now, first)
-        for item in items:
-            if item["status"] in {"merged", "validated"}:
-                evidence = item["evidence_sha"] or item["evidence_msg_id"] or revisions[-1][1]
-                found.append({"id": f"{date}:{item['id']}", "kind": item["status"],
-                              "title": f"{date} {item['id']} ({item['goal']}): {item['title']}",
-                              "at": item["evidence_at"] or _iso(written), "evidence": evidence})
+        for _, name in revisions:
+            try:
+                plan, sha, written = _load_plan(repo, name)
+            except (OSError, ValueError):
+                continue
+            items, _ = work_items(plan, rows, windows, git, now, first, name, sha, catalog)
+            historical = name != revisions[-1][1]
+            for item in items:
+                if item["status"] in {"merged", "validated"}:
+                    evidence = item["evidence_sha"] or item["evidence_msg_id"] or name
+                    # Older same-day revisions retain an immutable id instead
+                    # of colliding with a reused dN in the plan of record.
+                    identifier = (f"{date}:{name[:-5]}:{item['id']}"
+                                  if historical else f"{date}:{item['id']}")
+                    found.append({"id": identifier, "kind": item["status"],
+                                  "title": f"{date} {item['id']} ({item['goal']}): {item['title']}",
+                                  "at": item["evidence_at"] or _iso(written), "evidence": evidence})
     for closure in _closures(repo):
         at = _when(closure.get("closed_at"))
         if at and at >= since:
@@ -655,8 +835,14 @@ def build(repo: Path, now: datetime) -> dict:
     repo = Path(repo)
     warnings: list[str] = []
     try:
-        rows = _mailbox(repo)
+        recorded_rows = _mailbox(repo)
+        rows = _projection_rows(recorded_rows)
         mailbox_error = None
+        omitted = len(recorded_rows) - len(rows)
+        if omitted:
+            warnings.append(
+                f"Lab mailbox contains {omitted} structurally invalid row(s); they are preserved as evidence "
+                "but omitted from live actions and statuses.")
     except Exception as exc:  # a broken hash chain is shown, not papered over
         rows, mailbox_error = [], _clip(f"{type(exc).__name__}: {exc}", 200)
         warnings.append(f"Lab mailbox is unreadable ({mailbox_error}); work statuses are not derived.")
@@ -664,6 +850,11 @@ def build(repo: Path, now: datetime) -> dict:
     if not git.available:
         warnings.append("Read-only git on main is unavailable; merged status and improvements are not derived.")
     plans = plan_files(repo)
+    oldest = (now.astimezone(LAB_TZ) - timedelta(days=WINDOW_DAYS)).date().isoformat()
+    catalog_plans = {date: revisions for date, revisions in plans.items() if date >= oldest}
+    if plans and max(plans) not in catalog_plans:
+        catalog_plans[max(plans)] = plans[max(plans)]
+    catalog = _plan_catalog(repo, catalog_plans)
     windows = plan_windows(rows)
     daily_plan, items, claimed, plan_id = None, [], {}, None
     if plans:
@@ -685,7 +876,7 @@ def build(repo: Path, now: datetime) -> dict:
                 "review": plan_review(rows, name, sha),
             }
             if not mailbox_error:
-                items, claimed = work_items(plan, rows, windows, git, now, first)
+                items, claimed = work_items(plan, rows, windows, git, now, first, name, sha, catalog)
         except (OSError, ValueError) as exc:
             warnings.append(_clip(f"Newest daily plan {name} is unreadable: {exc}", 480))
     newest_row = _stamp(rows[-1].get("ts")) if rows else None
@@ -700,7 +891,7 @@ def build(repo: Path, now: datetime) -> dict:
         "waiting_on_you": waiting_on_you(plan_id, items, claimed, rows,
                                          daily_plan["written_at"] if daily_plan else None),
         "question_updates": question_updates(rows),
-        "accomplishments": accomplishments(repo, rows, windows, git, now, plans),
+        "accomplishments": accomplishments(repo, rows, windows, git, now, plans, catalog),
         "improvements": improvements(git, now),
         "warnings": warnings,
         "sources": {
