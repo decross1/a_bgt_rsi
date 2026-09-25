@@ -24,8 +24,9 @@ an acceptance test discriminates was asserted without being run twice, and the
 cost was three postings, two withdrawals and six lane holds. `precheck()` runs
 the claim instead: in the sandbox with no implementation (it must be red) and
 again with an author-supplied known-good stub (it must be green), then writes a
-receipt named for sha256(test_content) under run_state/precheck_receipts/. An
-item whose test has no matching green receipt is held by admission(). The gate
+receipt named for a descriptor of test content, path, argv, and exact checkout
+commit/tree under run_state/precheck_receipts/. An item whose test has no
+matching green receipt is held by admission(). The gate
 is deliberately not in oracle_mailbox.post() - the mailbox is a generic channel
 and its own tests post plan items without receipts - so it can only be enforced
 at the lane, which means a hold costs a withdraw-and-repost (a `held` receipt is
@@ -387,9 +388,9 @@ def admission(item: dict, *, repo_root: Path | None = None) -> list[str]:
             reasons.append(f"fixture_sources cannot be checked: {exc}")
     if not reasons and not _prechecked(item):  # last, so it never masks an earlier reason
         sha = test_sha256(acceptance["test_content"])
-        reasons.append(f"no green precheck receipt for sha256(test_content) {sha}: run "
+        reasons.append(f"no green precheck receipt for test descriptor (content sha256 {sha}) at this exact checkout HEAD: run "
                        "`python -m orchestrator.nara_lane precheck --test-path P --test-file F --stub S`; "
-                       f"the receipt would be {receipt_path(sha)}")
+                       "the receipt is keyed by test content, argv, and the exact checkout base")
     return reasons
 
 
@@ -404,24 +405,58 @@ def _receipt_dir(root: Path | None = None) -> Path:
     return (Path(root) if root is not None else Path(ROOT)) / "run_state/precheck_receipts"
 
 
-def receipt_path(sha: str, *, root: Path | None = None) -> Path:
-    """The receipt for one exact acceptance-test content, named for its sha256."""
-    return _receipt_dir(root) / f"{sha}.json"
+def _build_base(*, cwd: Path | None = None) -> tuple[str, str]:
+    """Exact commit/tree identity shared by precheck and implementation."""
+    base = _git("rev-parse", "--verify", "HEAD^{commit}", cwd=cwd).strip()
+    return base, _git("rev-parse", "--verify", f"{base}^{{tree}}", cwd=cwd).strip()
 
 
-def _prechecked(item: dict) -> bool:
-    """True when a green precheck receipt covers this exact test content."""
+def _argv_sha256(argv: list[str]) -> str:
+    return hashlib.sha256(json.dumps(argv, separators=(",", ":")).encode()).hexdigest()
+
+
+def _receipt_sha(test_sha: str, test_path: str, argv: list[str], base: str, tree: str) -> str:
+    return hashlib.sha256(json.dumps({"test_sha256": test_sha, "test_path": test_path,
+        "test_argv_sha256": _argv_sha256(argv), "base_sha": base, "base_tree_oid": tree},
+        sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def receipt_path(receipt_sha: str, *, root: Path | None = None) -> Path:
+    """Receipt named by exact test-and-build-base descriptor, not test text alone."""
+    return _receipt_dir(root) / f"{receipt_sha}.json"
+
+
+def _prechecked(item: dict, *, base: tuple[str, str] | None = None) -> bool:
+    """True only when the receipt binds this exact current HEAD and tree."""
     acceptance = item["body"]["acceptance"]
+    try:
+        base_sha, tree_sha = base or _build_base()
+    except (OSError, subprocess.SubprocessError):
+        # A receipt cannot bind a redirected/non-repository root.  This is a
+        # precheck-gate refusal, not a malformed-plan exception.
+        return False
+    test_sha = test_sha256(acceptance["test_content"])
+    expected = _receipt_sha(test_sha, acceptance["test_path"], list(acceptance["test_argv"]), base_sha, tree_sha)
     directory = _receipt_dir()
-    path = directory / f"{test_sha256(acceptance['test_content'])}.json"
+    path = directory / f"{expected}.json"
     if path.is_symlink() or not path.is_file():
         return False
     try:
         body = json.loads(path.read_text())
     except (OSError, ValueError):
         return False
-    return (isinstance(body, dict) and body.get("state") == "green"
-            and body.get("test_sha256") == test_sha256(acceptance["test_content"]) == path.stem)
+    if not isinstance(body, dict):
+        return False
+    # Receipt identity is exact, not ancestor-compatible.  Do not turn an
+    # untrusted receipt field into another Git query: it must be a canonical
+    # SHA-1 commit spelling and then equal the captured base below.
+    if not isinstance(body.get("base_sha"), str) or not re.fullmatch(r"[0-9a-f]{40}", body["base_sha"]):
+        return False
+    return (body.get("schema") == "nara-lane-precheck/v2" and body.get("state") == "green"
+            and body.get("test_sha256") == test_sha and body.get("test_path") == acceptance["test_path"]
+            and body.get("test_argv_sha256") == _argv_sha256(list(acceptance["test_argv"]))
+            and body.get("base_sha") == base_sha and body.get("base_tree_oid") == tree_sha
+            and body.get("receipt_sha256") == expected == path.stem)
 
 
 class PrecheckError(RuntimeError):
@@ -433,19 +468,22 @@ def precheck(test_path: str, test_content: str, test_argv: list[str], *,
              timeout: float = TEST_TIMEOUT_S) -> dict:
     """Run an acceptance test's discrimination claim in the sandbox before posting it.
 
-    Draws a fixture worktree from main, writes the test, and runs it with no
+    Draws a fixture worktree from the captured checkout HEAD, writes the test, and runs it with no
     implementation (must be red) and once per supplied stub (a green stub makes
     the item prechecked). Reports each run's output so a non-discriminating test
-    is diagnosable, and writes run_state/precheck_receipts/<sha256>.json only on
-    a green run. The stub is a fixture for this check only: it is never copied
+    is diagnosable, and writes a receipt named by the test/build-base descriptor
+    under run_state/precheck_receipts/ only on a green run. Its SHA-256 is an
+    integrity/correlation discipline, not authentication. The stub is a fixture
+    for this check only: it is never copied
     into Nara's worktree, which is created fresh by implement().
 
     Two things would otherwise let a green receipt record a claim that was never
     shown, so they are refused here (review claude-c0a841a1831ad8a6): a stub may
     not write the acceptance test - it would overwrite the test whose sha the
     receipt names, so the passing run would not be the posted test - and every
-    stub runs on a worktree reset to main including tracked modifications, so a
-    stub never passes on a previous stub's leftover edit.
+    stub runs on a worktree reset to its captured checkout HEAD, including
+    tracked modifications, so a stub never passes on a previous stub's leftover
+    edit. The reset uses an exact commit, not a symbolic branch.
 
     Raises PrecheckError on an inadmissible test (checked by admission(), not
     reimplemented here), a stub that writes the acceptance test, or a test that is
@@ -473,7 +511,7 @@ def precheck(test_path: str, test_content: str, test_argv: list[str], *,
     if reasons:
         raise PrecheckError("; ".join(reasons))
     sha = test_sha256(test_content)
-    base = _git("rev-parse", "main").strip()
+    base, base_tree = _build_base()
     fixture_root = tempfile.mkdtemp(prefix=f"precheck-{sha[:16]}-", dir=str(_precheck_root()))
     fixture = Path(fixture_root) / "wt"
     try:
@@ -502,14 +540,18 @@ def precheck(test_path: str, test_content: str, test_argv: list[str], *,
             if rc == 0:
                 green = {"stub": sorted(stub), "passed": True, "output": output[-3000:]}
                 break
-        report = {"test_sha256": sha, "test_path": test_path, "base_sha": base, "fixture": str(fixture),
+        receipt_sha = _receipt_sha(sha, test_path, list(test_argv), base, base_tree)
+        report = {"test_sha256": sha, "test_path": test_path, "base_sha": base,
+                  "base_tree_oid": base_tree, "receipt_sha256": receipt_sha, "fixture": str(fixture),
                   "red_run": red, "green_run": green, "green_receipt": None, "runs": runs}
         if green is not None:
-            path = receipt_path(sha)
+            path = receipt_path(receipt_sha)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps({
-                "schema": "nara-lane-precheck/v1", "test_sha256": sha, "test_path": test_path,
-                "state": "green", "stub_paths": green["stub"], "base_sha": base,
+                "schema": "nara-lane-precheck/v2", "test_sha256": sha, "test_path": test_path,
+                "test_argv_sha256": _argv_sha256(list(test_argv)), "state": "green",
+                "stub_paths": green["stub"], "base_sha": base, "base_tree_oid": base_tree,
+                "receipt_sha256": receipt_sha,
                 "prechecked_at": datetime.now(timezone.utc).isoformat(),
                 "note": "a discipline, not authentication: the test author writes this receipt"},
                 indent=2) + "\n")
@@ -534,7 +576,7 @@ def _precheck_root() -> Path:
 
 
 def _reset_fixture(worktree: Path) -> None:
-    """Put the fixture back to exactly `main`, so each stub is checked alone.
+    """Put the fixture back to its captured checkout HEAD, so each stub is checked alone.
 
     Both halves are needed: `reset --hard` reverts edits to tracked files (clean
     does not, so a later stub would otherwise pass on an earlier stub's leftover),
@@ -749,8 +791,17 @@ def implement(entry: dict, build=builder, sandbox=sandbox_run) -> dict:
             return {"state": "failed", "reason": f"worktree already exists: {worktree}"}
         WORKTREES.mkdir(parents=True, exist_ok=True)
         with _GIT_SERIAL:
-            base_sha = _git("rev-parse", "HEAD").strip()
+            base_sha, base_tree = _build_base()
+            if not _prechecked(item, base=(base_sha, base_tree)):
+                return {"state": "failed", "reason": "precheck receipt does not bind current checkout HEAD/tree",
+                        "branch": branch, "base_sha": base_sha}
             _git("worktree", "add", "-b", branch, str(worktree), base_sha)
+            if _build_base() != (base_sha, base_tree):
+                return {"state": "failed", "reason": "checkout HEAD moved during worktree creation",
+                        "branch": branch, "base_sha": base_sha}
+        if _build_base(cwd=worktree) != (base_sha, base_tree):
+            return {"state": "failed", "reason": "worktree does not match captured checkout base",
+                    "branch": branch, "base_sha": base_sha}
         pointer = _dotgit(worktree)
         before = _snapshot(worktree)
         _write(worktree, test_path, acceptance["test_content"])
@@ -762,6 +813,9 @@ def implement(entry: dict, build=builder, sandbox=sandbox_run) -> dict:
         attempts = 0
         while attempts < attempts_allowed and time.monotonic() < deadline:
             attempts += 1
+            if _build_base() != (base_sha, base_tree):
+                return {"state": "failed", "reason": "checkout HEAD moved before builder dispatch",
+                        "branch": branch, "base_sha": base_sha}
             try:
                 kwargs = {"timeout": _left(deadline, BUILDER_TIMEOUT_S)}
                 if build is builder:  # custom builders keep the historic four-argument seam
@@ -795,10 +849,16 @@ def implement(entry: dict, build=builder, sandbox=sandbox_run) -> dict:
         if _dotgit(worktree) != pointer:
             return {**result, "state": "failed", "reason": "worktree .git pointer changed"}
         with _GIT_SERIAL:
+            if _build_base() != (base_sha, base_tree):
+                return {**result, "state": "failed", "reason": "checkout HEAD moved before commit"}
             _git("add", "--", *changed, cwd=worktree)
             _git("-c", "user.name=Nara (lab lane)", "-c", "user.email=nara@lab.local", "commit", "-q", "-m",
                  f"Nara lane: {body['title']}\n\nOracle plan item {msg_id}; validated in the lane sandbox.",
                  cwd=worktree)
+            # Independent Git writers are outside this lane's mutex.  Detect a
+            # movement in the final commit window before calling the result valid.
+            if _build_base() != (base_sha, base_tree):
+                return {**result, "state": "failed", "reason": "checkout HEAD moved during commit"}
         return {**result, "state": "validated", "head_sha": _git("rev-parse", "HEAD", cwd=worktree).strip()}
     except Exception as exc:
         return {"state": "failed", "reason": f"{type(exc).__name__}: {exc}", "branch": branch, "base_sha": base_sha}

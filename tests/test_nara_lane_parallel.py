@@ -72,7 +72,7 @@ def repo(tmp_path, monkeypatch):
     monkeypatch.setattr(lane, "ROOT", root)
     monkeypatch.setattr(lane, "WORKTREES", tmp_path / "wt")
     monkeypatch.setattr(lane, "RUN_LOG", tmp_path / "run.jsonl")
-    monkeypatch.setattr(lane, "_prechecked", lambda _item: True)  # precheck gate tested in its own file
+    monkeypatch.setattr(lane, "_prechecked", lambda _item, **_kw: True)  # precheck gate tested in its own file
     monkeypatch.delenv(lane.CONCURRENCY_ENV, raising=False)
     return root
 
@@ -322,7 +322,7 @@ from orchestrator import nara_lane as lane
 lane.ROOT = Path(cfg["root"])
 lane.WORKTREES = Path(cfg["worktrees"])
 lane.RUN_LOG = Path(cfg["run_log"])
-lane._prechecked = lambda _item: True
+lane._prechecked = lambda _item, **_kw: True
 lane._lane_lock_path = lambda: Path(cfg["runner_lock"])
 sys.path.insert(0, cfg["tests_dir"])
 from test_nara_lane_parallel import GOOD, _fake_sandbox

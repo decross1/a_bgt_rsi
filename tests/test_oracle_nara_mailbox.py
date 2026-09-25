@@ -198,7 +198,7 @@ def _stub_the_precheck_gate(monkeypatch) -> None:
     """Switch off the precheck-receipt gate (plan 2026-09-23 d1), which is tested
     in tests/test_nara_lane_precheck.py. These lane tests predate it and post
     plan items without receipts; every other admission rule still runs."""
-    monkeypatch.setattr(lane, "_prechecked", lambda _acceptance: True)
+    monkeypatch.setattr(lane, "_prechecked", lambda _acceptance, **_kw: True)
 
 
 def _fake_sandbox(worktree, argv, timeout=0):
