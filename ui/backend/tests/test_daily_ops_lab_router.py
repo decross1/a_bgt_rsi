@@ -227,14 +227,14 @@ def test_question_retry_binds_expected_plan_revision(repo, config):
     ("oracle-nara-mailbox/v999", None),
     (oracle_mailbox.SCHEMA, "human-not-writer-derived"),
 ])
-def test_router_quarantines_malformed_owner_answer_for_retry_and_fresh_request(
+def test_router_quarantines_malformed_owner_claim_for_retry_and_fresh_request(
         repo, config, poison_schema, forced_msg_id):
     mailbox = repo / "run_state" / "oracle_nara_mailbox.jsonl"
     router = LabMailboxRouter(config, repo_root=repo)
     question = oracle_mailbox.post("oracle", "question", {"title": "Proceed?"}, to="owner", path=mailbox)
     retry_payload = {
         "request_id": "37333333-3333-3333-3333-333333333333",
-        "target_kind": "question", "target_id": question["msg_id"], "action": "approve",
+        "target_kind": "question", "target_id": question["msg_id"], "action": "reply",
         "expected_plan_revision": REVISION, "note": "Proceed safely.",
     }
     malformed_body = {
@@ -256,8 +256,7 @@ def test_router_quarantines_malformed_owner_answer_for_retry_and_fresh_request(
     rows = oracle_mailbox.read(mailbox)
     assert len(rows) == 3 and rows[-1]["schema"] == oracle_mailbox.SCHEMA
     assert router.route_decision(retry_payload)["duplicate"] is True
-    with pytest.raises(HTTPException, match="no longer open"):
-        router.route_decision({**retry_payload, "request_id": "38333333-3333-3333-3333-333333333333"})
+    assert oracle_mailbox.is_question_closed(question, rows) is False
 
     second = oracle_mailbox.post("oracle", "question", {"title": "Proceed again?"}, to="owner", path=mailbox)
     second_poison = {
@@ -311,21 +310,28 @@ def test_plan_append_rechecks_currentness_at_its_linearization_point(repo, confi
     assert not (repo / "run_state" / "oracle_nara_mailbox.jsonl").exists()
 
 
-def test_approve_on_a_question_posts_a_direct_human_answer(repo, config):
+def test_question_route_accepts_only_contextual_reconciliation_and_stays_nonterminal(repo, config):
     mailbox = repo / "run_state" / "oracle_nara_mailbox.jsonl"
     question = oracle_mailbox.post("oracle", "question", {"title": "Proceed?"}, to="owner", path=mailbox)
     router = LabMailboxRouter(config, repo_root=repo)
-    router.route_decision({
+    with pytest.raises(HTTPException, match="action is not valid"):
+        router.route_decision({
         "request_id": "44444444-4444-4444-4444-444444444444",
         "target_kind": "question", "target_id": question["msg_id"], "action": "approve",
         "expected_plan_revision": REVISION, "note": "",
+        })
+    router.route_decision({
+        "request_id": "45444444-4444-4444-4444-444444444444",
+        "target_kind": "question", "target_id": question["msg_id"], "action": "reply",
+        "expected_plan_revision": REVISION, "note": "Need a named ruling for the safe path.",
     })
     rows = oracle_mailbox.read(mailbox)
-    answer = rows[-1]
-    assert answer["kind"] == "answer"
-    assert answer["actor"] == "human:derrick"
-    assert answer["in_reply_to"] == question["msg_id"]
-    assert answer["body"]["decision"] == "approve"
+    reconciliation = rows[-1]
+    assert reconciliation["kind"] == "note"
+    assert reconciliation["actor"] == "human:derrick"
+    assert reconciliation["in_reply_to"] == question["msg_id"]
+    assert reconciliation["body"]["reconciliation"] == "genuine_owner_confirmation_required"
+    assert oracle_mailbox.is_question_closed(question, rows) is False
 
 
 def test_unauthorized_or_wrong_origin_never_writes(repo, config):
@@ -396,8 +402,8 @@ def test_end_to_end_via_the_http_decision_route(repo, config, monkeypatch):
     assert len(rows) == 1
 
 
-def test_http_plan_linked_question_approve_is_a_direct_answer_and_closes_projected_card(repo, config):
-    """The plan-card click answers its concrete question through the authenticated route."""
+def test_http_plan_linked_question_replies_as_nonterminal_reconciliation(repo, config):
+    """The plan-card route carries context but cannot mint an owner ruling."""
     path = repo / "run_state" / "daily_plans" / f"{REVISION}.json"
     plan = json.loads(path.read_text())
     plan["items"][0]["lane"] = "owner_decision"
@@ -414,15 +420,15 @@ def test_http_plan_linked_question_approve_is_a_direct_answer_and_closes_project
     endpoint = next(route.endpoint for route in api.routes if route.path == "/api/daily-ops/decisions")
     receipt = endpoint(_request(), {
         "request_id": "99999999-9999-9999-9999-999999999999",
-        "target_kind": "question", "target_id": question["msg_id"], "action": "approve",
+        "target_kind": "question", "target_id": question["msg_id"], "action": "reply",
         "expected_plan_revision": REVISION, "note": "Proceed with the safe rollout.",
     })
     assert receipt["target_kind"] == "question" and receipt["duplicate"] is False
     rows = oracle_mailbox.read(mailbox)
     answer = rows[-1]
-    assert (answer["kind"], answer["actor"], answer["in_reply_to"], answer["body"]["decision"]) == (
-        "answer", "human:derrick", question["msg_id"], "approve")
+    assert (answer["kind"], answer["actor"], answer["in_reply_to"], answer["body"]["reconciliation"]) == (
+        "note", "human:derrick", question["msg_id"], "genuine_owner_confirmation_required")
     first_written = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
     items, claimed = live.work_items(plan, rows, {}, live._Git(repo), datetime.now(timezone.utc), first_written)
-    assert items[0]["status"] == "answered"
-    assert live.waiting_on_you(REVISION, items, claimed, rows, first_written.isoformat()) == []
+    assert items[0]["status"] == "waiting_on_you"
+    assert [card["msg_id"] for card in live.waiting_on_you(REVISION, items, claimed, rows, first_written.isoformat())] == [question["msg_id"]]

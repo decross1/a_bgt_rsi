@@ -14,6 +14,7 @@ import fcntl
 import hashlib
 import json
 import math
+import os
 import re
 import sys
 from collections.abc import Callable
@@ -176,11 +177,11 @@ def _owner_answer_binding(row: dict) -> tuple[str, str, str] | None:
 
 
 def _relational_live_rows(rows: list[dict]) -> list[dict]:
-    """Admit unique identities and only ordered, question-bound terminals.
+    """Admit unique identities and only ordered, question-bound dispositions.
 
     A future question cannot retroactively legitimize an earlier human answer
     or resolution, and a duplicate identity cannot replace the original row.
-    Model answers remain evidence/context but never terminal owner authority.
+    All answers remain evidence/context, never terminal owner authority.
     """
     admitted: list[dict] = []
     seen_ids: set[str] = set()
@@ -428,7 +429,7 @@ def latest_question_contest(question: dict, rows: list[dict]) -> dict | None:
 
 
 def is_question_closed(question: dict, rows: list[dict]) -> bool:
-    """One direct human answer or one uncontested valid resolution is terminal."""
+    """Only an uncontested original-asker resolution is terminal."""
     eligible = live_rows(rows)
     if not isinstance(question, dict) or question.get("kind") != "question":
         return False
@@ -440,12 +441,39 @@ def is_question_closed(question: dict, rows: list[dict]) -> bool:
 
 
 def _question_closed_in_live_rows(question: dict, rows: list[dict]) -> bool:
-    """Terminal predicate for an already quarantined ordered mailbox view."""
+    """Terminal predicate for an already quarantined ordered mailbox view.
+
+    ``human:*`` is a freely writable actor label.  It is useful attribution
+    evidence, but it is not authentication and must never turn a claimed owner
+    answer (or claimed human disposition) into a terminal fact.  The original
+    asker may still publish a non-owner disposition, subject to the existing
+    contest/reopening rules.
+    """
     return any(
-        is_valid_question_resolution(question, row, rows)
-        or (row.get("in_reply_to") == question.get("msg_id") and row.get("kind") == "answer"
-            and isinstance(row.get("actor"), str) and row["actor"].startswith("human:"))
+        (is_valid_question_resolution(question, row, rows)
+         and row.get("actor") == question.get("actor"))
         for row in rows)
+
+
+def _durably_sync(path: Path, handle=None) -> None:
+    """Flush the append and its directory before reporting a durable receipt."""
+    try:
+        if handle is not None:
+            os.fsync(handle.fileno())
+        else:
+            file_descriptor = os.open(path, os.O_RDONLY)
+            try:
+                os.fsync(file_descriptor)
+            finally:
+                os.close(file_descriptor)
+        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        directory = os.open(path.parent, directory_flags)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except OSError as exc:
+        raise MailboxError("mailbox durability is unconfirmed; reconcile before retrying") from exc
 
 
 def read(path: Path = PATH) -> list[dict]:
@@ -573,8 +601,15 @@ def _append_locked(actor: str, kind: str, body: dict, *, to: str, in_reply_to: s
         raise MailboxError("mailbox row is not UTF-8 JSON") from exc
     if len(line_bytes) > MAX_ROW_BYTES:
         raise MailboxError(f"row exceeds {MAX_ROW_BYTES} bytes")
-    with path.open("a") as handle:
-        handle.write(line + "\n")
+    payload = line_bytes + b"\n"
+    try:
+        with path.open("ab", buffering=0) as handle:
+            written = handle.write(payload)
+            if written != len(payload):
+                raise MailboxError("mailbox append was short; durability is unconfirmed; reconcile before retrying")
+            _durably_sync(path, handle)
+    except OSError as exc:
+        raise MailboxError("mailbox durability is unconfirmed; reconcile before retrying") from exc
     return row
 
 
@@ -617,6 +652,10 @@ def post_once(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | 
             if (row.get("actor"), row.get("kind"), row.get("to"), row.get("in_reply_to"), row.get("body")) != (
                     actor, kind, to, in_reply_to, body):
                 raise MailboxError("idempotency_key was already used for a different request")
+            # A prior interrupted call can have left an otherwise readable row.
+            # Do not turn that into a success receipt until both the file and
+            # directory are synchronized by this retry.
+            _durably_sync(path)
             return row, True
         if require_open_question:
             question = next((row for row in eligible if row.get("msg_id") == in_reply_to
@@ -641,7 +680,13 @@ def find_idempotency_key(idempotency_key: str, *, path: Path = PATH) -> dict | N
         fcntl.flock(lock, fcntl.LOCK_EX)
         existing = [row for row in live_rows(read(path)) if isinstance(row.get("body"), dict)
                     and row["body"].get("request_id") == idempotency_key]
-        return existing[-1] if existing else None
+        if not existing:
+            return None
+        # This lookup feeds retry receipts in the owner route.  A readable row
+        # left by an interrupted append must cross the same file+directory
+        # durability boundary before it can be reported as accepted.
+        _durably_sync(path)
+        return existing[-1]
 
 
 def fold(rows: list[dict], now: datetime | None = None, *, already_live: bool = False) -> dict:

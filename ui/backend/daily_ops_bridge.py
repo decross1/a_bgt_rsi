@@ -885,7 +885,11 @@ def configured_bridge(state_dir: Path, config_path: str | None, *,
         return None
 
 
-_QUESTION_ACTIONS = {"approve", "decline", "defer", "reply"}
+# The append-only mailbox has no cryptographic identity for a ``human:*``
+# label.  The authorized UI can relay context, but it cannot manufacture a
+# terminal owner ruling.  Keep question interaction to one explicit
+# reconciliation reply rather than offering a thesis vote.
+_QUESTION_ACTIONS = {"reply"}
 _PLAN_ACTIONS = {"modify", "skip", "reprioritize", "approve", "decline", "defer"}
 
 
@@ -949,12 +953,13 @@ class LabMailboxRouter:
         target_kind, target_id, action = payload["target_kind"], payload["target_id"], payload["action"]
         note = payload.get("note") or ""
         if target_kind == "question":
-            body = {"text": note or action, "via": "owner-ui", "authority": "owner, D-084",
+            body = {"title": "Owner reconciliation requested", "text": note,
+                    "via": "authorized-owner-ui",
+                    "authority": "authorized route; not durable human authentication",
+                    "reconciliation": "genuine_owner_confirmation_required",
                     "request_id": payload["request_id"], "target_kind": target_kind,
                     "expected_plan_revision": payload["expected_plan_revision"]}
-            if action != "reply":
-                body["decision"] = action
-            exact = (row.get("actor") == self.owner_actor and row.get("kind") == "answer"
+            exact = (row.get("actor") == self.owner_actor and row.get("kind") == "note"
                      and row.get("in_reply_to") == target_id and row.get("body") == body)
         else:
             body = {
@@ -1000,16 +1005,19 @@ class LabMailboxRouter:
             to = str(question.get("actor", "oracle")).split(":")[0]
             if to not in {"oracle", "nara", "claude", "codex"}:
                 to = "oracle"
-            # A click on a concrete question is a direct owner answer. Posting
-            # a detached note would leave the card open while claiming success.
-            body = {"text": note or action, "via": "owner-ui", "authority": "owner, D-084",
+            # The bearer-gated UI route is the only reconciliation path we can
+            # offer here, but a mailbox row cannot prove which human held that
+            # bearer.  Preserve the reply as non-terminal context; it never
+            # closes the question or purports to be a verified owner ruling.
+            body = {"title": "Owner reconciliation requested", "text": note,
+                    "via": "authorized-owner-ui",
+                    "authority": "authorized route; not durable human authentication",
+                    "reconciliation": "genuine_owner_confirmation_required",
                     "request_id": payload["request_id"], "target_kind": target_kind,
                     "expected_plan_revision": payload["expected_plan_revision"]}
-            if action != "reply":
-                body["decision"] = action
             try:
                 row, duplicate = oracle_mailbox.post_once(
-                    self.owner_actor, "answer", body, to=to, in_reply_to=question["msg_id"],
+                    self.owner_actor, "note", body, to=to, in_reply_to=question["msg_id"],
                     idempotency_key=payload["request_id"], require_open_question=True, path=mailbox_path)
             except oracle_mailbox.MailboxError as exc:
                 raise HTTPException(409, str(exc)) from exc

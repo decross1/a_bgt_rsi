@@ -100,7 +100,7 @@ const actionLabel: Record<DailyOpsDecisionAction, string> = {
   approve: "Approve",
   decline: "Decline",
   defer: "Defer",
-  reply: "Reply…",
+  reply: "Reconcile with owner…",
 };
 
 const submitLabel: Record<DailyOpsDecisionAction, string> = {
@@ -110,7 +110,7 @@ const submitLabel: Record<DailyOpsDecisionAction, string> = {
   approve: "Send approval",
   decline: "Send decline",
   defer: "Send defer",
-  reply: "Send reply",
+  reply: "Request owner reconciliation",
 };
 
 const phrase = (value: string) => value.replaceAll("_", " ");
@@ -160,6 +160,10 @@ function WorkCard({ card, requestAvailable, openEditor }: {
 }) {
   const headline = cardHeadline(card.summary, card.title);
   const mergedAt = card.status === "merged" ? card.evidenceAt : null;
+  // Owner-decision plan rows get their one non-terminal reconciliation path
+  // below under “Waiting on you”; never render plan-level approval controls
+  // that could be mistaken for a ruling on a composite owner question.
+  const actions = card.lane === "owner_decision" ? [] : card.actions;
   return <article data-testid={`daily-work-card-${card.id}`}
     className="rounded border border-[var(--border-1)] bg-[var(--surface-1)] p-3">
     <div className="flex flex-wrap items-start justify-between gap-2">
@@ -189,8 +193,8 @@ function WorkCard({ card, requestAvailable, openEditor }: {
       </dl>
     </details>
 
-    {card.actions.length > 0 && <div className="mt-3 flex flex-wrap gap-2" aria-label={`Actions for ${headline}`}>
-      {card.actions.map(action => <button key={action} type="button" disabled={!requestAvailable}
+    {actions.length > 0 && <div className="mt-3 flex flex-wrap gap-2" aria-label={`Actions for ${headline}`}>
+      {actions.map(action => <button key={action} type="button" disabled={!requestAvailable}
         aria-describedby={!requestAvailable ? "daily-decisions-readonly" : undefined}
         onClick={event => openEditor({ kind: "work_card", id: card.id, title: headline, action }, event.currentTarget)}
         className="rounded border border-[var(--border-2)] px-3 py-1.5 text-sm text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50">
@@ -199,8 +203,6 @@ function WorkCard({ card, requestAvailable, openEditor }: {
     </div>}
   </article>;
 }
-
-const WAITING_ACTIONS: DailyOpsDecisionAction[] = ["approve", "decline", "defer", "reply"];
 
 function WaitingOnYou({ items, requestAvailable, openEditor }: {
   items: DailyWaitingItem[];
@@ -220,10 +222,10 @@ function WaitingOnYou({ items, requestAvailable, openEditor }: {
         const targetKind: DailyOpsDecisionTarget = "question";
         const targetId = item.msgId ?? item.id;
         const canAct = item.msgId != null;
-        // Card kind controls the badge, while source shape controls the actions:
-        // structured choices get one reply path; cards without choices retain
-        // the established approve/decline/defer/reply decision affordances.
-        const actions: DailyOpsDecisionAction[] = item.choices.length > 0 ? ["reply"] : WAITING_ACTIONS;
+        // Mailbox ``human:*`` labels are not durable authentication.  A card
+        // therefore never offers a one-click thesis vote: every question takes
+        // one contextual reconciliation request through the authorized route.
+        const actions: DailyOpsDecisionAction[] = ["reply"];
         return <li key={item.id} data-testid={`daily-waiting-${item.id}`}>
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <span className="font-medium">{headline}</span>
@@ -254,7 +256,7 @@ function WaitingOnYou({ items, requestAvailable, openEditor }: {
               aria-describedby={!requestAvailable ? "daily-decisions-readonly" : undefined}
               onClick={event => openEditor({ kind: targetKind, id: targetId, title: headline, action }, event.currentTarget)}
               className="rounded border border-[var(--border-2)] px-3 py-1.5 text-sm text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50">
-              {action === "reply" && item.choices.length > 0 ? "Choose / reply" : actionLabel[action]}
+              {actionLabel[action]}
             </button>)}
           </div> : <p className="mt-2 text-xs text-[var(--fg-muted)]">No open mailbox question exists yet for this plan item; use the plan item&apos;s buttons above once one is asked, or send Oracle a note.</p>}
         </li>;
@@ -408,7 +410,7 @@ export function DailyDecisionCards({ cards, waiting, updates, planRevision, requ
       aria-labelledby="daily-decision-editor-heading"
       className="mt-3 rounded border border-[var(--accent)] bg-[var(--surface-2)] p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <div><p className="text-xs font-semibold uppercase tracking-wide text-[var(--fg-muted)]">Owner direction · {phrase(editor.kind)}</p>
+        <div><p className="text-xs font-semibold uppercase tracking-wide text-[var(--fg-muted)]">Owner reconciliation · {phrase(editor.kind)}</p>
           <h4 id="daily-decision-editor-heading" className="mt-1 font-semibold">{actionLabel[editor.action]} · {editor.title}</h4></div>
         <button type="button" onClick={closeEditor} className="rounded px-2 py-1 text-sm text-[var(--accent)]">Cancel</button>
       </div>
@@ -419,13 +421,13 @@ export function DailyDecisionCards({ cards, waiting, updates, planRevision, requ
             <option value="now">Now</option><option value="next">Next</option><option value="later">Later</option>
           </select></label>}
         <label htmlFor="daily-decision-note" className="block text-sm font-medium">
-          {editor.action === "modify" ? "Required change" : editor.action === "reply" ? "Your reply" : "Note (optional)"}
+          {editor.action === "modify" ? "Required change" : editor.action === "reply" ? "Context for owner reconciliation" : "Note (optional)"}
         </label>
         <textarea id="daily-decision-note" rows={3} maxLength={3000} value={note}
           onChange={event => { setNote(event.target.value); setSubmit({ kind: "idle" }); }}
-          placeholder={editor.action === "modify" ? "What should change?" : editor.action === "reply" ? "Write your reply…" : "Add context for Oracle…"}
+          placeholder={editor.action === "modify" ? "What should change?" : editor.action === "reply" ? "State the specific ruling and context that needs genuine owner confirmation…" : "Add context for Oracle…"}
           className="mt-1 w-full rounded border border-[var(--border-2)] bg-[var(--surface-1)] px-3 py-2 text-sm" />
-        <p className="mt-2 text-xs text-[var(--fg-muted)]">This sends owner direction to Oracle. It does not execute work or create scientific credit.</p>
+        <p className="mt-2 text-xs text-[var(--fg-muted)]">This sends contextual reconciliation through the authorized owner route. It remains non-terminal: repository code cannot prove a genuine owner identity or close this question.</p>
         {!canRequest && <div className="mt-2 rounded border border-[var(--status-warn)] bg-[var(--status-warn-bg)] p-2 text-sm">
           <p>{blockedReason ?? "Owner decision controls are unavailable."}</p>
           <button type="button" onClick={onRequireAccess} className="mt-1 text-[var(--accent)]">Open owner access controls ↓</button>
@@ -446,7 +448,7 @@ export function DailyDecisionCards({ cards, waiting, updates, planRevision, requ
       <div aria-live="polite" className="mt-2 min-h-5 text-sm">
         {submit.kind === "failed" && <p className="text-[var(--status-bad)]">{submit.message}</p>}
         {submit.kind === "queued" && <p className="text-[var(--status-info)]">
-          {submit.receipt.duplicate ? "Already sent to Oracle" : "Sent to Oracle"}. No execution is implied.{" "}
+          {submit.receipt.duplicate ? "Reconciliation request already sent" : "Reconciliation request sent"}. The question remains open; no owner ruling or execution is implied.{" "}
           <details className="inline text-xs text-[var(--fg-muted)]">
             <summary className="inline cursor-pointer text-[var(--accent)]">Request id</summary>
             {" "}{submit.receipt.request_id}

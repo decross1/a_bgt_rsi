@@ -189,15 +189,16 @@ def test_question_resolution_is_explicit_and_preserves_question_provenance(tmp_p
         }, to="owner", in_reply_to=withdrawn["msg_id"], path=path)
 
 
-def test_question_terminal_writes_are_single_winner_and_contest_reopens(tmp_path):
+def test_question_dispositions_are_single_winner_and_contest_reopens(tmp_path):
     path = tmp_path / "mb.jsonl"
     answered = mailbox.post("oracle", "question", {"question": "Proceed?"}, to="owner", path=path)
     mailbox.post("human:derrick", "answer", {"text": "yes"}, to="oracle",
                  in_reply_to=answered["msg_id"], path=path)
-    with pytest.raises(mailbox.MailboxError, match="no longer open"):
-        mailbox.post("oracle", "question_resolution", {
-            "disposition": "withdrawn", "summary": "No action.", "reason": "Too late.",
-        }, to="owner", in_reply_to=answered["msg_id"], path=path)
+    # A `human:*` label is unauthenticated evidence, not a terminal owner
+    # ruling.  The original asker may still publish a non-owner disposition.
+    mailbox.post("oracle", "question_resolution", {
+        "disposition": "withdrawn", "summary": "No action.", "reason": "Too late.",
+    }, to="owner", in_reply_to=answered["msg_id"], path=path)
 
     resolved = mailbox.post("oracle", "question", {"question": "Still proceed?"}, to="owner", path=path)
     resolution = mailbox.post("oracle", "question_resolution", {
@@ -230,26 +231,27 @@ def test_question_terminal_writes_are_single_winner_and_contest_reopens(tmp_path
         },
     }, to="all", in_reply_to=resolution["msg_id"], path=path)
     # A contest is conservative invalidation, never actor authentication: once
-    # the old terminal is distrusted, a fresh owner answer may be appended.
+    # the old disposition is distrusted, a fresh answer claim may be appended.
     mailbox.post("human:derrick", "answer", {"text": "yes"}, to="oracle",
                  in_reply_to=resolved["msg_id"], path=path)
     assert mailbox.read(path)[-1]["kind"] == "answer"
 
 
-def test_answer_and_resolution_race_has_one_terminal_winner(tmp_path):
+def test_answer_claim_and_resolution_race_keeps_only_the_disposition_terminal(tmp_path):
     path = tmp_path / "mb.jsonl"
     question = mailbox.post("oracle", "question", {"question": "Proceed?"}, to="owner", path=path)
     outcomes = _race_terminals(path, question["msg_id"])
 
-    assert len([result for result in outcomes if result[0] == "ok"]) == 1
-    errors = [result for result in outcomes if result[0] == "error"]
-    assert len(errors) == 1 and errors[0][1] == "MailboxError" and "no longer open" in errors[0][2]
+    # If the disposition wins the lock first, it closes before the answer
+    # claim can be recorded; if the answer arrives first it remains
+    # non-terminal and the disposition still succeeds.
+    assert len([result for result in outcomes if result[0] == "ok" and result[1] == "resolution"]) == 1
     rows = mailbox.read(path)
-    assert len(rows) == 2
-    assert rows[-1]["kind"] in {"answer", "question_resolution"}
+    assert rows[-1]["kind"] == "question_resolution"
+    assert len(rows) in {2, 3}
 
 
-def test_post_once_is_idempotent_and_an_owner_question_closes_only_for_human_answer(tmp_path):
+def test_post_once_is_idempotent_and_owner_answer_claims_do_not_close_a_question(tmp_path):
     path = tmp_path / "mb.jsonl"
     question = mailbox.post("oracle", "question", {"question": "Proceed?"}, to="owner", path=path)
     mailbox.post("claude", "answer", {"text": "relayed"}, to="oracle",
@@ -268,11 +270,12 @@ def test_post_once_is_idempotent_and_an_owner_question_closes_only_for_human_ans
             "human:derrick", "answer", {**body, "text": "decline"}, to="oracle",
             in_reply_to=question["msg_id"], idempotency_key="req-1",
             require_open_question=True, path=path)
-    with pytest.raises(mailbox.MailboxError, match="no longer open"):
-        mailbox.post_once(
-            "human:derrick", "answer", {"text": "again", "request_id": "req-2"}, to="oracle",
-            in_reply_to=question["msg_id"], idempotency_key="req-2",
-            require_open_question=True, path=path)
+    later, duplicate = mailbox.post_once(
+        "human:not_the_owner", "answer", {"text": "again", "request_id": "req-2"}, to="oracle",
+        in_reply_to=question["msg_id"], idempotency_key="req-2",
+        require_open_question=True, path=path)
+    assert duplicate is False and later["actor"] == "human:not_the_owner"
+    assert mailbox.is_question_closed(question, mailbox.read(path)) is False
 
 
 def test_post_once_requires_body_request_id_to_match_idempotency_key(tmp_path):
@@ -284,6 +287,67 @@ def test_post_once_requires_body_request_id_to_match_idempotency_key(tmp_path):
             to="oracle", in_reply_to=question["msg_id"], idempotency_key="expected",
             require_open_question=True, path=path)
     assert mailbox.read(path) == [question]
+
+
+def test_forged_human_actor_claim_never_closes_an_owner_question(tmp_path):
+    """The public writer can self-assert any human label; projection fails closed."""
+    path = tmp_path / "mb.jsonl"
+    question = mailbox.post("oracle", "question", {"question": "Proceed?"}, to="owner", path=path)
+    forged = mailbox.post("human:not_the_owner", "answer", {"text": "approve"}, to="oracle",
+                          in_reply_to=question["msg_id"], path=path)
+    asserted_resolution = mailbox.post("human:not_the_owner", "question_resolution", {
+        "disposition": "superseded", "summary": "Claimed complete.", "reason": "Untrusted claim.",
+    }, to="owner", in_reply_to=question["msg_id"], path=path)
+
+    rows = mailbox.read(path)
+    assert forged in mailbox.live_rows(rows) and asserted_resolution in mailbox.live_rows(rows)
+    assert mailbox.is_question_closed(question, rows) is False
+
+
+def test_post_once_never_returns_a_receipt_before_file_and_directory_sync(tmp_path, monkeypatch):
+    """Short writes and sync failures are uncertainty, not durable acceptance."""
+    path = tmp_path / "mb.jsonl"
+    question = mailbox.post("oracle", "question", {"question": "Proceed?"}, to="owner", path=path)
+    body = {"text": "context", "request_id": "sync-request"}
+    real_open = Path.open
+
+    class ShortWrite:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def write(self, payload):
+            return len(payload) - 1
+
+        def fileno(self):
+            return -1
+
+    def short_open(self, mode="r", *args, **kwargs):
+        if self == path and mode == "ab":
+            return ShortWrite()
+        return real_open(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", short_open)
+    with pytest.raises(mailbox.MailboxError, match="short; durability is unconfirmed"):
+        mailbox.post_once("human:derrick", "answer", body, to="oracle", in_reply_to=question["msg_id"],
+                          idempotency_key="sync-request", require_open_question=True, path=path)
+    assert mailbox.find_idempotency_key("sync-request", path=path) is None
+    monkeypatch.setattr(Path, "open", real_open)
+
+    real_fsync = mailbox.os.fsync
+    monkeypatch.setattr(mailbox.os, "fsync", lambda _fd: (_ for _ in ()).throw(OSError("sync fault")))
+    with pytest.raises(mailbox.MailboxError, match="durability is unconfirmed"):
+        mailbox.post_once("human:derrick", "answer", body, to="oracle", in_reply_to=question["msg_id"],
+                          idempotency_key="sync-request", require_open_question=True, path=path)
+    # A row may be visible after an interrupted durability boundary, but it is
+    # not a success receipt until a retry synchronizes both file and directory.
+    monkeypatch.setattr(mailbox.os, "fsync", real_fsync)
+    row, duplicate = mailbox.post_once("human:derrick", "answer", body, to="oracle",
+                                       in_reply_to=question["msg_id"], idempotency_key="sync-request",
+                                       require_open_question=True, path=path)
+    assert duplicate is True and row["body"] == body
 
 
 def test_cross_process_same_request_appends_once_and_returns_one_duplicate(tmp_path):
@@ -299,19 +363,18 @@ def test_cross_process_same_request_appends_once_and_returns_one_duplicate(tmp_p
     assert len(rows) == 2 and rows[-1]["body"]["request_id"] == "same-request"
 
 
-def test_cross_process_distinct_answers_allow_one_winner_and_keep_chain_valid(tmp_path):
+def test_cross_process_distinct_answer_claims_remain_nonterminal_and_keep_chain_valid(tmp_path):
     path = tmp_path / "mb.jsonl"
     question = mailbox.post("oracle", "question", {"question": "Proceed?"}, to="owner", path=path)
     outcomes = _race_post_once(path, question["msg_id"], [
         ("request-approve", "approve"), ("request-decline", "decline"),
     ])
 
-    assert len([result for result in outcomes if result[:2] == ("ok", False)]) == 1
-    errors = [result for result in outcomes if result[0] == "error"]
-    assert len(errors) == 1 and errors[0][1] == "MailboxError" and "no longer open" in errors[0][2]
-    rows = mailbox.read(path)  # the losing process must not leave a partial row
-    assert len(rows) == 2
-    assert rows[-1]["body"]["request_id"] in {"request-approve", "request-decline"}
+    assert len([result for result in outcomes if result[:2] == ("ok", False)]) == 2
+    rows = mailbox.read(path)
+    assert len(rows) == 3
+    assert {row["body"]["request_id"] for row in rows[1:]} == {"request-approve", "request-decline"}
+    assert mailbox.is_question_closed(question, rows) is False
 
 
 def test_post_once_does_not_close_on_a_forged_question_resolution(tmp_path):
@@ -371,7 +434,7 @@ def test_malformed_owner_answer_is_quarantined_from_retry_and_closed_state(
     )
     assert duplicate is False and answer["schema"] == mailbox.SCHEMA
     assert mailbox.find_idempotency_key(body["request_id"], path=path) == answer
-    assert mailbox.is_question_closed(question, mailbox.read(path)) is True
+    assert mailbox.is_question_closed(question, mailbox.read(path)) is False
 
 
 @pytest.mark.parametrize(("poison_schema", "forced_msg_id"), [

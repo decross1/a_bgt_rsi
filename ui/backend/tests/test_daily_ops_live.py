@@ -617,7 +617,7 @@ def test_oracle_dev_item_follows_exact_ready_review_and_never_infers_merge(repo)
     assert value["accomplishments"] == []
 
 
-def test_owner_cards_require_a_real_question_and_direct_human_answer_or_explicit_resolution(repo):
+def test_owner_cards_require_a_real_question_and_non_owner_explicit_resolution(repo):
     _plan(repo, "2026-09-23.json", [_item("d5", "owner_decision"), _item("d6", "owner_decision")])
     box = Box(repo)
     box.post("oracle", "note", {"title": "PLAN READY: 2026-09-23", "text": "x"})
@@ -656,17 +656,18 @@ def test_owner_cards_require_a_real_question_and_direct_human_answer_or_explicit
     box.post("human:derrick", "answer", {"text": "Install on main."}, to="claude", reply=asked["msg_id"])
     box.post("claude", "answer", {"text": "relayed"}, to="oracle", reply=other["msg_id"])
     value = _summary(repo)
-    assert value["work_items"][0]["status"] == "answered"
-    # A model relay supplies context; it cannot impersonate the owner's answer.
-    assert [w["id"] for w in value["waiting_on_you"]] == [other["msg_id"]]
+    assert value["work_items"][0]["status"] == "waiting_on_you"
+    # Model relays and human labels are context, not authenticated closures.
+    assert {w["id"] for w in value["waiting_on_you"]} == {"2026-09-23:d5", other["msg_id"]}
+    assert any(row["disposition"] == "contested" for row in value["question_updates"])
     other_resolution = box.post("oracle", "question_resolution", {
         "disposition": "superseded", "summary": "The later plan replaced this ruling.",
         "reason": "No owner action remains.",
     }, to="owner", reply=other["msg_id"])
     value = _summary(repo)
-    assert value["waiting_on_you"] == []
-    assert value["question_updates"][0]["id"] == other_resolution["msg_id"]
-    assert value["question_updates"][0]["disposition"] == "superseded"
+    assert [row["id"] for row in value["waiting_on_you"]] == ["2026-09-23:d5"]
+    assert any(row["id"] == other_resolution["msg_id"] and row["disposition"] == "superseded"
+               for row in value["question_updates"])
 
     d6_question = box.post("oracle", "question", {"title": "Item d6", "ref": {"item": "d6"}}, to="owner")
     resolution = box.post("oracle", "question_resolution", {
@@ -676,9 +677,9 @@ def test_owner_cards_require_a_real_question_and_direct_human_answer_or_explicit
     value = _summary(repo)
     assert value["work_items"][1]["status"] == "resolved"
     assert value["work_items"][1]["evidence_msg_id"] == resolution["msg_id"]
-    assert value["waiting_on_you"] == []
-    assert {row["id"] for row in value["question_updates"]} == {
-        other_resolution["msg_id"], resolution["msg_id"],
+    assert [row["id"] for row in value["waiting_on_you"]] == ["2026-09-23:d5"]
+    assert {other_resolution["msg_id"], resolution["msg_id"]} <= {
+        row["id"] for row in value["question_updates"]
     }
 
 
@@ -894,7 +895,7 @@ def test_owner_question_card_keeps_structured_title_and_legacy_free_text_actiona
     ]
 
 
-def test_projection_closes_only_for_human_answer_or_valid_original_asker_resolution():
+def test_projection_keeps_human_claims_open_and_allows_only_original_asker_dispositions():
     question = {
         "seq": 1, "msg_id": "claude-question", "actor": "claude", "to": "owner", "kind": "question",
         "body": {"title": "Choose?"}, "ts": "2026-09-25T00:00:00+00:00",
@@ -919,7 +920,8 @@ def test_projection_closes_only_for_human_answer_or_valid_original_asker_resolut
     }
 
     assert live._human_answer(question, [question, relay]) is None
-    assert live._human_answer(question, [question, relay, human]) == human
+    assert live._human_answer(question, [question, relay, human]) is None
+    assert live._unverified_human_claim(question, [question, relay, human]) == human
     assert live._question_resolution(question, [question, forged_resolution]) is None
     assert live._question_resolution(question, [question, asker_resolution]) == asker_resolution
 
@@ -929,8 +931,30 @@ def test_projection_closes_only_for_human_answer_or_valid_original_asker_resolut
     }]
     claimed = {question["msg_id"]: "d1"}
     assert [row["id"] for row in live.waiting_on_you("p", base, claimed, [question, relay], None)] == ["p:d1"]
-    assert live.waiting_on_you("p", base, claimed, [question, relay, human], None) == []
+    assert [row["id"] for row in live.waiting_on_you("p", base, claimed, [question, relay, human], None)] == ["p:d1"]
     assert live.waiting_on_you("p", base, claimed, [question, asker_resolution], None) == []
+
+
+def test_unverified_human_claim_and_authorized_route_are_nonterminal_updates():
+    question = {"seq": 1, "msg_id": "oracle-question", "actor": "oracle", "to": "owner",
+                "kind": "question", "body": {"title": "Which ruling?"},
+                "ts": "2026-09-25T00:00:00+00:00"}
+    forged = {"seq": 2, "msg_id": "human-forged", "actor": "human:not_the_owner", "to": "oracle",
+              "kind": "answer", "in_reply_to": question["msg_id"], "body": {"text": "approve"},
+              "ts": "2026-09-25T00:01:00+00:00"}
+    update = live.question_updates([question, forged])
+    assert update[0]["disposition"] == "contested"
+    assert update[0]["id"] == forged["msg_id"]
+    assert "did not close" in update[0]["summary"]
+
+    reconciliation = {"seq": 3, "msg_id": "human-route", "actor": "human:derrick", "to": "oracle",
+                      "kind": "note", "in_reply_to": question["msg_id"],
+                      "body": {"via": "authorized-owner-ui",
+                               "reconciliation": "genuine_owner_confirmation_required", "text": "Choose A."},
+                      "ts": "2026-09-25T00:02:00+00:00"}
+    update = live.question_updates([question, reconciliation])
+    assert update[0]["id"] == reconciliation["msg_id"]
+    assert "remains open" in update[0]["summary"]
 
 
 def test_projection_rejects_resolution_evidence_from_a_later_or_self_row_or_reviewer():

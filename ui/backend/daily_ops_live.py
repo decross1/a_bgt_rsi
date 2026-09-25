@@ -27,9 +27,9 @@ Match rules (each is tested):
   to "merged" without a separately trusted append-only integration receipt.
 * ``owner_decision`` item -> actionable only when a real ``question`` to the
   owner inside the window names the item id (``ref.item`` or a whole-word title
-  match). Only a direct human ``answer`` closes it; an explicit
-  ``question_resolution`` can instead withdraw, supersede or mark a
-  prerequisite without impersonating the owner.
+  match). A mailbox ``human:*`` label is unauthenticated evidence and cannot
+  close it; only an explicit, uncontested original-asker
+  ``question_resolution`` can withdraw, supersede or mark a prerequisite.
 """
 from __future__ import annotations
 
@@ -129,7 +129,16 @@ def _title(row: dict) -> str:
 
 
 def _human_answer(question: dict, rows: list[dict]) -> dict | None:
-    """A card closes as answered only on a direct human reply."""
+    """Never promote a self-asserted ``human:*`` answer into a closure.
+
+    Actor labels are useful evidence but the mailbox has no strong human
+    authentication.  Such rows are surfaced separately as contested context.
+    """
+    return None
+
+
+def _unverified_human_claim(question: dict, rows: list[dict]) -> dict | None:
+    """Newest direct human answer/disposition claim, for non-terminal context."""
     question_id = question.get("msg_id") if isinstance(question, dict) else None
     question_positions = [position for position, row in enumerate(rows)
                           if row.get("msg_id") == question_id]
@@ -137,9 +146,9 @@ def _human_answer(question: dict, rows: list[dict]) -> dict | None:
             or rows[question_positions[0]] is not question):
         return None
     question_position = question_positions[0]
-    answers = []
+    claims = []
     for position, row in enumerate(rows):
-        if (position <= question_position or row.get("kind") != "answer"
+        if (position <= question_position or row.get("kind") not in {"answer", "question_resolution"}
                 or row.get("in_reply_to") != question_id
                 or not isinstance(row.get("actor"), str) or not row["actor"].startswith("human:")):
             continue
@@ -147,8 +156,22 @@ def _human_answer(question: dict, rows: list[dict]) -> dict | None:
         # desired actor label. Projection input normally removes it earlier;
         # this guard keeps direct helper callers fail closed too.
         if sum(candidate.get("msg_id") == row.get("msg_id") for candidate in rows) == 1:
-            answers.append(row)
-    return answers[-1] if answers else None
+            claims.append(row)
+    return claims[-1] if claims else None
+
+
+def _owner_reconciliation_request(question: dict, rows: list[dict]) -> dict | None:
+    """Newest protected-route reconciliation request; it remains non-terminal."""
+    question_id = question.get("msg_id") if isinstance(question, dict) else None
+    if not isinstance(question_id, str):
+        return None
+    for row in reversed(rows):
+        body = _body(row)
+        if (row.get("kind") == "note" and row.get("in_reply_to") == question_id
+                and body.get("via") == "authorized-owner-ui"
+                and body.get("reconciliation") == "genuine_owner_confirmation_required"):
+            return row
+    return None
 
 
 def _question_resolution(question: dict, rows: list[dict]) -> dict | None:
@@ -166,7 +189,8 @@ def _question_resolution(question: dict, rows: list[dict]) -> dict | None:
         if (row.get("kind") != "question_resolution" or row.get("in_reply_to") != question_id
                 or sum(candidate.get("msg_id") == row.get("msg_id") for candidate in rows) != 1):
             continue
-        if oracle_mailbox.is_valid_question_resolution(question, row, rows):
+        if (row.get("actor") == question.get("actor")
+                and oracle_mailbox.is_valid_question_resolution(question, row, rows)):
             return row
     return None
 
@@ -230,13 +254,12 @@ def question_updates(rows: list[dict]) -> list[dict]:
     for question in rows:
         if question.get("kind") != "question" or question.get("to") != "owner":
             continue
-        # A direct owner answer is the terminal view; provenance disputes over
-        # an older non-answer disposition no longer need a status-only card.
-        if _human_answer(question, rows) is not None:
-            continue
         resolution = _question_resolution(question, rows)
         contest = None if resolution is not None else _question_contest(question, rows)
-        if resolution is None and contest is None:
+        claim = None if resolution is not None or contest is not None else _unverified_human_claim(question, rows)
+        reconciliation = (None if resolution is not None or contest is not None or claim is not None
+                          else _owner_reconciliation_request(question, rows))
+        if resolution is None and contest is None and claim is None and reconciliation is None:
             continue
         card = _question_card(question)
         if resolution is not None:
@@ -250,7 +273,7 @@ def question_updates(rows: list[dict]) -> list[dict]:
                 "evidence_msg_ids": [value for value in body.get("evidence_msg_ids", [])
                                      if isinstance(value, str)][:8],
             }
-        else:
+        elif contest is not None:
             body = _body(contest)
             provenance = body["provenance_contestation"]
             update = {
@@ -263,6 +286,26 @@ def question_updates(rows: list[dict]) -> list[dict]:
                 "resolved_by": _clip(str(contest.get("actor")), 60) or "?",
                 "resolved_at": _stamp(contest.get("ts")),
                 "evidence_msg_ids": provenance["basis_msg_ids"][:8],
+            }
+        elif claim is not None:
+            update = {
+                "id": claim["msg_id"], "disposition": "contested",
+                "summary": "An unverified human answer claim did not close this question.",
+                "reason": "Mailbox human labels are not strong authentication; use the authorized owner UI route to reconcile the genuine owner response.",
+                "blocking_artifact": None,
+                "resolved_by": _clip(str(claim.get("actor")), 60) or "?",
+                "resolved_at": _stamp(claim.get("ts")),
+                "evidence_msg_ids": [claim["msg_id"]],
+            }
+        else:
+            update = {
+                "id": reconciliation["msg_id"], "disposition": "contested",
+                "summary": "Owner reconciliation was requested; this question remains open.",
+                "reason": "The authorized UI route carries context but repository code cannot turn it into durable human authentication or a terminal ruling.",
+                "blocking_artifact": None,
+                "resolved_by": _clip(str(reconciliation.get("actor")), 60) or "?",
+                "resolved_at": _stamp(reconciliation.get("ts")),
+                "evidence_msg_ids": [reconciliation["msg_id"]],
             }
         found.append({
             **update, "question_id": question["msg_id"],
@@ -398,7 +441,7 @@ def _relational_live_rows(rows: list[dict]) -> list[dict]:
     """Keep only first identities and replies to one preceding admitted question.
 
     Structural validity is not enough for owner actions. A future row cannot
-    retroactively make an earlier direct-human answer or resolution valid, and
+    retroactively make an earlier human answer claim or resolution valid, and
     a later duplicate id cannot replace the question object the owner originally
     saw. The first admitted identity wins; later duplicates remain append-only
     evidence but are not projection state. Model answer rows remain context,
@@ -742,13 +785,8 @@ def work_items(plan: dict, rows: list[dict], windows: dict, git: _Git, now: date
             question = _owner_question(item, ids, rows, window)
             if question is not None:
                 claimed[question["msg_id"]] = item["id"]
-            answer = _human_answer(question, rows) if question is not None else None
             resolution = _question_resolution(question, rows) if question is not None else None
-            if answer is not None:
-                status = "answered"
-                detail = f"Owner question {question['msg_id']} has a direct human answer {answer['msg_id']}."
-                msg, at = answer["msg_id"], _stamp(answer.get("ts"))
-            elif resolution is not None:
+            if resolution is not None:
                 body = _body(resolution)
                 disposition = body["disposition"]
                 status = "held" if disposition == "prerequisite" else "resolved"
