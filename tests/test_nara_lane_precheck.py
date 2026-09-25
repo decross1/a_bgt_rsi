@@ -276,6 +276,11 @@ def test_malformed_receipt_base_type_fails_closed(tmp_path, monkeypatch):
     assert lane._prechecked({"body": _plan()}, base=(base, tree)) is False
 
 
+def test_precheck_gate_fails_closed_when_redirected_root_is_not_git(tmp_path, monkeypatch):
+    monkeypatch.setattr(lane, "ROOT", tmp_path)
+    assert lane._prechecked({"body": _plan()}) is False
+
+
 def test_precheck_is_not_green_against_a_broken_stub(tmp_path, monkeypatch):
     """(c5) A stub that does not satisfy the test leaves the item not-green: only
     a passing stub run writes a receipt."""

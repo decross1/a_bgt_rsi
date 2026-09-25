@@ -428,7 +428,12 @@ def receipt_path(receipt_sha: str, *, root: Path | None = None) -> Path:
 def _prechecked(item: dict, *, base: tuple[str, str] | None = None) -> bool:
     """True only when the receipt binds this exact current HEAD and tree."""
     acceptance = item["body"]["acceptance"]
-    base_sha, tree_sha = base or _build_base()
+    try:
+        base_sha, tree_sha = base or _build_base()
+    except (OSError, subprocess.SubprocessError):
+        # A receipt cannot bind a redirected/non-repository root.  This is a
+        # precheck-gate refusal, not a malformed-plan exception.
+        return False
     test_sha = test_sha256(acceptance["test_content"])
     expected = _receipt_sha(test_sha, acceptance["test_path"], list(acceptance["test_argv"]), base_sha, tree_sha)
     directory = _receipt_dir()
@@ -850,6 +855,10 @@ def implement(entry: dict, build=builder, sandbox=sandbox_run) -> dict:
             _git("-c", "user.name=Nara (lab lane)", "-c", "user.email=nara@lab.local", "commit", "-q", "-m",
                  f"Nara lane: {body['title']}\n\nOracle plan item {msg_id}; validated in the lane sandbox.",
                  cwd=worktree)
+            # Independent Git writers are outside this lane's mutex.  Detect a
+            # movement in the final commit window before calling the result valid.
+            if _build_base() != (base_sha, base_tree):
+                return {**result, "state": "failed", "reason": "checkout HEAD moved during commit"}
         return {**result, "state": "validated", "head_sha": _git("rev-parse", "HEAD", cwd=worktree).strip()}
     except Exception as exc:
         return {"state": "failed", "reason": f"{type(exc).__name__}: {exc}", "branch": branch, "base_sha": base_sha}
