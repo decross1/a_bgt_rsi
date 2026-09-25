@@ -41,6 +41,32 @@ function selectedFocus() {
   };
 }
 
+function selectedThesisFocus() {
+  return {
+    schema_version: "research-focus/v2", status: "selected", focus_id: "thesis-c-alpha",
+    receipt_sha256: sha("d"), title: "Receipt-bound thesis", candidate_set_sha256: sha("a"),
+    screen_sha256: sha("b"), meta_accept_sha256: sha("c"), selection_head: "a".repeat(40),
+    chosen_candidate_id: "c-alpha", review_msg_id: "claude-review", review_row_sha256: sha("f"),
+    proposal_msg_id: "oracle-note", proposal_row_sha256: sha("e"), mailbox_cutoff_seq: 12,
+    mailbox_cutoff_sha256: sha("9"), focus_generation: { active_receipt_sha256: null, last_closure_sha256: null },
+    initial_conviction_rows: [
+      { forecaster: "nara", row_sha256: sha("1") }, { forecaster: "oracle", row_sha256: sha("2") },
+      { forecaster: "claude", row_sha256: sha("3") },
+    ], source_evidence_level: null,
+    source_quality: "thesis_candidate_screen", stage: "needs_clean_refinement",
+    next_action: "Write the preregistered protocol.", selected_at: "2026-09-25T00:00:00+00:00",
+    selected_by: "oracle", selection_reason: "Reviewed selection.", blockers: ["Execution remains separately gated."],
+    next_gate: { from: "thesis_selected", to: "study_ready", artifact: "protocol", status: "pending", owner: "Oracle" },
+    intake_policy: "focus_before_new_topics", execution_authorized: false,
+    scientific_credit: "none_selection_only",
+    evidence_refs: [
+      { kind: "nara_candidate_set", sha256: sha("a") }, { kind: "oracle_screen", sha256: sha("b") },
+      { kind: "meta_accept", sha256: sha("c") }, { kind: "oracle_proposal", msg_id: "oracle-note", row_sha256: sha("e") },
+      { kind: "meta_review", msg_id: "claude-review", row_sha256: sha("f") },
+    ],
+  };
+}
+
 describe("ResearchFocusCard", () => {
   it("shows one selected seed, its missing artifact, and the authorization boundary", () => {
     render(<MemoryRouter><ResearchFocusCard focus={selectedFocus()} /></MemoryRouter>);
@@ -68,6 +94,28 @@ describe("ResearchFocusCard", () => {
     expect(screen.getByTestId("research-focus-card")).toHaveAttribute("data-focus-status", "malformed");
     expect(screen.getByText(/did not match its contract/i)).toBeInTheDocument();
     expect(screen.queryByText("Do not trust this title")).not.toBeInTheDocument();
+  });
+
+  it("renders a v2 thesis receipt without inventing a legacy source dossier", () => {
+    render(<MemoryRouter><ResearchFocusCard focus={selectedThesisFocus()} /></MemoryRouter>);
+    const card = screen.getByTestId("research-focus-card");
+    expect(card).toHaveAttribute("data-focus-status", "selected");
+    expect(card).toHaveTextContent("receipt-bound thesis screen; no rung credit");
+    expect(card).toHaveTextContent("no legacy dossier is inferred");
+    expect(within(card).queryByRole("link", { name: "Open source dossier →" })).toBeNull();
+  });
+
+  it("accepts the 40-hex Git selection head, not a SHA-256 digest", () => {
+    expect(admitResearchFocus(selectedThesisFocus())).toMatchObject({ status: "selected" });
+    expect(admitResearchFocus({ ...selectedThesisFocus(), selection_head: "a".repeat(64) }))
+      .toEqual({ status: "malformed" });
+  });
+
+  it("rejects a v2 projection whose receipt bindings are malformed", () => {
+    expect(admitResearchFocus({ ...selectedThesisFocus(), evidence_refs: [{ kind: "meta_accept", sha256: sha("c") }] }))
+      .toEqual({ status: "malformed" });
+    expect(admitResearchFocus({ ...selectedThesisFocus(), initial_conviction_rows: [] }))
+      .toEqual({ status: "malformed" });
   });
 
   it("labels a plain source rung as historical derivation rather than new focus credit", () => {

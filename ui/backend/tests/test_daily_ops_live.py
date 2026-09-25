@@ -48,7 +48,22 @@ class Box:
         self.path = repo / "run_state" / "oracle_nara_mailbox.jsonl"
 
     def post(self, actor, kind, body, *, to="all", reply=None):
+        # Most dashboard fixtures model historical mailbox evidence. New code
+        # cannot post this title through the generic API, but the read model
+        # must still safely render an append-only legacy prefix.
+        if (kind == "note" and reply is None
+                and isinstance(body.get("title"), str)
+                and body["title"].lstrip().startswith("PLAN READY")):
+            return self.legacy_plan_ready(body, to=to, actor=actor)
         return oracle_mailbox.post(actor, kind, body, to=to, in_reply_to=reply, path=self.path)
+
+    def legacy_plan_ready(self, body, *, to="all", actor="oracle"):
+        """Seed existing historical PLAN READY evidence through the real lock."""
+        with oracle_mailbox._mailbox_lock(self.path):
+            return oracle_mailbox._append_locked(
+                actor, "note", body, to=to, in_reply_to=None, expires_hours=None,
+                path=self.path, rows=oracle_mailbox.read(self.path),
+            )
 
 
 def _append_hash_valid_row(box, *, schema, actor, kind, body, to, reply=None, msg_id=None):
@@ -159,17 +174,17 @@ def test_plan_review_is_the_review_replying_to_the_plan_ready_note_for_that_file
     path = _plan(repo, "2026-09-23-r2.json", [_item("d1", "oracle_dev")])
     box = Box(repo)
     sha = hashlib.sha256(path.read_bytes()).hexdigest()
-    old = box.post("oracle", "note", {"title": "PLAN READY: 2026-09-23", "text": "x",
+    old = box.legacy_plan_ready({"title": "PLAN READY: 2026-09-23", "text": "x",
                                       "ref": {"path": "run_state/daily_plans/2026-09-23.json", "sha256": "0"}})
     box.post("claude", "review", {"verdict": "reject", "summary": "old"}, reply=old["msg_id"])
-    mismatched = box.post("oracle", "note", {
+    mismatched = box.legacy_plan_ready({
         "title": "PLAN READY: 2026-09-23 (r2)",
         "ref": {"path": "run_state/daily_plans/2026-09-23-r2.json", "sha256": "f" * 64},
     })
     box.post("claude", "review", {"verdict": "amend", "summary": "Wrong content."},
              reply=mismatched["msg_id"])
     assert _summary(repo)["daily_plan"]["review"] is None
-    note = box.post("oracle", "note", {"title": "PLAN READY: 2026-09-23 (r2)", "text": "x",
+    note = box.legacy_plan_ready({"title": "PLAN READY: 2026-09-23 (r2)", "text": "x",
                                        "ref": {"path": "run_state/daily_plans/2026-09-23-r2.json",
                                                "sha256": sha}})
     assert _summary(repo)["daily_plan"]["review"]["verdict"] is None
@@ -179,7 +194,7 @@ def test_plan_review_is_the_review_replying_to_the_plan_ready_note_for_that_file
     assert live.plan_review(oracle_mailbox.read(box.path) + [forged], path.name, sha)["verdict"] is None
     review = box.post("claude", "review", {"verdict": "amend", "summary": "Accept d1.",
                                            "accepted_items": ["d1"]}, reply=note["msg_id"])
-    duplicate = box.post("oracle", "note", {"title": "PLAN READY: 2026-09-23 duplicate",
+    duplicate = box.legacy_plan_ready({"title": "PLAN READY: 2026-09-23 duplicate",
                                               "ref": {"path": path.relative_to(repo).as_posix(),
                                                       "sha256": sha}})
     box.post("codex", "review", {"verdict": "reject", "summary": "Wrong duplicate."},
@@ -296,7 +311,7 @@ def test_plan_window_ignores_foreign_and_bad_hash_anchors_and_first_duplicate_wi
     })
     box.post("codex", "review", {"verdict": "amend", "summary": "R10 only."},
              reply=old_d4["msg_id"])
-    duplicate = box.post("oracle", "note", {
+    duplicate = box.legacy_plan_ready({
         "title": "PLAN READY: 2026-09-23-r10 duplicate",
         "ref": {"path": old.relative_to(repo).as_posix(), "sha256": old_sha},
     })
@@ -315,7 +330,7 @@ def test_ambiguous_legacy_receipt_cannot_duplicate_accomplishments_across_revisi
     _plan(repo, "2026-09-23-r8.json", [_item("d1", "nara_dev", "Same item")])
     _plan(repo, "2026-09-23-r9.json", [_item("d1", "nara_dev", "Same item")])
     box = Box(repo)
-    box.post("oracle", "note", {"title": "PLAN READY: 2026-09-23"})
+    box.legacy_plan_ready({"title": "PLAN READY: 2026-09-23"})
     posted = box.post("oracle", "plan_item", {**PLAN_ITEM, "title": "Same item (d1)"}, to="nara")
     box.post("nara", "receipt", {"state": "validated", "head_sha": "a" * 40},
              to="oracle", reply=posted["msg_id"])
@@ -330,12 +345,12 @@ def test_structured_plan_ready_mismatch_disables_legacy_fallback(repo, mismatch)
     path = _plan(repo, "2026-09-23-r9.json", [_item("d1", "nara_dev", "Same item")])
     sha = hashlib.sha256(path.read_bytes()).hexdigest()
     box = Box(repo)
-    box.post("oracle", "note", {
+    box.legacy_plan_ready({
         "title": f"PLAN READY: {'2026-09-22' if mismatch == 'date' else '2026-09-23'}-r9",
         "ref": {"path": path.relative_to(repo).as_posix(),
                 "sha256": "f" * 64 if mismatch == "hash" else sha},
     })
-    box.post("oracle", "note", {"title": "PLAN READY: 2026-09-23"})
+    box.legacy_plan_ready({"title": "PLAN READY: 2026-09-23"})
     posted = box.post("oracle", "plan_item", {**PLAN_ITEM, "title": "Same item (d1)"}, to="nara")
     box.post("nara", "receipt", {"state": "validated", "head_sha": "a" * 40},
              to="oracle", reply=posted["msg_id"])
@@ -522,10 +537,10 @@ def test_nara_dev_item_matches_by_id_inside_the_plan_window_and_folds_state(repo
                                     _item("d4", "nara_dev", "Closeout document"),
                                     _item("d5", "nara_dev", "Exact title")])
     box = Box(repo)
-    box.post("oracle", "note", {"title": "PLAN READY: 2026-09-22", "text": "x"})
+    box.legacy_plan_ready({"title": "PLAN READY: 2026-09-22", "text": "x"})
     # Yesterday's window: an item naming d2 must not count for today's d2.
     box.post("oracle", "plan_item", {**PLAN_ITEM, "title": "Packet (d2, yesterday)"}, to="nara")
-    box.post("oracle", "note", {"title": "PLAN READY: 2026-09-23", "text": "x"})
+    box.legacy_plan_ready({"title": "PLAN READY: 2026-09-23", "text": "x"})
     first = box.post("oracle", "plan_item", {**PLAN_ITEM, "title": "Packet (d2, 1st posting)"}, to="nara")
     box.post("oracle", "withdraw", {"title": "WITHDRAWN"}, to="nara", reply=first["msg_id"])
     ambiguous = box.post("oracle", "plan_item", {**PLAN_ITEM, "title": "d4 and d2 together"}, to="nara")
@@ -556,7 +571,7 @@ def test_oracle_dev_item_follows_exact_ready_review_and_never_infers_merge(repo)
     path = _plan(repo, "2026-09-23.json", [_item("d1", "oracle_dev"), _item("d3", "oracle_dev"),
                                              _item("d10", "oracle_dev")])
     box = Box(repo)
-    box.post("oracle", "note", {"title": "PLAN READY: 2026-09-23",
+    box.legacy_plan_ready({"title": "PLAN READY: 2026-09-23",
                                   "ref": {"path": path.relative_to(repo).as_posix(),
                                           "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}})
     items = {i["id"]: i for i in _summary(repo)["work_items"]}
@@ -620,7 +635,7 @@ def test_oracle_dev_item_follows_exact_ready_review_and_never_infers_merge(repo)
 def test_owner_cards_require_a_real_question_and_non_owner_explicit_resolution(repo):
     _plan(repo, "2026-09-23.json", [_item("d5", "owner_decision"), _item("d6", "owner_decision")])
     box = Box(repo)
-    box.post("oracle", "note", {"title": "PLAN READY: 2026-09-23", "text": "x"})
+    box.legacy_plan_ready({"title": "PLAN READY: 2026-09-23", "text": "x"})
     asked = box.post("claude", "question", {
         "question": "Use the reviewed worktree or main?", "why": "The runner needs one stable base.",
         "options": ["A — reviewed worktree", "B — current main"], "recommendation": "A",

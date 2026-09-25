@@ -2,8 +2,11 @@
 import hashlib
 import json
 import multiprocessing
+import os
 import subprocess
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -103,6 +106,62 @@ def _race_terminals(path, question_id):
     return [results.get(timeout=5) for _ in processes]
 
 
+def _plan_ready_repo(tmp_path, *, revision="r1"):
+    """A real committed repo: publisher tests must distinguish Git objects from files."""
+    repo = tmp_path / "plan-repo"
+    repo.mkdir()
+
+    def git(*args):
+        return subprocess.run(["git", "-C", str(repo), *args], check=True, text=True,
+                              stdout=subprocess.PIPE).stdout.strip()
+
+    git("init", "-b", "main")
+    git("config", "user.name", "Mailbox test")
+    git("config", "user.email", "mailbox@example.test")
+    packet_path = "notes/ops/2026-09-25/STATE_PACKET.md"
+    plan_path = f"run_state/daily_plans/2026-09-25-{revision}.json"
+    packet = b"committed packet v1\n"
+    packet_file = repo / packet_path
+    packet_file.parent.mkdir(parents=True)
+    packet_file.write_bytes(packet)
+    plan_file = repo / plan_path
+    plan_file.parent.mkdir(parents=True)
+    plan = {
+        "date": "2026-09-25", "revision": revision,
+        "state_packet_sha256": hashlib.sha256(packet).hexdigest(),
+    }
+    plan_file.write_text(json.dumps(plan, sort_keys=True) + "\n")
+    git("add", ".")
+    git("commit", "-m", "committed plan")
+    return repo, git("rev-parse", "HEAD"), plan_path, packet_path, plan_file, packet_file, git
+
+
+def _publish(repo, head, plan_path, packet_path, *, mailbox_path):
+    plan_bytes = subprocess.run(["git", "-C", str(repo), "show", f"{head}:{plan_path}"], check=True,
+                                stdout=subprocess.PIPE).stdout
+    packet_bytes = subprocess.run(["git", "-C", str(repo), "show", f"{head}:{packet_path}"], check=True,
+                                  stdout=subprocess.PIPE).stdout
+    return mailbox.publish_plan_ready(
+        branch="main", head_sha=head, plan_path=plan_path,
+        plan_sha256=hashlib.sha256(plan_bytes).hexdigest(),
+        state_packet_path=packet_path, state_packet_sha256=hashlib.sha256(packet_bytes).hexdigest(),
+        repo_root=repo, path=mailbox_path,
+    )
+
+
+def _publish_args(repo, head, plan_path, packet_path, *, mailbox_path):
+    plan_bytes = subprocess.run(["git", "-C", str(repo), "show", f"{head}:{plan_path}"], check=True,
+                                stdout=subprocess.PIPE).stdout
+    packet_bytes = subprocess.run(["git", "-C", str(repo), "show", f"{head}:{packet_path}"], check=True,
+                                  stdout=subprocess.PIPE).stdout
+    return {
+        "branch": "main", "head_sha": head, "plan_path": plan_path,
+        "plan_sha256": hashlib.sha256(plan_bytes).hexdigest(),
+        "state_packet_path": packet_path, "state_packet_sha256": hashlib.sha256(packet_bytes).hexdigest(),
+        "repo_root": repo, "path": mailbox_path,
+    }
+
+
 def _plan(**over):
     body = {
         "title": "Add a slugify helper", "objective": "Create tools/slug.py with slugify(text).",
@@ -131,6 +190,22 @@ def test_post_read_fold_and_chain(tmp_path):
     path.write_text("\n".join([lines[0], json.dumps(tampered), *lines[2:]]) + "\n")
     with pytest.raises(mailbox.MailboxError, match="chain broken"):
         mailbox.read(path)
+
+
+def test_post_if_reads_and_appends_under_one_mailbox_lock(tmp_path):
+    path = tmp_path / "mb.jsonl"
+    seen = []
+
+    row = mailbox.post_if(
+        "oracle", "note", {"text": "conditional"}, to="all", path=path,
+        condition=lambda rows: (seen.append(list(rows)) or True),
+    )
+    assert row is not None and seen == [[]]
+    skipped = mailbox.post_if(
+        "oracle", "note", {"text": "must not appear"}, to="all", path=path,
+        condition=lambda rows: len(rows) > 1,
+    )
+    assert skipped is None and mailbox.read(path) == [row]
 
 
 @pytest.mark.parametrize(("body", "expected"), [
@@ -828,3 +903,255 @@ def test_real_sandbox_isolates_network_home_and_host_writes(tmp_path):
     rc, output = lane.sandbox_run(worktree, ["python", "-c", code], timeout=60)
     assert "NET-BLOCKED" in output and "HOME-HIDDEN" in output, output
     assert not marker.exists() and (worktree / "inside.txt").read_text() == "ok"
+
+
+def test_publish_plan_ready_binds_only_committed_plan_and_packet_bytes(tmp_path):
+    repo, head, plan_path, packet_path, plan_file, packet_file, _git = _plan_ready_repo(tmp_path)
+    mailbox_path = tmp_path / "mb.jsonl"
+    # These mutable files deliberately disagree with their committed counterparts.
+    plan_file.write_text('{"date":"wrong","revision":"r99","state_packet_sha256":"0"}\n')
+    packet_file.write_text("mutable packet must not be read\n")
+
+    row, duplicate = _publish(repo, head, plan_path, packet_path, mailbox_path=mailbox_path)
+
+    assert not duplicate and row["actor"] == "oracle" and row["kind"] == "note"
+    assert row["body"]["event"] == "PLAN READY"
+    assert row["body"]["head_sha"] == head
+    assert row["body"]["plan_path"] == plan_path
+    assert row["body"]["state_packet_path"] == packet_path
+    assert len(mailbox.read(mailbox_path)) == 1
+
+
+def test_publish_plan_ready_rejects_hash_mismatch_and_revision_conflict(tmp_path):
+    repo, head, plan_path, packet_path, _plan_file, _packet_file, git = _plan_ready_repo(tmp_path)
+    mailbox_path = tmp_path / "mb.jsonl"
+    with pytest.raises(mailbox.MailboxError, match="plan_sha256"):
+        mailbox.publish_plan_ready(
+            branch="main", head_sha=head, plan_path=plan_path, plan_sha256="0" * 64,
+            state_packet_path=packet_path, state_packet_sha256="0" * 64,
+            repo_root=repo, path=mailbox_path,
+        )
+    row, duplicate = _publish(repo, head, plan_path, packet_path, mailbox_path=mailbox_path)
+    assert not duplicate
+    # A later commit cannot replace a named immutable revision after it was announced.
+    (repo / "README.md").write_text("later commit\n")
+    git("add", "README.md")
+    git("commit", "-m", "unrelated later commit")
+    later_head = git("rev-parse", "HEAD")
+    with pytest.raises(mailbox.MailboxError, match="different committed binding"):
+        _publish(repo, later_head, plan_path, packet_path, mailbox_path=mailbox_path)
+    assert mailbox.read(mailbox_path) == [row]
+
+
+def test_publish_plan_ready_replay_is_idempotent_and_recovers_after_no_mail_append(tmp_path, monkeypatch):
+    repo, head, plan_path, packet_path, _plan_file, _packet_file, _git = _plan_ready_repo(tmp_path)
+    mailbox_path = tmp_path / "mb.jsonl"
+    original_append = mailbox._append_locked
+
+    def interrupted(*_args, **_kwargs):
+        raise OSError("simulated interruption before mailbox append")
+
+    monkeypatch.setattr(mailbox, "_append_locked", interrupted)
+    with pytest.raises(OSError, match="interruption"):
+        _publish(repo, head, plan_path, packet_path, mailbox_path=mailbox_path)
+    assert mailbox.read(mailbox_path) == []  # files are still committed; only the mail step failed
+    monkeypatch.setattr(mailbox, "_append_locked", original_append)
+    first, duplicate = _publish(repo, head, plan_path, packet_path, mailbox_path=mailbox_path)
+    replay, replay_duplicate = _publish(repo, head, plan_path, packet_path, mailbox_path=mailbox_path)
+    assert not duplicate and replay_duplicate and replay == first
+    assert mailbox.read(mailbox_path) == [first]
+
+
+def test_publish_plan_ready_rejects_traversal_and_committed_symlink_packet(tmp_path):
+    repo, head, plan_path, packet_path, _plan_file, _packet_file, git = _plan_ready_repo(tmp_path)
+    mailbox_path = tmp_path / "mb.jsonl"
+    plan_bytes = subprocess.run(["git", "-C", str(repo), "show", f"{head}:{plan_path}"], check=True,
+                                stdout=subprocess.PIPE).stdout
+    packet_bytes = subprocess.run(["git", "-C", str(repo), "show", f"{head}:{packet_path}"], check=True,
+                                  stdout=subprocess.PIPE).stdout
+    with pytest.raises(mailbox.MailboxError, match="stay inside"):
+        mailbox.publish_plan_ready(
+            branch="main", head_sha=head, plan_path=plan_path,
+            plan_sha256=hashlib.sha256(plan_bytes).hexdigest(), state_packet_path="../outside",
+            state_packet_sha256=hashlib.sha256(packet_bytes).hexdigest(), repo_root=repo, path=mailbox_path,
+        )
+
+    link_path = "notes/ops/2026-09-25/PACKET_LINK.md"
+    os.symlink("STATE_PACKET.md", repo / link_path)
+    git("add", link_path)
+    git("commit", "-m", "add packet symlink")
+    linked_head = git("rev-parse", "HEAD")
+    with pytest.raises(mailbox.MailboxError, match="regular file"):
+        _publish(repo, linked_head, plan_path, link_path, mailbox_path=mailbox_path)
+
+
+def test_publish_plan_ready_keeps_dashboard_and_runner_title_ref_contract(tmp_path):
+    repo, head, plan_path, packet_path, _plan_file, _packet_file, _git = _plan_ready_repo(tmp_path)
+    mailbox_path = tmp_path / "mb.jsonl"
+    row, duplicate = mailbox.publish_plan_ready(**_publish_args(repo, head, plan_path, packet_path,
+                                                                mailbox_path=mailbox_path))
+    assert not duplicate
+    assert row["body"]["title"] == "PLAN READY: 2026-09-25 (r1)"
+    assert row["body"]["ref"] == {"path": plan_path, "sha256": row["body"]["plan_sha256"]}
+    assert mailbox.PLAN_READY_TITLE.fullmatch(row["body"]["title"])
+    assert row["body"]["ref"]["path"] == plan_path
+    # The generic list renderer selects body.title, and the meta-oracle runner
+    # selects titles beginning with PLAN READY. Neither needs a special case.
+    assert row["body"]["title"].startswith("PLAN READY")
+
+
+def test_plan_ready_protocol_is_reserved_and_full_chain_conflicts_are_not_hidden(tmp_path):
+    repo, head, plan_path, packet_path, _plan_file, _packet_file, _git = _plan_ready_repo(tmp_path)
+    mailbox_path = tmp_path / "mb.jsonl"
+    with pytest.raises(mailbox.MailboxError, match="reserved"):
+        mailbox.post("oracle", "note", {"event": "PLAN READY"}, to="all", path=mailbox_path)
+    with pytest.raises(mailbox.MailboxError, match="reserved"):
+        mailbox.post("oracle", "note", {"protocol": "oracle-plan-ready/v1"}, to="all", path=mailbox_path)
+    args = _publish_args(repo, head, plan_path, packet_path, mailbox_path=mailbox_path)
+    first, _ = mailbox.publish_plan_ready(**args)
+    # A later legacy-shaped duplicate must be found even though the first row is exact.
+    with mailbox._mailbox_lock(mailbox_path):
+        mailbox._append_locked("oracle", "note", {
+        "title": "PLAN READY: 2026-09-25 (r1)",
+        "ref": {"path": plan_path, "sha256": "f" * 64},
+        }, to="all", in_reply_to=None, expires_hours=None, path=mailbox_path,
+                               rows=mailbox.read(mailbox_path))
+    with pytest.raises(mailbox.MailboxError, match="ambiguous"):
+        mailbox.publish_plan_ready(**args)
+    assert mailbox.read(mailbox_path)[0] == first
+
+
+def test_plan_ready_rejects_noncanonical_typed_envelope_or_extra_fields(tmp_path):
+    repo, head, plan_path, packet_path, _plan_file, _packet_file, _git = _plan_ready_repo(tmp_path)
+    mailbox_path = tmp_path / "mb.jsonl"
+    args = _publish_args(repo, head, plan_path, packet_path, mailbox_path=mailbox_path)
+    first, _ = mailbox.publish_plan_ready(**args)
+    malformed = {**first["body"], "unexpected": "not canonical"}
+    with mailbox._mailbox_lock(mailbox_path):
+        mailbox._append_locked("oracle", "note", malformed, to="nara", in_reply_to=None,
+                               expires_hours=None, path=mailbox_path, rows=mailbox.read(mailbox_path))
+    with pytest.raises(mailbox.MailboxError, match="ambiguous"):
+        mailbox.publish_plan_ready(**args)
+
+
+@pytest.mark.parametrize("legacy_seq,title", [
+    (16, "PLAN READY: 2026-09-25 (r1, amended per review)"),
+    (52, "PLAN READY: 2026-09-25 (r1, amended per review)"),
+    (81, "PLAN READY: 2026-09-25 (ref, supersedes an incomplete note)"),
+    (313, "PLAN READY: 2026-09-25-r1 (amended; immutable path)"),
+    (351, "PLAN READY: 2026-09-25-r1 (revised after review)"),
+    (394, "PLAN READY: 2026-09-25-r1 (new immutable path; prior held)"),
+    (450, "PLAN READY: 2026-09-25-r1 (new immutable path; packet corrected)"),
+    (730, "PLAN READY: 2026-09-25-r1"),
+    (743, "PLAN READY: 2026-09-25"),
+])
+def test_historical_plan_ready_titles_are_read_only_conflicts_and_generic_post_reserves_them(
+        tmp_path, legacy_seq, title):
+    repo, head, plan_path, packet_path, _plan_file, _packet_file, _git = _plan_ready_repo(tmp_path)
+    mailbox_path = tmp_path / "mb.jsonl"
+    args = _publish_args(repo, head, plan_path, packet_path, mailbox_path=mailbox_path)
+    # Generic posts cannot make a row that the dashboard or meta runner would consume.
+    with pytest.raises(mailbox.MailboxError, match="reserved"):
+        mailbox.post("oracle", "note", {"title": title, "ref": {"path": plan_path}},
+                     to="all", path=mailbox_path)
+    # Existing hash-chained legacy rows remain readable but block an unverified typed duplicate.
+    with mailbox._mailbox_lock(mailbox_path):
+        mailbox._append_locked("oracle", "note", {"title": title, "ref": {"path": plan_path}},
+                               to="all", in_reply_to=None, expires_hours=None, path=mailbox_path,
+                               rows=mailbox.read(mailbox_path))
+    assert mailbox.read(mailbox_path)[0]["body"]["title"] == title
+    with pytest.raises(mailbox.MailboxError, match="ambiguous"):
+        mailbox.publish_plan_ready(**args)
+
+
+def test_generic_post_freezes_body_before_lock_contention_and_reservation_check(tmp_path, monkeypatch):
+    mailbox_path = tmp_path / "mb.jsonl"
+    caller_body = {"text": "ordinary note"}
+    validated, release = threading.Event(), threading.Event()
+    original_validate = mailbox._validate_post
+
+    def gated_validate(actor, kind, body, to, in_reply_to):
+        original_validate(actor, kind, body, to, in_reply_to)
+        validated.set()
+        assert release.wait(2)
+
+    monkeypatch.setattr(mailbox, "_validate_post", gated_validate)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with mailbox._mailbox_lock(mailbox_path):
+            future = pool.submit(mailbox.post, "oracle", "note", caller_body, to="all", path=mailbox_path)
+            assert validated.wait(2)
+            # This mutation happens after validation but before the writer gets its lock.
+            caller_body.update({"title": "PLAN READY: 2026-09-25-r1", "event": "PLAN READY"})
+            release.set()
+        row = future.result()
+    assert row["body"] == {"text": "ordinary note"}
+    assert mailbox.read(mailbox_path) == [row]
+
+
+def test_git_verification_has_a_hard_timeout(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, stdout=b"ok\n", stderr=b"")
+
+    monkeypatch.setattr(mailbox.subprocess, "run", fake_run)
+    assert mailbox._git(tmp_path, "status") == b"ok\n"
+    assert calls[0][1]["timeout"] == mailbox.GIT_TIMEOUT_S
+
+
+def test_publish_plan_ready_exact_retry_survives_branch_move_or_deletion(tmp_path):
+    repo, head, plan_path, packet_path, _plan_file, _packet_file, git = _plan_ready_repo(tmp_path)
+    mailbox_path = tmp_path / "mb.jsonl"
+    args = _publish_args(repo, head, plan_path, packet_path, mailbox_path=mailbox_path)
+    first, duplicate = mailbox.publish_plan_ready(**args)
+    assert not duplicate
+    (repo / "README.md").write_text("new head\n")
+    git("add", "README.md")
+    git("commit", "-m", "move main")
+    retry, duplicate = mailbox.publish_plan_ready(**args)
+    assert duplicate and retry == first
+    git("update-ref", "-d", "refs/heads/main")
+    retry, duplicate = mailbox.publish_plan_ready(**args)
+    assert duplicate and retry == first
+
+
+def test_mailbox_rejects_symlinked_mailbox_and_lock_without_touching_target(tmp_path):
+    victim = tmp_path / "victim.jsonl"
+    victim.write_text("do not append\n")
+    mailbox_path = tmp_path / "mb.jsonl"
+    os.symlink(victim, mailbox_path)
+    with pytest.raises(mailbox.MailboxError, match="symlink"):
+        mailbox.post("oracle", "note", {"text": "x"}, to="all", path=mailbox_path)
+    assert victim.read_text() == "do not append\n"
+
+    mailbox_path.unlink()
+    lock_path = tmp_path / ".oracle_nara_mailbox.lock"
+    os.symlink(victim, lock_path)
+    with pytest.raises(mailbox.MailboxError, match="symlink"):
+        mailbox.post("oracle", "note", {"text": "x"}, to="all", path=mailbox_path)
+    assert victim.read_text() == "do not append\n"
+
+
+def test_publish_plan_ready_enforces_separate_plan_and_packet_blob_bounds(tmp_path):
+    repo, _head, plan_path, packet_path, plan_file, packet_file, git = _plan_ready_repo(tmp_path)
+    mailbox_path = tmp_path / "mb.jsonl"
+    plan_file.write_bytes(b"x" * (mailbox.MAX_PLAN_BYTES + 1))
+    git("add", plan_path)
+    git("commit", "-m", "oversize plan")
+    head = git("rev-parse", "HEAD")
+    with pytest.raises(mailbox.MailboxError, match="byte bound"):
+        _publish(repo, head, plan_path, packet_path, mailbox_path=mailbox_path)
+
+    # A packet gets its own (larger) cap; make the committed plan bind its new digest.
+    packet = b"y" * (mailbox.MAX_STATE_PACKET_BYTES + 1)
+    packet_file.write_bytes(packet)
+    plan_file.write_text(json.dumps({
+        "date": "2026-09-25", "revision": "r1",
+        "state_packet_sha256": hashlib.sha256(packet).hexdigest(),
+    }) + "\n")
+    git("add", plan_path, packet_path)
+    git("commit", "-m", "oversize packet")
+    head = git("rev-parse", "HEAD")
+    with pytest.raises(mailbox.MailboxError, match="byte bound"):
+        _publish(repo, head, plan_path, packet_path, mailbox_path=mailbox_path)

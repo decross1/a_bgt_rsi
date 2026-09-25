@@ -567,9 +567,12 @@ def project_research_ops_status(
             and focus["intake_policy"] == "focus_before_new_topics"):
         out["next_work"] = {
             "code": "research_focus_next_gate", "focus_id": focus["focus_id"],
-            "source_iteration_id": focus["source_iteration_id"],
-            "source_campaign_id": focus["source_campaign_id"],
-            "source_campaign_manifest_sha256": focus["source_campaign_manifest_sha256"],
+            # v2 thesis receipts are source-bound through candidate/screen/meta
+            # artifacts instead of a loop-memory iteration.  Keep the consumer
+            # envelope stable without inventing legacy campaign provenance.
+            "source_iteration_id": focus.get("source_iteration_id"),
+            "source_campaign_id": focus.get("source_campaign_id"),
+            "source_campaign_manifest_sha256": focus.get("source_campaign_manifest_sha256"),
             "campaign_id": (out["active_campaign"] or {}).get("campaign_id"),
             "manifest_sha256": (out["active_campaign"] or {}).get("manifest_sha256"),
             "target_campaign_id": None, "study_id": None,

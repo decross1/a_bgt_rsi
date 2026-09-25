@@ -102,6 +102,24 @@ def test_historical_focus_does_not_claim_source_campaign_is_active(tmp_path, mon
         assert work["execution_authorized"] is False
 
 
+def test_v2_thesis_focus_next_gate_has_no_legacy_iteration_keyerror(tmp_path, monkeypatch):
+    from orchestrator import research_focus
+
+    root = _root(tmp_path)
+    selected = {
+        "status": "selected", "intake_policy": "focus_before_new_topics",
+        "focus_id": "thesis-c-alpha", "next_action": "Write the protocol.",
+        "stage": "needs_clean_refinement", "candidate_set_sha256": "a" * 64,
+        "screen_sha256": "b" * 64, "execution_authorized": False,
+    }
+    monkeypatch.setattr(research_focus, "project_focus", lambda _root: selected)
+    work = project_research_ops_status(repo_root=root, observed_at=NOW)["next_work"]
+    assert work["code"] == "research_focus_next_gate"
+    assert work["source_iteration_id"] is None
+    assert work["source_campaign_id"] is None
+    assert work["execution_authorized"] is False
+
+
 def test_exact_link_consumes_topic_but_does_not_claim_global_no_work(tmp_path):
     root = _root(tmp_path)
     campaign = load_campaign(repo_root=root)

@@ -10,21 +10,27 @@ verdict (owner direction 2026-09-22): the lane's gate on plan items, not an owne
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import fcntl
 import hashlib
 import json
 import math
 import os
 import re
+import stat
+import subprocess
 import sys
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[1]
 PATH = ROOT / "run_state/oracle_nara_mailbox.jsonl"
 SCHEMA = "oracle-nara-mailbox/v1"
 MAX_ROW_BYTES = 16 * 1024
+MAX_PLAN_BYTES = 262_144
+MAX_STATE_PACKET_BYTES = 1_048_576
+GIT_TIMEOUT_S = 5
 # Shared coordination state for every participant (owner, 2026-09-22). Anyone
 # may post notes, questions and answers under their own name (humans as
 # human:<id>); only Oracle issues plan items and only Nara posts receipts.
@@ -51,10 +57,189 @@ VERDICTS = {"accept", "amend", "reject"}
 TASK_CLASSES = {"documentation", "tests", "tooling", "experiment_code", "lab_organization"}
 QUESTION_RESOLUTIONS = {"withdrawn", "superseded", "prerequisite", "informational"}
 PROVENANCE_CONTEST_EFFECT = "invalidate_for_projection"
+PLAN_REVISION_PATH = re.compile(
+    r"run_state/daily_plans/(?P<date>\d{4}-\d{2}-\d{2})-(?P<revision>r[1-9]\d*)\.json"
+)
+SHA256 = re.compile(r"[0-9a-f]{64}")
+GIT_SHA1 = re.compile(r"[0-9a-f]{40}")
+PLAN_READY_EVENT = "PLAN READY"
+PLAN_READY_PROTOCOL = "oracle-plan-ready/v1"
+PLAN_READY_TITLE = re.compile(
+    r"^PLAN READY:\s*(?P<date>\d{4}-\d{2}-\d{2})(?:(?:\s*\((?P<paren_revision>r[1-9]\d*)\))|-(?P<dash_revision>r[1-9]\d*))?\s*$"
+)
 
 
 class MailboxError(ValueError):
     pass
+
+
+def _git(repo_root: Path, *args: str) -> bytes:
+    """Run Git against immutable objects rather than mutable worktree files."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), *args], check=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=GIT_TIMEOUT_S,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        detail = (exc.stderr.decode(errors="replace").strip()
+                  if isinstance(exc, subprocess.CalledProcessError) else str(exc))
+        raise MailboxError(f"Git verification failed: {detail}") from None
+    return result.stdout
+
+
+def _lstat(path: Path, *, label: str, allow_missing: bool) -> os.stat_result | None:
+    try:
+        result = path.lstat()
+    except FileNotFoundError:
+        if allow_missing:
+            return None
+        raise MailboxError(f"{label} is missing: {path}") from None
+    if stat.S_ISLNK(result.st_mode):
+        raise MailboxError(f"{label} must not be a symlink: {path}")
+    return result
+
+
+def _assert_no_symlink_ancestors(path: Path, *, label: str) -> None:
+    absolute = Path(os.path.abspath(path))
+    current = Path(absolute.anchor)
+    for component in absolute.parts[1:]:
+        current /= component
+        result = _lstat(current, label=label, allow_missing=True)
+        if result is None:
+            return
+        if current != absolute and not stat.S_ISDIR(result.st_mode):
+            raise MailboxError(f"{label} parent is not a directory: {current}")
+
+
+def _prepare_mailbox_path(path: Path) -> None:
+    _assert_no_symlink_ancestors(path.parent, label="mailbox parent")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise MailboxError(f"could not create mailbox parent: {exc}") from None
+    _assert_no_symlink_ancestors(path.parent, label="mailbox parent")
+    parent = _lstat(path.parent, label="mailbox parent", allow_missing=False)
+    if not stat.S_ISDIR(parent.st_mode):
+        raise MailboxError(f"mailbox parent is not a directory: {path.parent}")
+    result = _lstat(path, label="mailbox path", allow_missing=True)
+    if result is not None and not stat.S_ISREG(result.st_mode):
+        raise MailboxError(f"mailbox path must be a regular file: {path}")
+
+
+@contextmanager
+def _mailbox_lock(path: Path):
+    """Use a no-follow lock only for immutable plan publication."""
+    _prepare_mailbox_path(path)
+    lock_path = path.parent / ".oracle_nara_mailbox.lock"
+    result = _lstat(lock_path, label="mailbox lock", allow_missing=True)
+    if result is not None and not stat.S_ISREG(result.st_mode):
+        raise MailboxError(f"mailbox lock must be a regular file: {lock_path}")
+    try:
+        descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    except OSError as exc:
+        raise MailboxError(f"could not open mailbox lock safely: {exc}") from None
+    with os.fdopen(descriptor, "a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
+def _repo_file_path(value: str, *, label: str) -> str:
+    if not isinstance(value, str) or not value or "\\" in value:
+        raise MailboxError(f"{label} must be a non-empty POSIX repository path")
+    path = PurePosixPath(value)
+    if path.is_absolute() or any(part in {"", ".", "..", ".git"} for part in path.parts):
+        raise MailboxError(f"{label} must stay inside the repository")
+    return value
+
+
+def _committed_blob(repo_root: Path, head_sha: str, repo_path: str, *, maximum_bytes: int) -> bytes:
+    listing = _git(repo_root, "ls-tree", head_sha, "--", repo_path).decode().rstrip("\n")
+    if not listing:
+        raise MailboxError(f"committed path is absent: {repo_path}")
+    try:
+        metadata, found_path = listing.split("\t", 1)
+        mode, object_type, object_sha = metadata.split()
+    except ValueError:
+        raise MailboxError(f"could not verify committed path: {repo_path}") from None
+    if found_path != repo_path or object_type != "blob" or mode not in {"100644", "100755"}:
+        raise MailboxError(f"committed path must be a regular file, not a symlink or directory: {repo_path}")
+    try:
+        size = int(_git(repo_root, "cat-file", "-s", object_sha).decode().strip())
+    except ValueError:
+        raise MailboxError(f"could not measure committed blob: {repo_path}") from None
+    if size > maximum_bytes:
+        raise MailboxError(f"committed blob exceeds {maximum_bytes} byte bound: {repo_path}")
+    contents = _git(repo_root, "show", f"{head_sha}:{repo_path}")
+    if len(contents) != size:
+        raise MailboxError(f"committed blob changed during read: {repo_path}")
+    return contents
+
+
+def _require_sha256(value: str, *, label: str) -> None:
+    if not isinstance(value, str) or not SHA256.fullmatch(value):
+        raise MailboxError(f"{label} must be a lowercase SHA-256 hex digest")
+
+
+def _frozen_body(body: dict) -> dict:
+    """Detach JSON-safe payloads before lock acquisition."""
+    if not isinstance(body, dict):
+        raise MailboxError("body must be an object")
+    try:
+        frozen = json.loads(json.dumps(body, sort_keys=True, separators=(",", ":"),
+                                       ensure_ascii=False, allow_nan=False))
+    except (TypeError, ValueError) as exc:
+        raise MailboxError(f"body must be JSON-safe: {exc}") from None
+    return frozen
+
+
+def _plan_ready_body(*, branch: str, head_sha: str, plan_path: str, plan_sha256: str,
+                     state_packet_path: str, state_packet_sha256: str,
+                     date: str, revision: str) -> dict:
+    return {
+        "title": f"PLAN READY: {date} ({revision})",
+        "ref": {"path": plan_path, "sha256": plan_sha256},
+        "event": PLAN_READY_EVENT, "protocol": PLAN_READY_PROTOCOL,
+        "branch": branch, "head_sha": head_sha, "plan_path": plan_path,
+        "plan_sha256": plan_sha256, "state_packet_path": state_packet_path,
+        "state_packet_sha256": state_packet_sha256, "date": date, "revision": revision,
+    }
+
+
+def _plan_ready_duplicate_or_conflict(rows: list[dict], body: dict) -> dict | None:
+    identity = (body["plan_path"], body["date"], body["revision"])
+    exact: dict | None = None
+    for row in rows:
+        recorded = row.get("body")
+        if row.get("kind") != "note" or not isinstance(recorded, dict):
+            continue
+        title = recorded.get("title")
+        consumer_visible = isinstance(title, str) and title.lstrip().startswith("PLAN READY")
+        title_match = PLAN_READY_TITLE.fullmatch(title) if isinstance(title, str) else None
+        ref = recorded.get("ref") if isinstance(recorded.get("ref"), dict) else {}
+        typed = recorded.get("event") == PLAN_READY_EVENT or recorded.get("protocol") == PLAN_READY_PROTOCOL
+        if not typed and not consumer_visible:
+            continue
+        recorded_identity = (recorded.get("plan_path"), recorded.get("date"), recorded.get("revision"))
+        same_path = recorded.get("plan_path") == body["plan_path"] or ref.get("path") == body["plan_path"]
+        title_date = title_match.group("date") if title_match else None
+        title_revision = ((title_match.group("paren_revision") or title_match.group("dash_revision"))
+                          if title_match else None)
+        same_date = title_date == body["date"] or recorded.get("date") == body["date"]
+        same_revision = title_revision == body["revision"] or recorded.get("revision") == body["revision"]
+        if not (same_path or recorded_identity == identity or (same_date and same_revision)):
+            continue
+        canonical_envelope = (row.get("schema") == SCHEMA and row.get("actor") == "oracle"
+                              and row.get("to") == "all" and row.get("kind") == "note"
+                              and row.get("in_reply_to") is None and row.get("expires_at") is None)
+        if canonical_envelope and recorded == body:
+            if exact is not None:
+                raise MailboxError("multiple PLAN READY rows bind the same immutable revision")
+            exact = row
+            continue
+        raise MailboxError(
+            "PLAN READY revision/path is ambiguous or has a different committed binding; publish a new dated revision"
+        )
+    return exact
 
 
 def _canonical(value) -> bytes:
@@ -590,6 +775,12 @@ def _validate_post(actor: str, kind: str, body: dict, to: str, in_reply_to: str 
         if kind != "note":
             raise MailboxError("provenance_contestation is valid only on a note")
         validate_provenance_contestation(body)
+    title = body.get("title")
+    consumer_visible_plan_ready = isinstance(title, str) and title.lstrip().startswith("PLAN READY")
+    if kind == "note" and (body.get("event") == PLAN_READY_EVENT
+                           or body.get("protocol") == PLAN_READY_PROTOCOL
+                           or consumer_visible_plan_ready):
+        raise MailboxError("PLAN READY event/protocol/title is reserved for publish-plan-ready")
 
 
 def _lease_delta(expires_hours: float | None) -> timedelta | None:
@@ -680,16 +871,100 @@ def _append_locked(actor: str, kind: str, body: dict, *, to: str, in_reply_to: s
     return row
 
 
+def publish_plan_ready(*, branch: str, head_sha: str, plan_path: str, plan_sha256: str,
+                       state_packet_path: str, state_packet_sha256: str,
+                       path: Path = PATH, repo_root: Path = ROOT) -> tuple[dict, bool]:
+    """Publish one source-verified daily-plan revision, never mutable file bytes.
+
+    This is deliberately separate from ``post``: plan-ready titles are
+    dashboard/runner inputs, and must bind Git objects plus their hashes.
+    """
+    if not isinstance(branch, str) or not branch:
+        raise MailboxError("branch must be a non-empty local branch name")
+    _git(repo_root, "check-ref-format", "--branch", branch)
+    if not isinstance(head_sha, str) or not GIT_SHA1.fullmatch(head_sha):
+        raise MailboxError("head_sha must be a full lowercase Git SHA-1")
+    plan_match = PLAN_REVISION_PATH.fullmatch(plan_path) if isinstance(plan_path, str) else None
+    if not plan_match:
+        raise MailboxError("plan_path must be an immutable run_state/daily_plans/YYYY-MM-DD-rN.json revision")
+    try:
+        datetime.strptime(plan_match.group("date"), "%Y-%m-%d")
+    except ValueError:
+        raise MailboxError("plan_path must contain a real ISO calendar date") from None
+    date, revision = plan_match.group("date", "revision")
+    state_packet_path = _repo_file_path(state_packet_path, label="state_packet_path")
+    _require_sha256(plan_sha256, label="plan_sha256")
+    _require_sha256(state_packet_sha256, label="state_packet_sha256")
+    body = _plan_ready_body(
+        branch=branch, head_sha=head_sha, plan_path=plan_path, plan_sha256=plan_sha256,
+        state_packet_path=state_packet_path, state_packet_sha256=state_packet_sha256,
+        date=date, revision=revision,
+    )
+    # An immutable receipt remains a valid retry even when its local branch has
+    # since moved. A duplicate check occurs again under the append lock.
+    with _mailbox_lock(path):
+        _recover_torn_tail_locked(path)
+        duplicate = _plan_ready_duplicate_or_conflict(read(path), body)
+        if duplicate is not None:
+            return duplicate, True
+    resolved = _git(repo_root, "rev-parse", "--verify", f"refs/heads/{branch}^{{commit}}")
+    if resolved.decode().strip() != head_sha:
+        raise MailboxError("branch does not resolve to head_sha")
+    _git(repo_root, "cat-file", "-e", f"{head_sha}^{{commit}}")
+    plan_bytes = _committed_blob(repo_root, head_sha, plan_path, maximum_bytes=MAX_PLAN_BYTES)
+    packet_bytes = _committed_blob(repo_root, head_sha, state_packet_path,
+                                   maximum_bytes=MAX_STATE_PACKET_BYTES)
+    if hashlib.sha256(plan_bytes).hexdigest() != plan_sha256:
+        raise MailboxError("plan_sha256 does not match the committed plan bytes")
+    if hashlib.sha256(packet_bytes).hexdigest() != state_packet_sha256:
+        raise MailboxError("state_packet_sha256 does not match the committed state packet bytes")
+    try:
+        plan = json.loads(plan_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise MailboxError(f"committed plan is not UTF-8 JSON: {exc}") from None
+    if not isinstance(plan, dict):
+        raise MailboxError("committed plan must be a JSON object")
+    if plan.get("date") != date or plan.get("revision") != revision:
+        raise MailboxError("committed plan date/revision must match its immutable revision path")
+    if plan.get("state_packet_sha256") != state_packet_sha256:
+        raise MailboxError("committed plan state_packet_sha256 does not bind the supplied committed packet")
+    with _mailbox_lock(path):
+        _recover_torn_tail_locked(path)
+        rows = read(path)
+        duplicate = _plan_ready_duplicate_or_conflict(rows, body)
+        if duplicate is not None:
+            return duplicate, True
+        return _append_locked("oracle", "note", body, to="all", in_reply_to=None,
+                              expires_hours=None, path=path, rows=rows), False
+
+
 def post(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | None = None,
          expires_hours: float | None = None, path: Path = PATH) -> dict:
+    body = _frozen_body(body)
     _validate_expires_hours(expires_hours)
     _validate_post(actor, kind, body, to, in_reply_to)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with (path.parent / ".oracle_nara_mailbox.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with _mailbox_lock(path):
         _recover_torn_tail_locked(path)
         return _append_locked(actor, kind, body, to=to, in_reply_to=in_reply_to,
                               expires_hours=expires_hours, path=path, rows=read(path))
+
+
+def post_if(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | None = None,
+            expires_hours: float | None = None, path: Path = PATH,
+            condition: Callable[[list[dict]], bool]) -> dict | None:
+    """Append only if ``condition`` accepts the same locked mailbox prefix."""
+    body = _frozen_body(body)
+    _validate_expires_hours(expires_hours)
+    _validate_post(actor, kind, body, to, in_reply_to)
+    if not callable(condition):
+        raise MailboxError("condition must be callable")
+    with _mailbox_lock(path):
+        _recover_torn_tail_locked(path)
+        rows = read(path)
+        if not condition(rows):
+            return None
+        return _append_locked(actor, kind, body, to=to, in_reply_to=in_reply_to,
+                              expires_hours=expires_hours, path=path, rows=rows)
 
 
 def post_once(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | None = None,
@@ -702,15 +977,14 @@ def post_once(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | 
     new append.  A caller may bind acceptance to mutable external state at
     that instant; durable retries return their existing row before the check.
     """
+    body = _frozen_body(body)
     _validate_expires_hours(expires_hours)
     _validate_post(actor, kind, body, to, in_reply_to)
     if not isinstance(idempotency_key, str) or not idempotency_key:
         raise MailboxError("idempotency_key must be a non-empty string")
     if body.get("request_id") != idempotency_key:
         raise MailboxError("body.request_id must equal idempotency_key")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with (path.parent / ".oracle_nara_mailbox.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with _mailbox_lock(path):
         _recover_torn_tail_locked(path)
         rows = read(path)
         eligible = live_rows(rows)
@@ -744,9 +1018,7 @@ def find_idempotency_key(idempotency_key: str, *, path: Path = PATH) -> dict | N
     """Look up an owner-UI request receipt while holding the mailbox lock."""
     if not isinstance(idempotency_key, str) or not idempotency_key:
         raise MailboxError("idempotency_key must be a non-empty string")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with (path.parent / ".oracle_nara_mailbox.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with _mailbox_lock(path):
         _recover_torn_tail_locked(path)
         existing = [row for row in live_rows(read(path)) if isinstance(row.get("body"), dict)
                     and row["body"].get("request_id") == idempotency_key]
@@ -803,6 +1075,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--body")
     p.add_argument("--in-reply-to")
     p.add_argument("--expires-hours", type=float)
+    ready = sub.add_parser("publish-plan-ready", help="post one verified committed PLAN READY announcement")
+    ready.add_argument("--branch", required=True, help="local branch that must resolve to --head-sha")
+    ready.add_argument("--head-sha", required=True, help="full committed Git SHA-1")
+    ready.add_argument("--plan-path", required=True, help="run_state/daily_plans/YYYY-MM-DD-rN.json")
+    ready.add_argument("--plan-sha256", required=True)
+    ready.add_argument("--state-packet-path", required=True)
+    ready.add_argument("--state-packet-sha256", required=True)
     lst = sub.add_parser("list")
     lst.add_argument("--to")
     lst.add_argument("--kind")
@@ -817,6 +1096,13 @@ def main(argv: list[str] | None = None) -> int:
             row = post(args.actor, args.kind, body, to=args.to, in_reply_to=args.in_reply_to,
                        expires_hours=args.expires_hours)
             print(json.dumps({"msg_id": row["msg_id"], "seq": row["seq"]}))
+        elif args.command == "publish-plan-ready":
+            row, duplicate = publish_plan_ready(
+                branch=args.branch, head_sha=args.head_sha, plan_path=args.plan_path,
+                plan_sha256=args.plan_sha256, state_packet_path=args.state_packet_path,
+                state_packet_sha256=args.state_packet_sha256,
+            )
+            print(json.dumps({"msg_id": row["msg_id"], "seq": row["seq"], "duplicate": duplicate}))
         elif args.command == "list":
             rows = [r for r in read() if (not args.to or r["to"] in {args.to, "all"})
                     and (not args.kind or r["kind"] == args.kind)]  # an inbox includes broadcasts

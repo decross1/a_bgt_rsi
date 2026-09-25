@@ -2,6 +2,7 @@ import { useId } from "react";
 import { Link } from "react-router-dom";
 
 const SHA = /^[0-9a-f]{64}$/;
+const GIT_HEAD = /^[0-9a-f]{40}$/;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
 const LEVELS = new Set(["L0", "L1", "L2", "L3", "L4", "L5"]);
 const STAGES = new Set([
@@ -21,10 +22,10 @@ export interface SelectedResearchFocus {
   focusId: string;
   receiptSha256: string;
   title: string;
-  sourceIterationId: string;
-  sourceCampaignId: string;
+  sourceIterationId: string | null;
+  sourceCampaignId: string | null;
   sourceEvidenceLevel: string | null;
-  sourceRecordOrdinal: number;
+  sourceRecordOrdinal: number | null;
   stage: string;
   nextAction: string;
   blockers: string[];
@@ -70,25 +71,16 @@ export function admitResearchFocus(value: unknown): ResearchFocusView {
   const sourceRef = Array.isArray(refs) && refs.length === 1 && object(refs[0])
     ? refs[0]
     : null;
-  if (
+  const commonInvalid = (
     value.status !== "selected" ||
-    value.schema_version !== "research-focus/v1" ||
     !ID.test(String(value.focus_id)) ||
     !SHA.test(String(value.receipt_sha256)) ||
     !text(value.title, 180) ||
-    !ID.test(String(value.source_iteration_id)) ||
-    !ID.test(String(value.source_campaign_id)) ||
-    !SHA.test(String(value.source_row_sha256)) ||
-    !SHA.test(String(value.source_campaign_manifest_sha256)) ||
     !(value.source_evidence_level === null || LEVELS.has(String(value.source_evidence_level))) ||
-    typeof value.source_record_ordinal !== "number" ||
-    !Number.isInteger(value.source_record_ordinal) || value.source_record_ordinal < 1 ||
     !STAGES.has(String(value.stage)) ||
     !text(value.next_action, 900) ||
     !timestamp(value.selected_at) ||
     !text(value.selected_by, 120) ||
-    !["raw_structured_hypothesis", "plain_hypothesis", "missing_hypothesis"].includes(String(value.source_quality)) ||
-    (value.source_quality === "plain_hypothesis") !== (value.source_evidence_level !== null) ||
     !["focus_before_new_topics", "observe_only"].includes(String(value.intake_policy)) ||
     value.scientific_credit !== "none_selection_only" ||
     !Array.isArray(blockers) || blockers.length > 12 ||
@@ -96,24 +88,87 @@ export function admitResearchFocus(value: unknown): ResearchFocusView {
     gate === null ||
     !text(gate.from, 80) || !text(gate.to, 80) ||
     !text(gate.artifact, 400) || !text(gate.owner, 400) ||
-    !["pending", "blocked"].includes(String(gate.status)) ||
-    sourceRef === null || sourceRef.path !== "memory/loop_memory.jsonl" ||
-    sourceRef.iteration_id !== value.source_iteration_id ||
-    sourceRef.row_sha256 !== value.source_row_sha256 ||
-    sourceRef.record_ordinal !== value.source_record_ordinal
-  ) return { status: "malformed" };
+    !["pending", "blocked"].includes(String(gate.status))
+  );
+  if (commonInvalid) return { status: "malformed" };
 
+  if (value.schema_version === "research-focus/v1") {
+    if (!ID.test(String(value.source_iteration_id)) || !ID.test(String(value.source_campaign_id)) ||
+        !SHA.test(String(value.source_row_sha256)) || !SHA.test(String(value.source_campaign_manifest_sha256)) ||
+        typeof value.source_record_ordinal !== "number" || !Number.isInteger(value.source_record_ordinal) ||
+        value.source_record_ordinal < 1 || sourceRef === null || sourceRef.path !== "memory/loop_memory.jsonl" ||
+        sourceRef.iteration_id !== value.source_iteration_id || sourceRef.row_sha256 !== value.source_row_sha256 ||
+        sourceRef.record_ordinal !== value.source_record_ordinal ||
+        !["raw_structured_hypothesis", "plain_hypothesis", "missing_hypothesis"].includes(String(value.source_quality)) ||
+        (value.source_quality === "plain_hypothesis") !== (value.source_evidence_level !== null)) return { status: "malformed" };
+    return selected(value, String(value.source_iteration_id), String(value.source_campaign_id), value.source_record_ordinal);
+  }
+  if (value.schema_version !== "research-focus/v2" || value.source_quality !== "thesis_candidate_screen" ||
+      value.source_evidence_level !== null || !SHA.test(String(value.candidate_set_sha256)) ||
+      !SHA.test(String(value.screen_sha256)) || !SHA.test(String(value.meta_accept_sha256)) ||
+      !GIT_HEAD.test(String(value.selection_head)) || !ID.test(String(value.chosen_candidate_id)) ||
+      !text(value.selection_reason, 1800) || value.selected_by !== "oracle" ||
+      !text(value.review_msg_id, 160) || !text(value.proposal_msg_id, 160) ||
+      !SHA.test(String(value.review_row_sha256)) || !SHA.test(String(value.proposal_row_sha256)) ||
+      !Number.isInteger(value.mailbox_cutoff_seq) || Number(value.mailbox_cutoff_seq) < 1 ||
+      !SHA.test(String(value.mailbox_cutoff_sha256)) || !validGeneration(value.focus_generation) ||
+      !validConvictions(value.initial_conviction_rows) || !validThesisRefs(refs, value)) return { status: "malformed" };
+  return selected(value, null, null, null);
+}
+
+function validGeneration(value: unknown): boolean {
+  if (!object(value) || Object.keys(value).length !== 2 ||
+      !("active_receipt_sha256" in value) || !("last_closure_sha256" in value)) return false;
+  const active = value.active_receipt_sha256;
+  const closure = value.last_closure_sha256;
+  if (active !== null && closure !== null) return false;
+  return (active === null || SHA.test(String(active))) && (closure === null || SHA.test(String(closure)));
+}
+
+function validConvictions(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length !== 3) return false;
+  const names = new Set<string>();
+  for (const row of value) {
+    if (!object(row) || Object.keys(row).length !== 2 || !["nara", "oracle", "claude"].includes(String(row.forecaster)) ||
+        !SHA.test(String(row.row_sha256)) || names.has(String(row.forecaster))) return false;
+    names.add(String(row.forecaster));
+  }
+  return names.size === 3;
+}
+
+function validThesisRefs(value: unknown, focus: Record<string, unknown>): boolean {
+  if (!Array.isArray(value) || value.length !== 5 || !value.every(object)) return false;
+  const [candidate, screen, acceptance, proposal, review] = value;
+  return exactShaRef(candidate, "nara_candidate_set", focus.candidate_set_sha256)
+    && exactShaRef(screen, "oracle_screen", focus.screen_sha256)
+    && exactShaRef(acceptance, "meta_accept", focus.meta_accept_sha256)
+    && exactMailboxRef(proposal, "oracle_proposal", focus.proposal_msg_id, focus.proposal_row_sha256)
+    && exactMailboxRef(review, "meta_review", focus.review_msg_id, focus.review_row_sha256);
+}
+
+function exactShaRef(row: Record<string, unknown>, kind: string, digest: unknown): boolean {
+  return Object.keys(row).length === 2 && row.kind === kind && row.sha256 === digest;
+}
+
+function exactMailboxRef(row: Record<string, unknown>, kind: string, messageId: unknown, digest: unknown): boolean {
+  return Object.keys(row).length === 3 && row.kind === kind && row.msg_id === messageId && row.row_sha256 === digest;
+}
+
+function selected(value: Record<string, unknown>, sourceIterationId: string | null,
+                  sourceCampaignId: string | null, sourceRecordOrdinal: number | null): SelectedResearchFocus {
+  const blockers = value.blockers as string[];
+  const gate = value.next_gate as Record<string, string>;
   return {
     status: "selected",
     focusId: String(value.focus_id),
     receiptSha256: String(value.receipt_sha256),
     title: String(value.title),
-    sourceIterationId: String(value.source_iteration_id),
-    sourceCampaignId: String(value.source_campaign_id),
+    sourceIterationId,
+    sourceCampaignId,
     sourceEvidenceLevel: value.source_evidence_level === null
       ? null
       : String(value.source_evidence_level),
-    sourceRecordOrdinal: value.source_record_ordinal,
+    sourceRecordOrdinal,
     stage: String(value.stage),
     nextAction: String(value.next_action),
     blockers: blockers as string[],
@@ -196,7 +251,7 @@ export function ResearchFocusCard({ focus, className = "" }: {
           <h2 id={headingId} className="mt-1 text-lg font-semibold leading-snug">{view.title}</h2>
           <p className="mt-2 text-sm text-[var(--fg-muted)]">
             {phrase(view.stage)} · {view.sourceEvidenceLevel === null
-              ? "no source rung"
+              ? view.sourceQuality === "thesis_candidate_screen" ? "receipt-bound thesis screen; no rung credit" : "no source rung"
               : `${view.sourceEvidenceLevel} historical derived source only`}
             {rawHypothesis ? " · historical seed unverified; no credit inherited" : ""}
           </p>
@@ -231,15 +286,15 @@ export function ResearchFocusCard({ focus, className = "" }: {
       )}
 
       <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-[var(--border-1)] pt-3 text-xs text-[var(--fg-muted)]">
-        <Link
+        {view.sourceIterationId !== null && <Link
           className="text-[var(--accent)]"
           to={`/dossier/${encodeURIComponent(view.sourceIterationId)}?research_scope=all`}
         >
           Open source dossier →
-        </Link>
-        <span>{view.sourceIterationId}</span>
-        <span>source record #{view.sourceRecordOrdinal}</span>
-        <span>source campaign {view.sourceCampaignId}</span>
+        </Link>}
+        {view.sourceIterationId !== null
+          ? <><span>{view.sourceIterationId}</span><span>source record #{view.sourceRecordOrdinal}</span><span>source campaign {view.sourceCampaignId}</span></>
+          : <span>candidate, screen, and meta-review receipts are bound; no legacy dossier is inferred.</span>}
         <span>Selecting a focus does not advance evidence or inherit source credit.</span>
         {view.intakePolicy === "focus_before_new_topics" && <span>focus before new topics</span>}
       </div>

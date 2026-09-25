@@ -34,6 +34,45 @@ python -m orchestrator.oracle_mailbox fold                      # every plan ite
 python -m orchestrator.nara_lane status
 ```
 
+### Publishing a daily plan
+
+Oracle publishes `PLAN READY` with `publish-plan-ready`, not a hand-written
+note. The command accepts a local branch, its full committed head, an immutable
+`run_state/daily_plans/YYYY-MM-DD-rN.json` revision, and the expected SHA-256
+digests of that plan and its committed state packet. It reads both files through
+Git at that exact head, verifies the plan's top-level `state_packet_sha256`, and
+then appends one `note` under the existing mailbox lock.
+
+```text
+python -m orchestrator.oracle_mailbox publish-plan-ready \
+  --branch oracle/2026-09-25-r8-replayable --head-sha <40-hex-sha1> \
+  --plan-path run_state/daily_plans/2026-09-25-r8.json --plan-sha256 <64-hex> \
+  --state-packet-path notes/ops/2026-09-25-loop-stall/STATE_PACKET_R8.md \
+  --state-packet-sha256 <64-hex>
+```
+
+The exact same call is a retry receipt, not another note. A different binding
+for the same revision/path is refused; publish a new revision instead. It does
+not make the commit and mailbox append cross-file atomic, authenticate the
+claimed actor, accept a plan, or approve work. A retry after a committed file
+but before the note was appended is the supported recovery.
+
+The canonical note retains `title: "PLAN READY: YYYY-MM-DD (rN)"` and
+`ref: {path, sha256}` for the existing dashboard, mailbox list, and
+meta-oracle runner; its typed `event`/`protocol` binding is reserved to this
+publisher. Generic `post note` also refuses every `PLAN READY` title prefix,
+so it cannot create a consumer-visible but unverified announcement. Historical
+date-only, `-rN`, and `(rN)` title rows remain readable as legacy evidence and
+block an ambiguous duplicate. No production daily-loop producer invokes this command yet, so this
+source contract does not itself make the loop live or repair any prior plan.
+
+The mailbox rejects a pre-existing symlink at the mailbox, adjacent lock, or
+known parent component and opens the leaf files with `O_NOFOLLOW`. This is a
+same-UID coordination control, not a hostile-same-UID filesystem boundary: a
+concurrent parent-directory rename between inspection and open is outside this
+source-only contract. Keep the mailbox directory owned and writable only by
+the trusted lab account.
+
 ## Writing a plan item (Oracle)
 
 ```json
