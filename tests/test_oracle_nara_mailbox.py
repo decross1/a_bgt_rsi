@@ -1,4 +1,5 @@
 """Oracle <-> Nara mailbox and Nara's implementor lane (D-082); no model calls."""
+import hashlib
 import json
 import multiprocessing
 import subprocess
@@ -9,6 +10,22 @@ import pytest
 
 from orchestrator import nara_lane as lane
 from orchestrator import oracle_mailbox as mailbox
+
+
+def _append_unchecked_mailbox_row(path, row, *, generate_msg_id=True):
+    """Append hash-valid evidence without invoking the current writer schema."""
+    existing = mailbox.read(path)
+    unchecked = dict(row)
+    unchecked["prev_sha256"] = existing[-1]["row_sha256"] if existing else None
+    if generate_msg_id:
+        actor = unchecked["actor"]
+        unchecked["msg_id"] = (
+            f"{actor.split(':')[0]}-{hashlib.sha256(mailbox._canonical(unchecked)).hexdigest()[:16]}"
+        )
+    unchecked["row_sha256"] = hashlib.sha256(mailbox._canonical(unchecked)).hexdigest()
+    with path.open("a") as handle:
+        handle.write(json.dumps(unchecked) + "\n")
+    return unchecked
 
 
 def _post_once_process(path_text, question_id, request_id, decision, gate, results):
@@ -297,24 +314,93 @@ def test_cross_process_distinct_answers_allow_one_winner_and_keep_chain_valid(tm
     assert rows[-1]["body"]["request_id"] in {"request-approve", "request-decline"}
 
 
-def test_post_once_does_not_close_on_a_forged_question_resolution(tmp_path, monkeypatch):
+def test_post_once_does_not_close_on_a_forged_question_resolution(tmp_path):
     """The write-side open check shares projection's resolution predicate."""
     path = tmp_path / "mb.jsonl"
-    question = {"msg_id": "q", "kind": "question", "actor": "oracle", "to": "owner", "body": {}}
-    forged = {
-        "msg_id": "r", "kind": "question_resolution", "actor": "claude", "to": "owner",
-        "in_reply_to": "q",
+    question = mailbox.post("oracle", "question", {"question": "Proceed?"}, to="owner", path=path)
+    _append_unchecked_mailbox_row(path, {
+        "schema": mailbox.SCHEMA, "seq": 2, "ts": "2026-09-25T00:00:01+00:00",
+        "actor": "claude", "to": "owner", "kind": "question_resolution",
+        "in_reply_to": question["msg_id"],
         "body": {"disposition": "withdrawn", "summary": "No action.", "reason": "review"},
-    }
-    monkeypatch.setattr(mailbox, "read", lambda _path: [question, forged])
-    monkeypatch.setattr(mailbox, "_append_locked", lambda actor, kind, body, **_kwargs: {
-        "actor": actor, "kind": kind, "body": body,
+        "expires_at": None,
     })
     row, duplicate = mailbox.post_once(
         "human:derrick", "answer", {"text": "Proceed", "request_id": "req-1"}, to="oracle",
-        in_reply_to="q", idempotency_key="req-1", require_open_question=True, path=path)
+        in_reply_to=question["msg_id"], idempotency_key="req-1", require_open_question=True, path=path)
     assert row["kind"] == "answer"
     assert duplicate is False
+
+
+@pytest.mark.parametrize(("poison_schema", "forced_msg_id", "reason"), [
+    ("oracle-nara-mailbox/v999", None, "schema"),
+    (mailbox.SCHEMA, "human-not-writer-derived", "msg_id"),
+])
+def test_malformed_owner_answer_is_quarantined_from_retry_and_closed_state(
+        tmp_path, poison_schema, forced_msg_id, reason):
+    """Hash validity alone cannot consume an owner request id or close its card."""
+    path = tmp_path / "mb.jsonl"
+    question = mailbox.post("oracle", "question", {"question": "Proceed?"}, to="owner", path=path)
+    body = {
+        "text": "Proceed", "via": "owner-ui", "authority": "owner, D-084",
+        "request_id": "11111111-1111-1111-1111-111111111111", "target_kind": "question",
+        "expected_plan_revision": "2026-09-25",
+    }
+    poison = {
+        "schema": poison_schema, "seq": 2, "ts": "2026-09-25T00:00:01+00:00",
+        "actor": "human:derrick", "to": "oracle", "kind": "answer",
+        "in_reply_to": question["msg_id"], "body": body, "expires_at": None,
+    }
+    if forced_msg_id is not None:
+        poison["msg_id"] = forced_msg_id
+    malformed = _append_unchecked_mailbox_row(
+        path, poison, generate_msg_id=forced_msg_id is None,
+    )
+
+    rows = mailbox.read(path)
+    assert mailbox.quarantine(rows) == [{
+        "position": 2, "seq": 2, "msg_id": malformed["msg_id"], "reason": reason,
+    }]
+    assert malformed not in mailbox.live_rows(rows)
+    assert mailbox.find_idempotency_key(body["request_id"], path=path) is None
+    assert mailbox.is_question_closed(question, rows) is False
+
+    answer, duplicate = mailbox.post_once(
+        "human:derrick", "answer", body, to="oracle", in_reply_to=question["msg_id"],
+        idempotency_key=body["request_id"], require_open_question=True, path=path,
+    )
+    assert duplicate is False and answer["schema"] == mailbox.SCHEMA
+    assert mailbox.find_idempotency_key(body["request_id"], path=path) == answer
+    assert mailbox.is_question_closed(question, mailbox.read(path)) is True
+
+
+@pytest.mark.parametrize(("poison_schema", "forced_msg_id"), [
+    ("oracle-nara-mailbox/v999", None),
+    (mailbox.SCHEMA, "human-not-writer-derived"),
+])
+def test_malformed_owner_answer_does_not_block_a_fresh_request(tmp_path, poison_schema, forced_msg_id):
+    path = tmp_path / "mb.jsonl"
+    question = mailbox.post("oracle", "question", {"question": "Proceed?"}, to="owner", path=path)
+    poison = {
+        "schema": poison_schema, "seq": 2, "ts": "2026-09-25T00:00:01+00:00",
+        "actor": "human:derrick", "to": "oracle", "kind": "answer",
+        "in_reply_to": question["msg_id"],
+        "body": {
+            "text": "forged", "via": "owner-ui", "authority": "owner, D-084",
+            "request_id": "22222222-2222-2222-2222-222222222222", "target_kind": "question",
+            "expected_plan_revision": "2026-09-25",
+        },
+        "expires_at": None,
+    }
+    if forced_msg_id is not None:
+        poison["msg_id"] = forced_msg_id
+    _append_unchecked_mailbox_row(path, poison, generate_msg_id=forced_msg_id is None)
+    body = {"text": "Proceed", "request_id": "fresh-request"}
+    answer, duplicate = mailbox.post_once(
+        "human:derrick", "answer", body, to="oracle", in_reply_to=question["msg_id"],
+        idempotency_key="fresh-request", require_open_question=True, path=path,
+    )
+    assert duplicate is False and answer["body"] == body
 
 
 def test_admission_fence(monkeypatch):
@@ -488,7 +574,7 @@ def test_lane_respects_pause_and_recovers_abandoned_claims(repo):
     assert posted[0]["body"] == {"state": "failed", "reason": "lane interrupted; item abandoned"}
 
 
-def test_malformed_item_is_held_instead_of_jamming_the_queue(repo, monkeypatch):
+def test_malformed_item_is_quarantined_instead_of_jamming_the_queue(repo, monkeypatch):
     path = repo / "run_state/mb.jsonl"
     with pytest.raises(mailbox.MailboxError, match="budget"):
         mailbox.post("oracle", "plan_item", _plan(budget={"attempts": "2"}), to="nara", path=path)
@@ -500,9 +586,10 @@ def test_malformed_item_is_held_instead_of_jamming_the_queue(repo, monkeypatch):
         mailbox.post("oracle", "plan_item", _plan(budget={"attempts": "2"}), to="nara", path=path)
     good = mailbox.post("oracle", "plan_item", _plan(), to="nara", path=path)
     posted = lane.run_queue(path, build=_good_builder, sandbox=_fake_sandbox, ready=lambda: True)
-    assert posted[0]["body"]["state"] == "held" and "malformed" in posted[0]["body"]["reasons"][0]
-    assert posted[-1]["in_reply_to"] == good["msg_id"] and posted[-1]["body"]["state"] == "validated"
-    assert posted[-1]["body"]["base_sha"]
+    assert [row["body"]["state"] for row in posted] == ["claimed", "validated"]
+    assert posted[-1]["in_reply_to"] == good["msg_id"] and posted[-1]["body"]["base_sha"]
+    rows = mailbox.read(path)
+    assert any(entry["reason"] == "plan_item_body" for entry in mailbox.quarantine(rows))
     with path.open("a") as handle:
         handle.write("{torn\n")
     with pytest.raises(mailbox.MailboxError, match="not JSON"):

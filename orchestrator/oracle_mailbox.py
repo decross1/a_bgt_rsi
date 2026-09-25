@@ -13,6 +13,7 @@ import argparse
 import fcntl
 import hashlib
 import json
+import math
 import re
 import sys
 from collections.abc import Callable
@@ -56,20 +57,191 @@ class MailboxError(ValueError):
 
 
 def _canonical(value) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    try:
+        return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    except (TypeError, ValueError, UnicodeEncodeError) as exc:
+        raise MailboxError("mailbox value is not canonical UTF-8 JSON") from exc
 
 
-def _actor_ok(actor: str) -> bool:
-    return actor in AGENTS or bool(re.fullmatch(r"human:[a-z0-9_.-]{1,40}", actor))
+def _actor_ok(actor: object) -> bool:
+    return isinstance(actor, str) and (actor in AGENTS or bool(
+        re.fullmatch(r"human:[a-z0-9_.-]{1,40}", actor)
+    ))
+
+
+ROW_FIELDS = frozenset({
+    "schema", "seq", "ts", "actor", "to", "kind", "in_reply_to", "body",
+    "expires_at", "prev_sha256", "msg_id", "row_sha256",
+})
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+_OWNER_REQUEST_ID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
+_PLAN_REVISION = re.compile(r"\d{4}-\d{2}-\d{2}(?:-r\d+)?")
+
+
+def row_issue(row: object, position: int, previous: object = None) -> str | None:
+    """Return a typed structural reason for a hash-checked row, if any.
+
+    ``read`` preserves every hash-valid JSON object as append-only evidence.
+    Consumers use this predicate to quarantine unusable rows instead of
+    allowing one malformed historical record to become live coordination
+    state.  This validates structure and writer-derived identity; it does not
+    authenticate the actor label.
+    """
+    if not isinstance(row, dict) or set(row) != ROW_FIELDS:
+        return "row_fields"
+    if row.get("schema") != SCHEMA:
+        return "schema"
+    if type(row.get("seq")) is not int or row["seq"] != position + 1:
+        return "sequence"
+    actor, recipient, kind, body = row.get("actor"), row.get("to"), row.get("kind"), row.get("body")
+    if not isinstance(actor, str) or not _actor_ok(actor):
+        return "actor"
+    if not isinstance(recipient, str) or recipient not in RECIPIENTS:
+        return "recipient"
+    if not isinstance(kind, str) or kind not in KINDS:
+        return "kind"
+    if not (actor in KINDS[kind] or (actor.startswith("human:") and kind in HUMAN_KINDS)):
+        return "actor_kind"
+    if not isinstance(body, dict):
+        return "body"
+    if not isinstance(row.get("msg_id"), str) or not row["msg_id"]:
+        return "msg_id"
+    if row.get("in_reply_to") is not None and not isinstance(row.get("in_reply_to"), str):
+        return "in_reply_to"
+    if kind in {"receipt", "withdraw", "answer", "review", "question_resolution"} \
+            and not row.get("in_reply_to"):
+        return "missing_reply"
+    if row.get("expires_at") is not None and not isinstance(row.get("expires_at"), str):
+        return "expires_at"
+    try:
+        timestamp = datetime.fromisoformat(row["ts"])
+        expires = datetime.fromisoformat(row["expires_at"]) if row["expires_at"] is not None else None
+    except (TypeError, ValueError):
+        return "timestamp"
+    if timestamp.tzinfo is None or (expires is not None and expires.tzinfo is None):
+        return "timestamp_timezone"
+    if expires is not None and expires <= timestamp:
+        return "expiry_before_or_at_timestamp"
+    try:
+        if kind == "plan_item":
+            validate_plan_item(body)
+        elif kind == "receipt" and (not isinstance(body.get("state"), str)
+                                     or body.get("state") not in RECEIPT_STATES):
+            return "receipt_state"
+        elif kind == "review" and (not isinstance(body.get("verdict"), str)
+                                    or body.get("verdict") not in VERDICTS):
+            return "review_verdict"
+        elif kind == "question_resolution":
+            validate_question_resolution(body)
+    except (MailboxError, TypeError, ValueError, OverflowError):
+        return f"{kind}_body"
+    previous_sha = previous.get("row_sha256") if isinstance(previous, dict) else None
+    if row.get("prev_sha256") != previous_sha:
+        return "previous_hash"
+    claimed = row.get("row_sha256")
+    if not isinstance(claimed, str) or _SHA256.fullmatch(claimed) is None:
+        return "row_hash"
+    without_sha = dict(row)
+    without_sha.pop("row_sha256")
+    if hashlib.sha256(_canonical(without_sha)).hexdigest() != claimed:
+        return "row_hash"
+    msg_id = without_sha.pop("msg_id")
+    expected_id = f"{actor.split(':')[0]}-{hashlib.sha256(_canonical(without_sha)).hexdigest()[:16]}"
+    return None if msg_id == expected_id else "msg_id"
+
+
+def quarantine(rows: list[dict]) -> list[dict]:
+    """Describe hash-valid evidence omitted from live projections."""
+    return [
+        {"position": position + 1, "seq": row.get("seq") if isinstance(row, dict) else None,
+         "msg_id": row.get("msg_id") if isinstance(row, dict) else None, "reason": issue}
+        for position, row in enumerate(rows)
+        if (issue := row_issue(row, position, rows[position - 1] if position else None)) is not None
+    ]
+
+
+def _owner_answer_binding(row: dict) -> tuple[str, str, str] | None:
+    """Return an owner-UI request binding, or ``None`` for a malformed claim."""
+    body = row.get("body")
+    if not isinstance(body, dict) or body.get("via") != "owner-ui":
+        return ("", "", "")
+    request_id = body.get("request_id")
+    revision = body.get("expected_plan_revision")
+    if (not isinstance(request_id, str) or _OWNER_REQUEST_ID.fullmatch(request_id) is None
+            or body.get("target_kind") != "question"
+            or not isinstance(revision, str) or _PLAN_REVISION.fullmatch(revision) is None):
+        return None
+    return (str(row.get("in_reply_to")), revision,
+            json.dumps(body, sort_keys=True, separators=(",", ":")))
+
+
+def _relational_live_rows(rows: list[dict]) -> list[dict]:
+    """Admit unique identities and only ordered, question-bound terminals.
+
+    A future question cannot retroactively legitimize an earlier human answer
+    or resolution, and a duplicate identity cannot replace the original row.
+    Model answers remain evidence/context but never terminal owner authority.
+    """
+    admitted: list[dict] = []
+    seen_ids: set[str] = set()
+    questions: dict[str, dict] = {}
+    owner_requests: dict[str, tuple[str, str, str]] = {}
+    for row in rows:
+        msg_id = row["msg_id"]
+        if msg_id in seen_ids:
+            continue
+        seen_ids.add(msg_id)
+        kind = row.get("kind")
+        human_answer = (kind == "answer" and isinstance(row.get("actor"), str)
+                        and row["actor"].startswith("human:"))
+        if kind == "question_resolution" or human_answer:
+            question = questions.get(row.get("in_reply_to"))
+            if question is None:
+                continue
+            if kind == "question_resolution":
+                actor = row.get("actor")
+                if not (isinstance(actor, str)
+                        and (actor == question.get("actor") or actor.startswith("human:"))):
+                    continue
+            else:
+                binding = _owner_answer_binding(row)
+                if binding is None:
+                    continue
+                body = row["body"]
+                if body.get("via") == "owner-ui":
+                    request_id = body["request_id"]
+                    if request_id in owner_requests and owner_requests[request_id] != binding:
+                        continue
+                    owner_requests[request_id] = binding
+        admitted.append(row)
+        if kind == "question":
+            questions[msg_id] = row
+    return admitted
+
+
+def live_rows(rows: list[dict]) -> list[dict]:
+    """Non-mutating structurally and relationally live projection input."""
+    structural = [
+        row for position, row in enumerate(rows)
+        if row_issue(row, position, rows[position - 1] if position else None) is None
+    ]
+    return _relational_live_rows(structural)
+
+
+def is_live_row(rows: list[dict], row: object) -> bool:
+    """Whether this exact recorded object is admitted to ``live_rows``."""
+    return any(candidate is row for candidate in live_rows(rows))
 
 
 def validate_plan_item(body: dict) -> None:
     """Structure only; the lane applies admission policy."""
+    if not isinstance(body, dict):
+        raise MailboxError("plan_item body must be an object")
     need = {"title", "objective", "task_class", "allowed_write_paths", "acceptance"}
     missing = need - set(body)
     if missing:
         raise MailboxError(f"plan_item missing {sorted(missing)}")
-    if body["task_class"] not in TASK_CLASSES:
+    if not isinstance(body["task_class"], str) or body["task_class"] not in TASK_CLASSES:
         raise MailboxError(f"task_class must be one of {sorted(TASK_CLASSES)}")
     paths = body["allowed_write_paths"]
     if not isinstance(paths, list) or not paths or not all(isinstance(p, str) and p for p in paths):
@@ -99,7 +271,7 @@ def validate_question_resolution(body: dict) -> None:
     allowed = {"disposition", "summary", "reason", "evidence_msg_ids", "replacement_msg_id", "blocking_artifact"}
     if not {"disposition", "summary", "reason"} <= set(body) or not set(body) <= allowed:
         raise MailboxError("question_resolution needs disposition, summary and reason")
-    if body["disposition"] not in QUESTION_RESOLUTIONS:
+    if not isinstance(body["disposition"], str) or body["disposition"] not in QUESTION_RESOLUTIONS:
         raise MailboxError(f"question_resolution disposition must be one of {sorted(QUESTION_RESOLUTIONS)}")
     if not isinstance(body["summary"], str) or not body["summary"].strip() or len(body["summary"]) > 1200:
         raise MailboxError("question_resolution summary must be non-empty and <= 1200 characters")
@@ -257,8 +429,18 @@ def latest_question_contest(question: dict, rows: list[dict]) -> dict | None:
 
 def is_question_closed(question: dict, rows: list[dict]) -> bool:
     """One direct human answer or one uncontested valid resolution is terminal."""
-    if question.get("kind") != "question":
+    eligible = live_rows(rows)
+    if not isinstance(question, dict) or question.get("kind") != "question":
         return False
+    matches = [row for row in eligible if row.get("kind") == "question"
+               and row.get("msg_id") == question.get("msg_id")]
+    if len(matches) != 1:
+        return False
+    return _question_closed_in_live_rows(matches[0], eligible)
+
+
+def _question_closed_in_live_rows(question: dict, rows: list[dict]) -> bool:
+    """Terminal predicate for an already quarantined ordered mailbox view."""
     return any(
         is_valid_question_resolution(question, row, rows)
         or (row.get("in_reply_to") == question.get("msg_id") and row.get("kind") == "answer"
@@ -294,17 +476,22 @@ def read(path: Path = PATH) -> list[dict]:
 def _validate_post(actor: str, kind: str, body: dict, to: str, in_reply_to: str | None) -> None:
     if not _actor_ok(actor):
         raise MailboxError(f"unknown actor {actor!r}")
-    if kind not in KINDS or not (actor in KINDS[kind] or (actor.startswith("human:") and kind in HUMAN_KINDS)):
+    if not isinstance(kind, str) or kind not in KINDS or not (
+            actor in KINDS[kind] or (actor.startswith("human:") and kind in HUMAN_KINDS)):
         raise MailboxError(f"{actor} may not post {kind}")
-    if to not in RECIPIENTS:
+    if not isinstance(to, str) or to not in RECIPIENTS:
         raise MailboxError(f"to must be one of {sorted(RECIPIENTS)}")
     if not isinstance(body, dict):
         raise MailboxError("body must be an object")
+    if in_reply_to is not None and not isinstance(in_reply_to, str):
+        raise MailboxError("in_reply_to must be a string or null")
     if kind == "plan_item":
         validate_plan_item(body)
-    if kind == "receipt" and body.get("state") not in RECEIPT_STATES:
+    if kind == "receipt" and (not isinstance(body.get("state"), str)
+                              or body.get("state") not in RECEIPT_STATES):
         raise MailboxError(f"receipt state must be one of {sorted(RECEIPT_STATES)}")
-    if kind == "review" and body.get("verdict") not in VERDICTS:
+    if kind == "review" and (not isinstance(body.get("verdict"), str)
+                             or body.get("verdict") not in VERDICTS):
         raise MailboxError(f"review verdict must be one of {sorted(VERDICTS)}")
     if kind in {"receipt", "withdraw", "answer", "review", "question_resolution"} and not in_reply_to:
         raise MailboxError(f"{kind} must reply to a message")
@@ -316,39 +503,75 @@ def _validate_post(actor: str, kind: str, body: dict, to: str, in_reply_to: str 
         validate_provenance_contestation(body)
 
 
+def _lease_delta(expires_hours: float | None) -> timedelta | None:
+    """Reject values which cannot produce a positive, representable lease."""
+    if expires_hours is None:
+        return None
+    if type(expires_hours) not in {int, float} or isinstance(expires_hours, bool):
+        raise MailboxError("expires_hours must be a positive finite number")
+    try:
+        if not math.isfinite(expires_hours) or expires_hours <= 0:
+            raise MailboxError("expires_hours must be a positive finite number")
+        lease = timedelta(hours=expires_hours)
+        if lease <= timedelta(0):
+            raise MailboxError("expires_hours must be a positive representable lease")
+        return lease
+    except (OverflowError, ValueError):
+        raise MailboxError("expires_hours must be a positive representable lease") from None
+
+
+def _validate_expires_hours(expires_hours: float | None) -> None:
+    _lease_delta(expires_hours)
+
+
+def _absolute_expiry(expires_hours: float | None, now: datetime) -> str | None:
+    lease = _lease_delta(expires_hours)
+    if lease is None:
+        return None
+    try:
+        return (now + lease).isoformat()
+    except (OverflowError, ValueError):
+        raise MailboxError("expires_hours exceeds the representable expiry range") from None
+
+
 def _append_locked(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | None,
                    expires_hours: float | None, path: Path, rows: list[dict]) -> dict:
     """Validate prefix-dependent constraints and append while holding the writer lock."""
-    ids = {r["msg_id"] for r in rows}
+    eligible = live_rows(rows)
+    ids = {r["msg_id"] for r in eligible}
     if in_reply_to and in_reply_to not in ids:
         raise MailboxError(f"in_reply_to {in_reply_to} is not in the mailbox")
     if kind == "question_resolution":
         evidence = body.get("evidence_msg_ids") or []
         if any(value not in ids for value in evidence):
             raise MailboxError("question_resolution evidence_msg_ids must name preceding mailbox rows")
-        original = next(row for row in rows if row["msg_id"] == in_reply_to)
+        original = next(row for row in eligible if row["msg_id"] == in_reply_to)
         if original.get("kind") != "question":
             raise MailboxError("question_resolution must reply to a question")
         if not (actor.startswith("human:") or actor == original.get("actor")):
             raise MailboxError("question_resolution must be posted by the question asker or a human")
-        if is_question_closed(original, rows):
+        if _question_closed_in_live_rows(original, eligible):
             raise MailboxError("question is no longer open")
     if kind == "answer" and actor.startswith("human:"):
-        original = next((row for row in rows if row.get("msg_id") == in_reply_to), None)
+        original = next((row for row in eligible if row.get("msg_id") == in_reply_to), None)
         if (original is not None and original.get("kind") == "question"
-                and is_question_closed(original, rows)):
+                and _question_closed_in_live_rows(original, eligible)):
             raise MailboxError("question is no longer open")
     now = datetime.now(timezone.utc)
     row = {
         "schema": SCHEMA, "seq": len(rows) + 1, "ts": now.isoformat(), "actor": actor, "to": to,
         "kind": kind, "in_reply_to": in_reply_to, "body": body,
-        "expires_at": (now + timedelta(hours=expires_hours)).isoformat() if expires_hours else None,
+        "expires_at": _absolute_expiry(expires_hours, now),
         "prev_sha256": rows[-1]["row_sha256"] if rows else None,
     }
     row["msg_id"] = f"{actor.split(':')[0]}-{hashlib.sha256(_canonical(row)).hexdigest()[:16]}"
     row["row_sha256"] = hashlib.sha256(_canonical(row)).hexdigest()
-    line = json.dumps(row, ensure_ascii=False)
-    if len(line.encode()) > MAX_ROW_BYTES:
+    try:
+        line = json.dumps(row, ensure_ascii=False)
+        line_bytes = line.encode()
+    except (TypeError, ValueError, UnicodeEncodeError) as exc:
+        raise MailboxError("mailbox row is not UTF-8 JSON") from exc
+    if len(line_bytes) > MAX_ROW_BYTES:
         raise MailboxError(f"row exceeds {MAX_ROW_BYTES} bytes")
     with path.open("a") as handle:
         handle.write(line + "\n")
@@ -357,6 +580,7 @@ def _append_locked(actor: str, kind: str, body: dict, *, to: str, in_reply_to: s
 
 def post(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | None = None,
          expires_hours: float | None = None, path: Path = PATH) -> dict:
+    _validate_expires_hours(expires_hours)
     _validate_post(actor, kind, body, to, in_reply_to)
     path.parent.mkdir(parents=True, exist_ok=True)
     with (path.parent / ".oracle_nara_mailbox.lock").open("a") as lock:
@@ -375,6 +599,7 @@ def post_once(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | 
     new append.  A caller may bind acceptance to mutable external state at
     that instant; durable retries return their existing row before the check.
     """
+    _validate_expires_hours(expires_hours)
     _validate_post(actor, kind, body, to, in_reply_to)
     if not isinstance(idempotency_key, str) or not idempotency_key:
         raise MailboxError("idempotency_key must be a non-empty string")
@@ -384,7 +609,8 @@ def post_once(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | 
     with (path.parent / ".oracle_nara_mailbox.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         rows = read(path)
-        existing = [row for row in rows if isinstance(row.get("body"), dict)
+        eligible = live_rows(rows)
+        existing = [row for row in eligible if isinstance(row.get("body"), dict)
                     and row["body"].get("request_id") == idempotency_key]
         if existing:
             row = existing[-1]
@@ -393,11 +619,11 @@ def post_once(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | 
                 raise MailboxError("idempotency_key was already used for a different request")
             return row, True
         if require_open_question:
-            question = next((row for row in rows if row.get("msg_id") == in_reply_to
+            question = next((row for row in eligible if row.get("msg_id") == in_reply_to
                              and row.get("kind") == "question" and row.get("to") == "owner"), None)
             if question is None:
                 raise MailboxError("owner question is no longer open")
-            if is_question_closed(question, rows):
+            if _question_closed_in_live_rows(question, eligible):
                 raise MailboxError("owner question is no longer open")
         if linearization_check is not None:
             linearization_check()
@@ -413,16 +639,21 @@ def find_idempotency_key(idempotency_key: str, *, path: Path = PATH) -> dict | N
     path.parent.mkdir(parents=True, exist_ok=True)
     with (path.parent / ".oracle_nara_mailbox.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        existing = [row for row in read(path) if isinstance(row.get("body"), dict)
+        existing = [row for row in live_rows(read(path)) if isinstance(row.get("body"), dict)
                     and row["body"].get("request_id") == idempotency_key]
         return existing[-1] if existing else None
 
 
-def fold(rows: list[dict], now: datetime | None = None) -> dict:
-    """Plan items with their latest state and full receipt history."""
+def fold(rows: list[dict], now: datetime | None = None, *, already_live: bool = False) -> dict:
+    """Plan items with malformed evidence omitted from live state.
+
+    UI read models which already called :func:`live_rows` pass
+    ``already_live=True`` so sequence gaps left by quarantine are not mistaken
+    for new malformed evidence. Raw mailbox readers keep the safe default.
+    """
     now = now or datetime.now(timezone.utc)
     items = {}
-    for row in rows:
+    for row in rows if already_live else live_rows(rows):
         if row["kind"] == "plan_item":
             expired = bool(row.get("expires_at")) and datetime.fromisoformat(row["expires_at"]) < now
             items[row["msg_id"]] = {"item": row, "state": "expired" if expired else "open", "receipts": []}

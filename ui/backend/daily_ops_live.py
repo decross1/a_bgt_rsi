@@ -725,7 +725,7 @@ def work_items(plan: dict, rows: list[dict], windows: dict, git: _Git, now: date
                catalog: dict[str, tuple[str, str | None]] | None = None) -> tuple[list[dict], dict]:
     """One row per plan item, and the owner questions those items already claim."""
     oracle_mailbox, _ = _orchestrator()
-    folded = oracle_mailbox.fold(rows, now)
+    folded = oracle_mailbox.fold(rows, now, already_live=True)
     date = plan["date"]
     ids = [item["id"] for item in plan["items"]]
     start, end, revision_scoped = _revision_window(

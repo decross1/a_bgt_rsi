@@ -993,7 +993,8 @@ class LabMailboxRouter:
             if action not in _QUESTION_ACTIONS:
                 raise HTTPException(422, "action is not valid for a question")
             rows = oracle_mailbox.read(mailbox_path)
-            question = next((r for r in rows if r.get("msg_id") == target_id and r.get("kind") == "question"), None)
+            question = next((r for r in oracle_mailbox.live_rows(rows)
+                             if r.get("msg_id") == target_id and r.get("kind") == "question"), None)
             if question is None:
                 raise HTTPException(409, "owner decision target question is no longer present")
             to = str(question.get("actor", "oracle")).split(":")[0]
