@@ -222,11 +222,31 @@ def test_owner_decision_and_open_questions_are_waiting_on_you_until_answered(rep
     assert waiting[other["msg_id"]]["cli"].startswith(
         ".venv-chroma/bin/python -m orchestrator.oracle_mailbox post --as human:derrick")
 
+    box.post("claude", "answer", {"text": "relayed owner preference"}, to="oracle", reply=asked["msg_id"])
+    value = _summary(repo)
+    assert value["work_items"][0]["status"] == "waiting_on_you"
+
     box.post("human:derrick", "answer", {"text": "Install on main."}, to="claude", reply=asked["msg_id"])
     box.post("claude", "answer", {"text": "relayed"}, to="oracle", reply=other["msg_id"])
     value = _summary(repo)
     assert value["work_items"][0]["status"] == "answered"
-    assert [w["id"] for w in value["waiting_on_you"]] == ["2026-09-23:d6"]
+    # A model relay supplies context; it cannot impersonate the owner's answer.
+    assert [w["id"] for w in value["waiting_on_you"]] == ["2026-09-23:d6", other["msg_id"]]
+    box.post("oracle", "question_resolution", {
+        "disposition": "superseded", "summary": "The later plan replaced this ruling.",
+        "reason": "No owner action remains.",
+    }, to="owner", reply=other["msg_id"])
+    assert [w["id"] for w in _summary(repo)["waiting_on_you"]] == ["2026-09-23:d6"]
+
+    d6_question = box.post("oracle", "question", {"title": "Item d6", "ref": {"item": "d6"}}, to="owner")
+    resolution = box.post("oracle", "question_resolution", {
+        "disposition": "superseded", "summary": "Oracle selected the replacement path.",
+        "reason": "The owner choice is no longer needed.",
+    }, to="owner", reply=d6_question["msg_id"])
+    value = _summary(repo)
+    assert value["work_items"][1]["status"] == "resolved"
+    assert value["work_items"][1]["evidence_msg_id"] == resolution["msg_id"]
+    assert value["waiting_on_you"] == []
 
 
 def test_owner_question_card_keeps_structured_title_and_legacy_free_text_actionable():
@@ -287,6 +307,57 @@ def test_owner_question_card_keeps_structured_title_and_legacy_free_text_actiona
         "title": {"not": "text"}, "question": "Valid question",
     }}
     assert live._question_card(malformed_title)["title"] == "Valid question"
+
+    object_choices = {"msg_id": "claude-checkout", "body": {
+        "title": "Restore the checkout?",
+        "options": [
+            {"id": "restore", "label": "Restore the pre-incident state", "effect": "Leaves services untouched."},
+            {"id": "hold", "label": "Leave it for now", "effect": "The split state remains."},
+        ],
+    }}
+    assert live._question_card(object_choices)["choices"] == [
+        "Restore the pre-incident state [restore] — Leaves services untouched.",
+        "Leave it for now [hold] — The split state remains.",
+    ]
+
+
+def test_projection_closes_only_for_human_answer_or_valid_original_asker_resolution():
+    question = {
+        "seq": 1, "msg_id": "claude-question", "actor": "claude", "to": "owner", "kind": "question",
+        "body": {"title": "Choose?"}, "ts": "2026-09-25T00:00:00+00:00",
+    }
+    relay = {
+        "seq": 2, "msg_id": "oracle-relay", "actor": "oracle", "to": "claude", "kind": "answer",
+        "in_reply_to": question["msg_id"], "body": {"text": "Owner said yes."},
+        "ts": "2026-09-25T00:01:00+00:00",
+    }
+    human = {
+        **relay, "seq": 3, "msg_id": "human-answer", "actor": "human:derrick",
+        "ts": "2026-09-25T00:02:00+00:00",
+    }
+    forged_resolution = {
+        "seq": 2, "msg_id": "oracle-resolution", "actor": "oracle", "to": "owner",
+        "kind": "question_resolution", "in_reply_to": question["msg_id"],
+        "body": {"disposition": "superseded", "summary": "Overtaken.", "reason": "Later evidence."},
+        "ts": "2026-09-25T00:01:00+00:00",
+    }
+    asker_resolution = {
+        **forged_resolution, "msg_id": "claude-resolution", "actor": "claude",
+    }
+
+    assert live._human_answer(question, [question, relay]) is None
+    assert live._human_answer(question, [question, relay, human]) == human
+    assert live._question_resolution(question, [question, forged_resolution]) is None
+    assert live._question_resolution(question, [question, asker_resolution]) == asker_resolution
+
+    base = [{
+        "id": "d1", "status": "waiting_on_you", "evidence_msg_id": question["msg_id"],
+        "title": "Choose?", "evidence_at": question["ts"],
+    }]
+    claimed = {question["msg_id"]: "d1"}
+    assert [row["id"] for row in live.waiting_on_you("p", base, claimed, [question, relay], None)] == ["p:d1"]
+    assert live.waiting_on_you("p", base, claimed, [question, relay, human], None) == []
+    assert live.waiting_on_you("p", base, claimed, [question, asker_resolution], None) == []
 
 
 @pytest.mark.parametrize(("projection", "expected"), [

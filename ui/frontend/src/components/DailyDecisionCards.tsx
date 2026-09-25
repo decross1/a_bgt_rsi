@@ -12,7 +12,7 @@ import { cardHeadline, ownerWord, statusSentence } from "./dailyOpsCopy";
 export type WorkStatus =
   | "not_started" | "awaiting_review" | "held" | "building" | "validated" | "failed"
   | "withdrawn" | "expired" | "amend_requested" | "accepted" | "rejected" | "merged"
-  | "waiting_on_you" | "answered";
+  | "waiting_on_you" | "answered" | "resolved";
 
 export type DailyWorkCard = {
   id: string;
@@ -108,11 +108,11 @@ const statusLabel: Record<WorkStatus, string> = {
   not_started: "not started", awaiting_review: "awaiting review", held: "held", building: "building",
   validated: "validated", failed: "failed", withdrawn: "withdrawn", expired: "expired",
   amend_requested: "amend requested", accepted: "accepted", rejected: "rejected", merged: "merged",
-  waiting_on_you: "waiting on you", answered: "answered",
+  waiting_on_you: "waiting on you", answered: "answered", resolved: "resolved",
 };
 
 function badgeStyle(value: string): React.CSSProperties {
-  if (["merged", "validated", "accepted", "answered"].includes(value))
+  if (["merged", "validated", "accepted", "answered", "resolved"].includes(value))
     return { color: "var(--status-ok)", background: "var(--status-ok-bg)" };
   if (["held", "failed", "rejected", "amend_requested", "waiting_on_you", "expired"].includes(value))
     return { color: "var(--status-warn)", background: "var(--status-warn-bg)" };

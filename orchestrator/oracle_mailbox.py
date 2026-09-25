@@ -35,14 +35,18 @@ KINDS = {
     "review": REVIEWERS,            # meta-oracle verdict on a plan, plan item or branch
     "question": CONVERSANTS,
     "answer": CONVERSANTS,
+    # This is an explicit non-answer disposition. Only the original asker or
+    # a human may append one, so a relay/reviewer cannot hide an owner card.
+    "question_resolution": AGENTS,
     "note": AGENTS,
 }
-HUMAN_KINDS = {"question", "answer", "note"}
+HUMAN_KINDS = {"question", "answer", "note", "question_resolution"}
 RECIPIENTS = {"oracle", "nara", "claude", "codex", "owner", "all"}
 RECEIPT_STATES = {"held", "claimed", "validated", "failed", "withdrawn"}
 TERMINAL = {"validated", "failed", "withdrawn"}
 VERDICTS = {"accept", "amend", "reject"}
 TASK_CLASSES = {"documentation", "tests", "tooling", "experiment_code", "lab_organization"}
+QUESTION_RESOLUTIONS = {"withdrawn", "superseded", "prerequisite", "informational"}
 
 
 class MailboxError(ValueError):
@@ -86,6 +90,54 @@ def validate_plan_item(body: dict) -> None:
         raise MailboxError("title <= 200 and objective <= 4000 characters")
 
 
+def validate_question_resolution(body: dict) -> None:
+    """Validate an append-only, non-answer disposition of a question."""
+    if not isinstance(body, dict):
+        raise MailboxError("question_resolution body must be an object")
+    allowed = {"disposition", "summary", "reason", "evidence_msg_ids", "replacement_msg_id", "blocking_artifact"}
+    if not {"disposition", "summary", "reason"} <= set(body) or not set(body) <= allowed:
+        raise MailboxError("question_resolution needs disposition, summary and reason")
+    if body["disposition"] not in QUESTION_RESOLUTIONS:
+        raise MailboxError(f"question_resolution disposition must be one of {sorted(QUESTION_RESOLUTIONS)}")
+    if not isinstance(body["summary"], str) or not body["summary"].strip() or len(body["summary"]) > 1200:
+        raise MailboxError("question_resolution summary must be non-empty and <= 1200 characters")
+    if not isinstance(body["reason"], str) or not body["reason"].strip() or len(body["reason"]) > 1200:
+        raise MailboxError("question_resolution reason must be non-empty and <= 1200 characters")
+    evidence = body.get("evidence_msg_ids")
+    if evidence is not None and (not isinstance(evidence, list) or not evidence or len(evidence) > 8
+                                 or not all(isinstance(value, str) and value.strip() and len(value) <= 80
+                                            for value in evidence)):
+        raise MailboxError("question_resolution evidence_msg_ids must be 1-8 message ids")
+    for key in ("replacement_msg_id", "blocking_artifact"):
+        if key in body and (not isinstance(body[key], str) or not body[key].strip() or len(body[key]) > 240):
+            raise MailboxError(f"question_resolution {key} must be a non-empty string <= 240 characters")
+
+
+def is_valid_question_resolution(question: dict, resolution: dict, rows: list[dict]) -> bool:
+    """Whether a recorded resolution has valid schema, authority and ordering."""
+    if (not isinstance(question, dict) or not isinstance(resolution, dict)
+            or question.get("kind") != "question"
+            or resolution.get("kind") != "question_resolution"
+            or resolution.get("in_reply_to") != question.get("msg_id")):
+        return False
+    try:
+        validate_question_resolution(resolution.get("body"))
+    except MailboxError:
+        return False
+    actor = resolution.get("actor")
+    if not (isinstance(actor, str) and (actor == question.get("actor") or actor.startswith("human:"))):
+        return False
+    positions = {str(row.get("msg_id")): position for position, row in enumerate(rows)
+                 if isinstance(row, dict) and isinstance(row.get("msg_id"), str)}
+    question_position = positions.get(str(question.get("msg_id")))
+    resolution_position = positions.get(str(resolution.get("msg_id")))
+    if question_position is None or resolution_position is None or question_position >= resolution_position:
+        return False
+    evidence = resolution["body"].get("evidence_msg_ids")
+    return evidence is None or all(positions.get(value, resolution_position) < resolution_position
+                                   for value in evidence)
+
+
 def read(path: Path = PATH) -> list[dict]:
     """All rows, with the hash chain verified; a break raises. The chain detects edits in place;
     it cannot detect a truncated tail or a chain re-hashed from the edit onward."""
@@ -111,8 +163,7 @@ def read(path: Path = PATH) -> list[dict]:
     return rows
 
 
-def post(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | None = None,
-         expires_hours: float | None = None, path: Path = PATH) -> dict:
+def _validate_post(actor: str, kind: str, body: dict, to: str, in_reply_to: str | None) -> None:
     if not _actor_ok(actor):
         raise MailboxError(f"unknown actor {actor!r}")
     if kind not in KINDS or not (actor in KINDS[kind] or (actor.startswith("human:") and kind in HUMAN_KINDS)):
@@ -127,30 +178,100 @@ def post(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | None 
         raise MailboxError(f"receipt state must be one of {sorted(RECEIPT_STATES)}")
     if kind == "review" and body.get("verdict") not in VERDICTS:
         raise MailboxError(f"review verdict must be one of {sorted(VERDICTS)}")
-    if kind in {"receipt", "withdraw", "answer", "review"} and not in_reply_to:
+    if kind in {"receipt", "withdraw", "answer", "review", "question_resolution"} and not in_reply_to:
         raise MailboxError(f"{kind} must reply to a message")
+    if kind == "question_resolution":
+        validate_question_resolution(body)
+
+
+def _append_locked(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | None,
+                   expires_hours: float | None, path: Path, rows: list[dict]) -> dict:
+    """Validate prefix-dependent constraints and append while holding the writer lock."""
+    ids = {r["msg_id"] for r in rows}
+    if in_reply_to and in_reply_to not in ids:
+        raise MailboxError(f"in_reply_to {in_reply_to} is not in the mailbox")
+    if kind == "question_resolution":
+        evidence = body.get("evidence_msg_ids") or []
+        if any(value not in ids for value in evidence):
+            raise MailboxError("question_resolution evidence_msg_ids must name preceding mailbox rows")
+        original = next(row for row in rows if row["msg_id"] == in_reply_to)
+        if original.get("kind") != "question":
+            raise MailboxError("question_resolution must reply to a question")
+        if not (actor.startswith("human:") or actor == original.get("actor")):
+            raise MailboxError("question_resolution must be posted by the question asker or a human")
+    now = datetime.now(timezone.utc)
+    row = {
+        "schema": SCHEMA, "seq": len(rows) + 1, "ts": now.isoformat(), "actor": actor, "to": to,
+        "kind": kind, "in_reply_to": in_reply_to, "body": body,
+        "expires_at": (now + timedelta(hours=expires_hours)).isoformat() if expires_hours else None,
+        "prev_sha256": rows[-1]["row_sha256"] if rows else None,
+    }
+    row["msg_id"] = f"{actor.split(':')[0]}-{hashlib.sha256(_canonical(row)).hexdigest()[:16]}"
+    row["row_sha256"] = hashlib.sha256(_canonical(row)).hexdigest()
+    line = json.dumps(row, ensure_ascii=False)
+    if len(line.encode()) > MAX_ROW_BYTES:
+        raise MailboxError(f"row exceeds {MAX_ROW_BYTES} bytes")
+    with path.open("a") as handle:
+        handle.write(line + "\n")
+    return row
+
+
+def post(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | None = None,
+         expires_hours: float | None = None, path: Path = PATH) -> dict:
+    _validate_post(actor, kind, body, to, in_reply_to)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with (path.parent / ".oracle_nara_mailbox.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _append_locked(actor, kind, body, to=to, in_reply_to=in_reply_to,
+                              expires_hours=expires_hours, path=path, rows=read(path))
+
+
+def post_once(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | None = None,
+              idempotency_key: str, require_open_question: bool = False,
+              expires_hours: float | None = None, path: Path = PATH) -> tuple[dict, bool]:
+    """Atomically append one owner-UI request and return a durable retry receipt."""
+    _validate_post(actor, kind, body, to, in_reply_to)
+    if not isinstance(idempotency_key, str) or not idempotency_key:
+        raise MailboxError("idempotency_key must be a non-empty string")
     path.parent.mkdir(parents=True, exist_ok=True)
     with (path.parent / ".oracle_nara_mailbox.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         rows = read(path)
-        ids = {r["msg_id"] for r in rows}
-        if in_reply_to and in_reply_to not in ids:
-            raise MailboxError(f"in_reply_to {in_reply_to} is not in the mailbox")
-        now = datetime.now(timezone.utc)
-        row = {
-            "schema": SCHEMA, "seq": len(rows) + 1, "ts": now.isoformat(), "actor": actor, "to": to,
-            "kind": kind, "in_reply_to": in_reply_to, "body": body,
-            "expires_at": (now + timedelta(hours=expires_hours)).isoformat() if expires_hours else None,
-            "prev_sha256": rows[-1]["row_sha256"] if rows else None,
-        }
-        row["msg_id"] = f"{actor.split(':')[0]}-{hashlib.sha256(_canonical(row)).hexdigest()[:16]}"
-        row["row_sha256"] = hashlib.sha256(_canonical(row)).hexdigest()
-        line = json.dumps(row, ensure_ascii=False)
-        if len(line.encode()) > MAX_ROW_BYTES:
-            raise MailboxError(f"row exceeds {MAX_ROW_BYTES} bytes")
-        with path.open("a") as handle:
-            handle.write(line + "\n")
-    return row
+        existing = [row for row in rows if isinstance(row.get("body"), dict)
+                    and row["body"].get("request_id") == idempotency_key]
+        if existing:
+            row = existing[-1]
+            if (row.get("actor"), row.get("kind"), row.get("to"), row.get("in_reply_to"), row.get("body")) != (
+                    actor, kind, to, in_reply_to, body):
+                raise MailboxError("idempotency_key was already used for a different request")
+            return row, True
+        if require_open_question:
+            question = next((row for row in rows if row.get("msg_id") == in_reply_to
+                             and row.get("kind") == "question" and row.get("to") == "owner"), None)
+            if question is None:
+                raise MailboxError("owner question is no longer open")
+            closed = any(
+                is_valid_question_resolution(question, row, rows)
+                or (row.get("in_reply_to") == question["msg_id"] and row.get("kind") == "answer"
+                    and isinstance(row.get("actor"), str) and row["actor"].startswith("human:"))
+                for row in rows)
+            if closed:
+                raise MailboxError("owner question is no longer open")
+        row = _append_locked(actor, kind, body, to=to, in_reply_to=in_reply_to,
+                             expires_hours=expires_hours, path=path, rows=rows)
+        return row, False
+
+
+def find_idempotency_key(idempotency_key: str, *, path: Path = PATH) -> dict | None:
+    """Look up an owner-UI request receipt while holding the mailbox lock."""
+    if not isinstance(idempotency_key, str) or not idempotency_key:
+        raise MailboxError("idempotency_key must be a non-empty string")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with (path.parent / ".oracle_nara_mailbox.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        existing = [row for row in read(path) if isinstance(row.get("body"), dict)
+                    and row["body"].get("request_id") == idempotency_key]
+        return existing[-1] if existing else None
 
 
 def fold(rows: list[dict], now: datetime | None = None) -> dict:

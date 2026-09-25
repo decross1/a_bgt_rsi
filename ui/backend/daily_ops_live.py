@@ -25,7 +25,8 @@ Match rules (each is tested):
   first-parent ``main`` commit is titled ``Merge oracle/<date>-<id>...``.
 * ``owner_decision`` item -> "waiting on you" unless a ``question`` to the owner
   inside the window names the item id (``ref.item`` or a whole-word title
-  match) and that question has an ``answer``.
+  match); only a direct human ``answer`` or a valid asker/human
+  ``question_resolution`` closes it.
 """
 from __future__ import annotations
 
@@ -57,7 +58,7 @@ CLI = ".venv-chroma/bin/python -m orchestrator.oracle_mailbox post --as human:de
 WORK_STATUSES = {
     "not_started", "awaiting_review", "held", "building", "validated", "failed",
     "withdrawn", "expired", "amend_requested", "accepted", "rejected", "merged",
-    "waiting_on_you", "answered",
+    "waiting_on_you", "answered", "resolved",
 }
 FOLD_STATUS = {"open": "awaiting_review", "held": "held", "claimed": "building",
                "validated": "validated", "failed": "failed", "withdrawn": "withdrawn",
@@ -117,6 +118,36 @@ def _title(row: dict) -> str:
     return str(_body(row).get("title") or "")
 
 
+def _human_answer(question: dict, rows: list[dict]) -> dict | None:
+    """A card closes as answered only on a direct human reply."""
+    answers = [row for row in rows if row.get("kind") == "answer"
+               and row.get("in_reply_to") == question.get("msg_id")
+               and isinstance(row.get("actor"), str) and row["actor"].startswith("human:")]
+    return answers[-1] if answers else None
+
+
+def _question_resolution(question: dict, rows: list[dict]) -> dict | None:
+    """Return the latest valid original-asker/human disposition."""
+    oracle_mailbox, _ = _orchestrator()
+    for row in reversed(rows):
+        if oracle_mailbox.is_valid_question_resolution(question, row, rows):
+            return row
+    return None
+
+
+def _question_choice(value: object) -> str | None:
+    if isinstance(value, str):
+        return _clip(value, 300)
+    if not isinstance(value, dict):
+        return None
+    label = _clip(value.get("label"), 180)
+    ident = _clip(value.get("id"), 60)
+    if label is None or ident is None:
+        return None
+    effect = _clip(value.get("effect"), 180)
+    return _clip(f"{label} [{ident}]" + (f" — {effect}" if effect else ""), 300)
+
+
 def _question_card(row: dict) -> dict:
     """Bounded, typed display fields for a genuine owner question."""
     body = _body(row)
@@ -143,7 +174,7 @@ def _question_card(row: dict) -> dict:
         "title": title,
         "question": question,
         "context": context,
-        "choices": [_clip(choice, 300) for choice in choices[:8] if _clip(choice, 300)],
+        "choices": [projected for choice in choices[:8] if (projected := _question_choice(choice))],
         "recommendation": _clip(body.get("recommendation"), 600),
         "consequence": _clip(body.get("consequence") or body.get("impact") or body.get("if_deferred")
                              or body.get("consequence_of_deferring"), 600),
@@ -370,7 +401,6 @@ def work_items(plan: dict, rows: list[dict], windows: dict, git: _Git, now: date
     """One row per plan item, and the owner questions those items already claim."""
     oracle_mailbox, _ = _orchestrator()
     folded = oracle_mailbox.fold(rows, now)
-    answered = {row.get("in_reply_to") for row in rows if row.get("kind") == "answer"}
     date = plan["date"]
     ids = [item["id"] for item in plan["items"]]
     window = _window(rows, windows, date, first_written)
@@ -385,13 +415,27 @@ def work_items(plan: dict, rows: list[dict], windows: dict, git: _Git, now: date
             question = _owner_question(item, ids, rows, window)
             if question is not None:
                 claimed[question["msg_id"]] = item["id"]
-            done = question is not None and question["msg_id"] in answered
-            status = "answered" if done else "waiting_on_you"
-            detail = (f"Owner question {question['msg_id']} from {question.get('actor')} "
-                      f"{'answered' if done else 'is open'}."
-                      if question else "No owner question posted for this item; reply with a note.")
-            msg, sha = (question["msg_id"] if question else None), None
-            at = _stamp(question.get("ts")) if question else None
+            answer = _human_answer(question, rows) if question is not None else None
+            resolution = _question_resolution(question, rows) if question is not None else None
+            if answer is not None:
+                status = "answered"
+                detail = f"Owner question {question['msg_id']} has a direct human answer {answer['msg_id']}."
+                msg, at = answer["msg_id"], _stamp(answer.get("ts"))
+            elif resolution is not None:
+                body = _body(resolution)
+                disposition = body["disposition"]
+                status = "held" if disposition == "prerequisite" else "resolved"
+                detail = (f"Question {disposition}: {_clip(body.get('summary'), 240)} "
+                          f"({resolution['msg_id']} from {resolution.get('actor')}).")
+                msg, at = resolution["msg_id"], _stamp(resolution.get("ts"))
+            elif question is not None:
+                status = "waiting_on_you"
+                detail = f"Owner question {question['msg_id']} from {question.get('actor')} is open."
+                msg, at = question["msg_id"], _stamp(question.get("ts"))
+            else:
+                status = "waiting_on_you"
+                detail, msg, at = "No owner question posted for this item; reply with a note.", None, None
+            sha = None
         else:
             status, detail, msg, sha, at = "not_started", f"No live producer for lane {lane}.", None, None, None
         result.append({
@@ -422,7 +466,6 @@ def _reply_to(row: dict | None) -> str:
 
 def waiting_on_you(plan_id: str | None, items: list[dict], claimed: dict, rows: list[dict],
                    plan_written: str | None) -> list[dict]:
-    answered = {row.get("in_reply_to") for row in rows if row.get("kind") == "answer"}
     by_id = {row["msg_id"]: row for row in rows}
     waiting = []
     for item in items:
@@ -430,6 +473,9 @@ def waiting_on_you(plan_id: str | None, items: list[dict], claimed: dict, rows: 
             continue
         msg = item["evidence_msg_id"]
         question = by_id.get(msg) if msg else None
+        if (question is not None and (_human_answer(question, rows) is not None
+                                     or _question_resolution(question, rows) is not None)):
+            continue
         card = _question_card(question) if question is not None else {
             "title": item["title"], "question": item["title"], "context": None,
             "choices": [], "recommendation": None, "consequence": None,
@@ -441,8 +487,8 @@ def waiting_on_you(plan_id: str | None, items: list[dict], claimed: dict, rows: 
                         "asked_by": _reply_to(question) if question else "oracle",
                         "asked_at": item["evidence_at"] or plan_written, "msg_id": msg, "cli": cli})
     for row in rows:
-        if (row.get("kind") != "question" or row.get("to") != "owner" or row["msg_id"] in answered
-                or row["msg_id"] in claimed):
+        if (row.get("kind") != "question" or row.get("to") != "owner" or row["msg_id"] in claimed
+                or _human_answer(row, rows) is not None or _question_resolution(row, rows) is not None):
             continue
         to = _reply_to(row)
         card = _question_card(row)

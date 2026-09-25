@@ -27,7 +27,7 @@ const AGENT_STATUS = new Set(["online", "active", "working", "idle", "waiting", 
 const MESSAGE_STATUS = new Set(["queued", "delivered", "acknowledged", "failed"]);
 const WORK_STATUS = new Set<string>([
   "not_started", "awaiting_review", "held", "building", "validated", "failed", "withdrawn", "expired",
-  "amend_requested", "accepted", "rejected", "merged", "waiting_on_you", "answered",
+  "amend_requested", "accepted", "rejected", "merged", "waiting_on_you", "answered", "resolved",
 ]);
 const WORK_ACTION = new Set(["modify", "skip", "reprioritize"]);
 const ACCOMPLISHMENT_KIND = new Set(["merged", "validated", "focus_closed", "day_closed"]);
