@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 
 LEGACY_SUMMARY_SCHEMA = "daily-ops-summary/v1"
 SUMMARY_SCHEMA = "daily-ops-summary/v2"
@@ -71,7 +71,9 @@ _ACTORS = {"owner", "oracle", "system"}
 _INTENTS = {"question", "change_request", "reply", "receipt"}
 _REQUEST_INTENTS = {"question", "change_request"}
 _MESSAGE_STATUSES = {"queued", "delivered", "acknowledged", "failed"}
-_PRIVATE_PATHS = {"/api/daily-ops/messages", "/api/daily-ops/decisions"}
+_PRIVATE_PATHS = {
+    "/api/daily-ops/messages", "/api/daily-ops/decisions", "/api/daily-ops/summary",
+}
 _WORK_CARD_STATUSES = {"authorized", "in_progress", "blocked", "done", "draft"}
 _EVIDENCE_KINDS = {"estimate", "measured", "unrated"}
 _WORTH_TIME = {"do_now", "after_dependency", "hold", "unrated"}
@@ -630,8 +632,28 @@ def register(
 
     @app.middleware("http")
     async def _daily_ops_private_response_headers(request: Request, call_next):
+        path = request.url.path.rstrip("/")
+        if path == "/api/daily-ops/summary" and request.method in {"GET", "HEAD"}:
+            # This legacy route can contain owner recommendations. Authenticate
+            # before any projection refresh or cache read, using the same
+            # bearer/optional-Origin contract as the private owner routes.
+            try:
+                _require_owner(request)
+            except HTTPException as exc:
+                status = 403 if exc.status_code == 403 else 503
+                response = JSONResponse(
+                    {
+                        "detail": (
+                            "owner authentication required"
+                            if status == 403
+                            else "owner authentication unavailable"
+                        ),
+                    },
+                    status_code=status,
+                )
+                return _private_cache_headers(response)
         response = await call_next(request)
-        if request.url.path.rstrip("/") in _PRIVATE_PATHS:
+        if path in _PRIVATE_PATHS:
             _private_cache_headers(response)
         return response
 

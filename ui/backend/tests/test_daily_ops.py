@@ -149,9 +149,14 @@ def _request(token=None):
     })
 
 
-def _get_request(path):
-    return Request({"type": "http", "method": "GET", "path": path,
-                    "headers": [], "query_string": b"", "server": ("test", 80),
+def _get_request(path, token=None, *, method="GET", origin=None):
+    headers = [] if token is None else [
+        (b"authorization", f"Bearer {token}".encode()),
+    ]
+    if origin is not None:
+        headers.append((b"origin", origin.encode()))
+    return Request({"type": "http", "method": method, "path": path,
+                    "headers": headers, "query_string": b"", "server": ("test", 80),
                     "client": ("127.0.0.1", 1), "scheme": "http"})
 
 
@@ -207,7 +212,7 @@ def test_private_thread_cache_headers_preserve_existing_vary():
     assert response.headers["Vary"] == "Accept-Encoding, origin, Authorization"
 
 
-def test_private_path_middleware_marks_success_and_failure_but_not_summary(tmp_path):
+def test_private_path_middleware_marks_success_failure_and_summary(tmp_path):
     app = FastAPI()
     register(app, state_dir=tmp_path)
     dispatch = next(
@@ -229,8 +234,96 @@ def test_private_path_middleware_marks_success_and_failure_but_not_summary(tmp_p
     for response in (success, failure, decision):
         assert response.headers["Cache-Control"] == "no-store"
         assert response.headers["Vary"] == "Authorization, Origin"
-    assert "Cache-Control" not in summary.headers
-    assert "Vary" not in summary.headers
+    assert summary.status_code == 503
+    assert summary.headers["Cache-Control"] == "no-store"
+    assert summary.headers["Vary"] == "Authorization, Origin"
+
+
+def test_summary_http_gate_denies_before_projection_and_preserves_owner_auth_contract(
+    tmp_path,
+):
+    allowed_origin = "http://10.0.0.73:5173"
+
+    def authorize(request):
+        origin = request.headers.get("origin")
+        return (
+            request.headers.get("authorization") == "Bearer key"
+            and (origin is None or origin == allowed_origin)
+        )
+
+    app = FastAPI()
+    register(app, state_dir=tmp_path, owner_authorizer=authorize)
+    dispatch = next(
+        middleware.kwargs["dispatch"]
+        for middleware in app.user_middleware
+        if middleware.kwargs.get("dispatch", None)
+        and middleware.kwargs["dispatch"].__name__
+        == "_daily_ops_private_response_headers"
+    )
+    reached = []
+
+    async def call_next(request):
+        reached.append(request.method)
+        return JSONResponse({"work_cards": [{"private": "projection"}]})
+
+    denied = (
+        _get_request("/api/daily-ops/summary"),
+        _get_request("/api/daily-ops/summary", "wrong"),
+        _get_request("/api/daily-ops/summary/", "key", origin="http://evil.invalid"),
+        _get_request("/api/daily-ops/summary", method="HEAD"),
+    )
+    for request in denied:
+        response = asyncio.run(dispatch(request, call_next))
+        assert response.status_code == 403
+        assert json.loads(response.body) == {"detail": "owner authentication required"}
+        assert response.headers["Cache-Control"] == "no-store"
+        assert response.headers["Vary"] == "Authorization, Origin"
+        assert b"work_cards" not in response.body
+    assert reached == []
+
+    for request in (
+        _get_request("/api/daily-ops/summary", "key"),
+        _get_request(
+            "/api/daily-ops/summary", "key", method="HEAD", origin=allowed_origin,
+        ),
+    ):
+        response = asyncio.run(dispatch(request, call_next))
+        assert response.status_code == 200
+        assert response.headers["Cache-Control"] == "no-store"
+        assert response.headers["Vary"] == "Authorization, Origin"
+    assert reached == ["GET", "HEAD"]
+
+
+def test_summary_http_gate_hides_authentication_failures(tmp_path):
+    def unavailable(_request):
+        raise HTTPException(status_code=401, detail="private credential detail")
+
+    app = FastAPI()
+    register(app, state_dir=tmp_path, owner_authorizer=unavailable)
+    dispatch = next(
+        middleware.kwargs["dispatch"]
+        for middleware in app.user_middleware
+        if middleware.kwargs.get("dispatch", None)
+        and middleware.kwargs["dispatch"].__name__
+        == "_daily_ops_private_response_headers"
+    )
+    reached = []
+
+    async def call_next(_request):
+        reached.append(True)
+        return JSONResponse({"work_cards": [{"private": "projection"}]})
+
+    for method in ("GET", "HEAD"):
+        response = asyncio.run(dispatch(
+            _get_request("/api/daily-ops/summary", "key", method=method), call_next,
+        ))
+        assert response.status_code == 503
+        assert json.loads(response.body) == {"detail": "owner authentication unavailable"}
+        assert response.headers["Cache-Control"] == "no-store"
+        assert response.headers["Vary"] == "Authorization, Origin"
+        assert b"credential" not in response.body
+        assert b"work_cards" not in response.body
+    assert reached == []
 
 
 def test_valid_summary_is_source_linked_and_explicit_about_agents(tmp_path):
