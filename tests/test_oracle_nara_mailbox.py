@@ -386,6 +386,21 @@ def test_retry_repairs_only_a_verified_unterminated_torn_tail(tmp_path):
     assert path.read_bytes().startswith(prefix)
 
 
+def test_retry_preserves_a_complete_valid_final_row_when_only_newline_is_lost(tmp_path):
+    path = tmp_path / "mb.jsonl"
+    first = mailbox.post("oracle", "note", {"text": "first"}, to="owner", path=path)
+    second = mailbox.post("oracle", "note", {"text": "second"}, to="owner", path=path)
+    path.write_bytes(path.read_bytes()[:-1])  # crash after the row, before its newline
+
+    # Read semantics already admit the complete chain. The next locked writer
+    # must preserve that row, restore its delimiter durably, and link after it.
+    assert mailbox.read(path) == [first, second]
+    third = mailbox.post("oracle", "note", {"text": "third"}, to="owner", path=path)
+    assert mailbox.read(path) == [first, second, third]
+    assert third["prev_sha256"] == second["row_sha256"]
+    assert path.read_bytes().endswith(b"\n")
+
+
 def test_cross_process_same_request_appends_once_and_returns_one_duplicate(tmp_path):
     path = tmp_path / "mb.jsonl"
     question = mailbox.post("oracle", "question", {"question": "Proceed?"}, to="owner", path=path)

@@ -511,17 +511,36 @@ def read(path: Path = PATH) -> list[dict]:
 
 
 def _recover_torn_tail_locked(path: Path) -> None:
-    """Discard only a verified incomplete final write while holding the writer lock.
+    """Preserve a complete final row or discard only a verified incomplete tail.
 
     A crash or a real short write can leave bytes after the last newline.  The
-    complete prefix is first hash-verified; then only that unterminated suffix
-    is removed and the repair crosses the same file/directory durability
-    boundary.  A newline-terminated corrupt row is never silently repaired.
+    First try the whole final line: a complete hash-valid row without only its
+    newline is observed evidence and gets that newline restored.  Otherwise,
+    the complete prefix is hash-verified and only the invalid unterminated
+    suffix is removed.  Every repair crosses the file/directory durability
+    boundary; a newline-terminated corrupt row is never silently repaired.
     """
     if not path.exists():
         return
     data = path.read_bytes()
     if not data or data.endswith(b"\n"):
+        return
+    try:
+        _read_serialized(data)
+    except MailboxError:
+        pass
+    else:
+        try:
+            with path.open("r+b", buffering=0) as handle:
+                handle.seek(0, os.SEEK_END)
+                offset = handle.tell()
+                if handle.write(b"\n") != 1:
+                    handle.truncate(offset)
+                    _durably_sync(path, handle)
+                    raise MailboxError("mailbox final-newline repair is unconfirmed; reconcile before retrying")
+                _durably_sync(path, handle)
+        except OSError as exc:
+            raise MailboxError("mailbox final-newline repair is unconfirmed; reconcile before retrying") from exc
         return
     boundary = data.rfind(b"\n") + 1
     prefix = data[:boundary]
