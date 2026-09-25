@@ -27,9 +27,9 @@ Match rules (each is tested):
   to "merged" without a separately trusted append-only integration receipt.
 * ``owner_decision`` item -> actionable only when a real ``question`` to the
   owner inside the window names the item id (``ref.item`` or a whole-word title
-  match).  Only a direct ``human:*`` answer closes it; an explicit
-  ``question_resolution`` can instead withdraw, supersede or mark a
-  prerequisite without impersonating the owner.
+  match). A mailbox ``human:*`` label is unauthenticated evidence and cannot
+  close it; only an explicit, uncontested original-asker
+  ``question_resolution`` can withdraw, supersede or mark a prerequisite.
 """
 from __future__ import annotations
 
@@ -54,6 +54,10 @@ MAX_WORK_ITEMS = 12
 MAX_ROWS = 16
 MAX_IMPROVEMENTS = 40
 CODE_ROOT = Path(__file__).resolve().parents[2]  # the checkout that ships this UI code
+MAILBOX_ROW_FIELDS = {
+    "schema", "seq", "ts", "actor", "to", "kind", "in_reply_to", "body",
+    "expires_at", "prev_sha256", "msg_id", "row_sha256",
+}
 PLAN_NAME = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:-r(\d+))?\.json$")
 PLAN_READY = re.compile(r"^PLAN READY:\s*(\d{4}-\d{2}-\d{2})")
 GOAL = re.compile(r"\bG\d+(?:\.\d+)?\b")
@@ -67,6 +71,8 @@ FOLD_STATUS = {"open": "awaiting_review", "held": "held", "claimed": "building",
                "validated": "validated", "failed": "failed", "withdrawn": "withdrawn",
                "expired": "expired"}
 VERDICT_STATUS = {"accept": "accepted", "amend": "amend_requested", "reject": "rejected"}
+QUESTION_RESOLUTIONS = {"withdrawn", "superseded", "prerequisite", "informational"}
+QUESTION_UPDATE_DISPOSITIONS = {*QUESTION_RESOLUTIONS, "contested"}
 _git_lock = threading.Lock()
 _git_cache: dict = {}
 
@@ -99,6 +105,15 @@ def _clip(value: object, maximum: int = 240) -> str | None:
     return text if len(text) <= maximum else text[:maximum - 1].rstrip() + "…"
 
 
+def _first_clip(*values: object, maximum: int) -> str | None:
+    """Return the first usable bounded display value, not merely the first truthy value."""
+    for value in values:
+        clipped = _clip(value, maximum)
+        if clipped is not None:
+            return clipped
+    return None
+
+
 def _body(row: dict) -> dict:
     return row["body"] if isinstance(row.get("body"), dict) else {}
 
@@ -110,84 +125,244 @@ def _ref(row: dict) -> dict:
 
 def _title(row: dict) -> str:
     body = _body(row)
-    # Questions written by the live loop increasingly use ``question`` rather
-    # than a redundant title.  Keep a real decision visible instead of falling
-    # back to its opaque mailbox id.
     return str(body.get("title") or body.get("question") or "")
 
 
-QUESTION_RESOLUTIONS = {"withdrawn", "superseded", "prerequisite", "informational"}
-
-
 def _human_answer(question: dict, rows: list[dict]) -> dict | None:
-    """An owner question is answered only by a directly replying human row.
+    """Never promote a self-asserted ``human:*`` answer into a closure.
 
-    A relay, reviewer or original asker can add context, but cannot make an
-    owner-facing card look decided.  The mailbox's actor label remains honest
-    attribution rather than authentication.
+    Actor labels are useful evidence but the mailbox has no strong human
+    authentication.  Such rows are surfaced separately as contested context.
     """
-    answers = [row for row in rows if row.get("kind") == "answer"
-               and row.get("in_reply_to") == question.get("msg_id")
-               and isinstance(row.get("actor"), str) and row["actor"].startswith("human:")]
-    return answers[-1] if answers else None
+    return None
+
+
+def _unverified_human_claim(question: dict, rows: list[dict]) -> dict | None:
+    """Newest direct human answer/disposition claim, for non-terminal context."""
+    claims = _unverified_human_claims(question, rows)
+    return claims[-1] if claims else None
+
+
+def _unverified_human_claims(question: dict, rows: list[dict], *, after: dict | None = None) -> list[dict]:
+    """Ordered direct human claims, optionally only after an update row."""
+    question_id = question.get("msg_id") if isinstance(question, dict) else None
+    question_positions = [position for position, row in enumerate(rows)
+                          if row.get("msg_id") == question_id]
+    if (not isinstance(question_id, str) or len(question_positions) != 1
+            or rows[question_positions[0]] is not question):
+        return []
+    question_position = question_positions[0]
+    if after is not None:
+        later = [position for position, row in enumerate(rows) if row is after]
+        if len(later) != 1:
+            return []
+        question_position = max(question_position, later[0])
+    claims = []
+    for position, row in enumerate(rows):
+        if (position <= question_position or row.get("kind") not in {"answer", "question_resolution"}
+                or row.get("in_reply_to") != question_id
+                or not isinstance(row.get("actor"), str) or not row["actor"].startswith("human:")):
+            continue
+        # A duplicated terminal identity is ambiguous even if one copy has the
+        # desired actor label. Projection input normally removes it earlier;
+        # this guard keeps direct helper callers fail closed too.
+        if sum(candidate.get("msg_id") == row.get("msg_id") for candidate in rows) == 1:
+            claims.append(row)
+    return claims
+
+
+def _owner_reconciliation_request(question: dict, rows: list[dict]) -> dict | None:
+    """Newest protected-route reconciliation request; it remains non-terminal."""
+    requests = _owner_reconciliation_requests(question, rows)
+    return requests[-1] if requests else None
+
+
+def _owner_reconciliation_requests(question: dict, rows: list[dict], *, after: dict | None = None) -> list[dict]:
+    """Ordered protected-route context rows, without treating them as proof."""
+    question_id = question.get("msg_id") if isinstance(question, dict) else None
+    if not isinstance(question_id, str):
+        return []
+    start = -1
+    if after is not None:
+        later = [position for position, row in enumerate(rows) if row is after]
+        if len(later) != 1:
+            return []
+        start = later[0]
+    found = []
+    for position, row in enumerate(rows):
+        body = _body(row)
+        if (position > start and row.get("kind") == "note" and row.get("in_reply_to") == question_id
+                and body.get("via") == "authorized-owner-ui"
+                and body.get("reconciliation") == "genuine_owner_confirmation_required"):
+            found.append(row)
+    return found
 
 
 def _question_resolution(question: dict, rows: list[dict]) -> dict | None:
-    """Return the latest valid non-owner resolution, never an implied answer."""
+    """Return the latest valid original-asker/human disposition."""
     oracle_mailbox, _ = _orchestrator()
-    for row in reversed(rows):
-        if row.get("kind") != "question_resolution" or row.get("in_reply_to") != question.get("msg_id"):
+    question_id = question.get("msg_id") if isinstance(question, dict) else None
+    question_positions = [position for position, row in enumerate(rows)
+                          if row.get("msg_id") == question_id]
+    if (not isinstance(question_id, str) or len(question_positions) != 1
+            or rows[question_positions[0]] is not question):
+        return None
+    question_position = question_positions[0]
+    for position in range(len(rows) - 1, question_position, -1):
+        row = rows[position]
+        if (row.get("kind") != "question_resolution" or row.get("in_reply_to") != question_id
+                or sum(candidate.get("msg_id") == row.get("msg_id") for candidate in rows) != 1):
             continue
-        if oracle_mailbox.is_valid_question_resolution(question, row, rows):
+        if (row.get("actor") == question.get("actor")
+                and oracle_mailbox.is_valid_question_resolution(question, row, rows)):
             return row
     return None
+
+
+def _question_contest(question: dict, rows: list[dict]) -> dict | None:
+    """Newest evidence-bound contest when no later valid terminal replaces it."""
+    oracle_mailbox, _ = _orchestrator()
+    return oracle_mailbox.latest_question_contest(question, rows)
+
+
+def _question_choice(value: object) -> str | None:
+    if isinstance(value, str):
+        return _clip(value, 300)
+    if not isinstance(value, dict):
+        return None
+    label = _clip(value.get("label"), 180)
+    ident = _clip(value.get("id"), 60)
+    if label is None or ident is None:
+        return None
+    effect = _clip(value.get("effect"), 180)
+    return _clip(f"{label} [{ident}]" + (f" — {effect}" if effect else ""), 300)
 
 
 def _question_card(row: dict) -> dict:
     """Bounded, typed display fields for a genuine owner question."""
     body = _body(row)
-    question = _clip(body.get("question") or body.get("title") or body.get("text"), 300) or row["msg_id"]
-    context = _clip(body.get("context") or body.get("decision_context") or body.get("why") or body.get("text"), 1200)
+    title_from_body = _clip(body.get("title"), 300)
+    title = _first_clip(body.get("title"), body.get("question"), body.get("text"), maximum=300) or row["msg_id"]
+    question = title
+    full_question = _clip(body.get("question"), 1200)
+    short_question = _clip(body.get("question"), 300)
+    context = _first_clip(body.get("context"), body.get("decision_context"), body.get("why"), maximum=1200)
+    if context is not None and title_from_body is not None and short_question is not None and short_question != title:
+        question = short_question
+    if context is None and full_question is not None and (
+            (title_from_body is not None and short_question != title)
+            or (title_from_body is None and full_question != short_question)):
+        context = full_question
+    if context is None:
+        text = _clip(body.get("text"), 1200)
+        if text is not None and text != title:
+            context = text
     choices = body.get("options")
     if not isinstance(choices, list):
         choices = []
     return {
-        "title": question,
+        "title": title,
         "question": question,
         "context": context,
-        "choices": [_clip(choice, 300) for choice in choices[:8] if _clip(choice, 300)],
+        "choices": [projected for choice in choices[:8] if (projected := _question_choice(choice))],
         "recommendation": _clip(body.get("recommendation"), 600),
-        "consequence": _clip(body.get("consequence") or body.get("impact") or body.get("if_deferred"), 600),
+        "consequence": _clip(body.get("consequence") or body.get("impact") or body.get("if_deferred")
+                             or body.get("consequence_of_deferring"), 600),
     }
 
 
 def question_updates(rows: list[dict]) -> list[dict]:
-    """Recent non-action resolutions of owner questions, newest first.
-
-    These are deliberately separate from ``waiting_on_you``.  A prerequisite
-    explains why work cannot proceed, and a withdrawal explains why the owner
-    need not reply; neither should retain Approve/Decline controls.
-    """
+    """Recent explicit non-answer dispositions, kept separate from actions."""
+    rows = _relational_live_rows(rows)
     found = []
+
+    def add(question: dict, card: dict, update: dict) -> None:
+        found.append({**update, "question_id": question["msg_id"],
+                      "title": card["title"], "question": card["question"]})
+
     for question in rows:
         if question.get("kind") != "question" or question.get("to") != "owner":
             continue
         resolution = _question_resolution(question, rows)
-        if resolution is None:
+        contest = None if resolution is not None else _question_contest(question, rows)
+        claim = None if resolution is not None or contest is not None else _unverified_human_claim(question, rows)
+        reconciliation = (None if resolution is not None or contest is not None or claim is not None
+                          else _owner_reconciliation_request(question, rows))
+        if resolution is None and contest is None and claim is None and reconciliation is None:
             continue
-        body = _body(resolution)
         card = _question_card(question)
-        found.append({
-            "id": resolution["msg_id"], "question_id": question["msg_id"],
-            "title": card["title"], "question": card["question"],
-            "disposition": body["disposition"], "summary": _clip(body.get("summary"), 1200),
-            "reason": _clip(body.get("reason"), 1200),
-            "blocking_artifact": _clip(body.get("blocking_artifact"), 240),
-            "resolved_by": _clip(str(resolution.get("actor")), 60) or "?",
-            "resolved_at": _stamp(resolution.get("ts")),
-            "evidence_msg_ids": [value for value in body.get("evidence_msg_ids", [])
-                                 if isinstance(value, str)][:8],
-        })
+        if resolution is not None:
+            body = _body(resolution)
+            add(question, card, {
+                "id": resolution["msg_id"], "disposition": body["disposition"],
+                "summary": _clip(body.get("summary"), 1200), "reason": _clip(body.get("reason"), 1200),
+                "blocking_artifact": _clip(body.get("blocking_artifact"), 240),
+                "resolved_by": _clip(str(resolution.get("actor")), 60) or "?",
+                "resolved_at": _stamp(resolution.get("ts")),
+                "evidence_msg_ids": [value for value in body.get("evidence_msg_ids", [])
+                                     if isinstance(value, str)][:8],
+            })
+        elif contest is not None:
+            body = _body(contest)
+            provenance = body["provenance_contestation"]
+            add(question, card, {
+                "id": contest["msg_id"], "disposition": "contested",
+                "summary": _clip(body.get("title"), 1200)
+                or "A later evidence-bound provenance contest reopened this question.",
+                "reason": _clip(body.get("text"), 1200)
+                or "The contested resolution's actor label is not safe to treat as authenticated.",
+                "blocking_artifact": None,
+                "resolved_by": _clip(str(contest.get("actor")), 60) or "?",
+                "resolved_at": _stamp(contest.get("ts")),
+                "evidence_msg_ids": provenance["basis_msg_ids"][:8],
+            })
+            # A later claim remains untrusted, but contest evidence must not
+            # hide its current text or a later protected-route context row.
+            for later_claim in _unverified_human_claims(question, rows, after=contest):
+                text = _first_clip(_body(later_claim).get("text"),
+                                   _body(later_claim).get("summary"), maximum=900)
+                add(question, card, {
+                    "id": later_claim["msg_id"], "disposition": "contested",
+                    "summary": _clip("Later unverified human claim remains non-terminal"
+                                     + (f": {text}" if text else "."), 1200),
+                    "reason": "The actor label is not proof of owner identity; this is current context only.",
+                    "blocking_artifact": None,
+                    "resolved_by": _clip(str(later_claim.get("actor")), 60) or "?",
+                    "resolved_at": _stamp(later_claim.get("ts")),
+                    "evidence_msg_ids": [later_claim["msg_id"]],
+                })
+            for request in _owner_reconciliation_requests(question, rows, after=contest):
+                text = _clip(_body(request).get("text"), 900)
+                add(question, card, {
+                    "id": request["msg_id"], "disposition": "contested",
+                    "summary": _clip("Later authorized-route reconciliation remains non-terminal"
+                                     + (f": {text}" if text else "."), 1200),
+                    "reason": "The route supplies current context but repository code cannot make it durable proof of a genuine owner ruling.",
+                    "blocking_artifact": None,
+                    "resolved_by": _clip(str(request.get("actor")), 60) or "?",
+                    "resolved_at": _stamp(request.get("ts")),
+                    "evidence_msg_ids": [request["msg_id"]],
+                })
+        elif claim is not None:
+            add(question, card, {
+                "id": claim["msg_id"], "disposition": "contested",
+                "summary": "An unverified human answer claim did not close this question.",
+                "reason": "Mailbox human labels are not strong authentication; use the authorized owner UI route to reconcile the genuine owner response.",
+                "blocking_artifact": None,
+                "resolved_by": _clip(str(claim.get("actor")), 60) or "?",
+                "resolved_at": _stamp(claim.get("ts")),
+                "evidence_msg_ids": [claim["msg_id"]],
+            })
+        else:
+            add(question, card, {
+                "id": reconciliation["msg_id"], "disposition": "contested",
+                "summary": "Owner reconciliation was requested; this question remains open.",
+                "reason": "The authorized UI route carries context but repository code cannot turn it into durable human authentication or a terminal ruling.",
+                "blocking_artifact": None,
+                "resolved_by": _clip(str(reconciliation.get("actor")), 60) or "?",
+                "resolved_at": _stamp(reconciliation.get("ts")),
+                "evidence_msg_ids": [reconciliation["msg_id"]],
+            })
     found.sort(key=lambda row: row["resolved_at"] or "", reverse=True)
     return found[:10]
 
@@ -240,6 +415,140 @@ def _mailbox(repo: Path) -> list[dict]:
     return oracle_mailbox.read(repo / "run_state" / "oracle_nara_mailbox.jsonl")
 
 
+def _fallback_live_rows(rows: list[dict]) -> list[dict]:
+    """Fail-closed projection adapter until the shared quarantine API lands.
+
+    ``read`` verifies the append-only hash chain but intentionally preserves
+    hash-valid malformed evidence.  UI actions must not treat such a row as
+    live coordination state.  This local boundary is deliberately conservative
+    and can be removed once the reviewed mailbox ``live_rows`` helper is on the
+    release base.
+    """
+    oracle_mailbox, _ = _orchestrator()
+    found = []
+    for position, row in enumerate(rows):
+        if not isinstance(row, dict) or set(row) != MAILBOX_ROW_FIELDS:
+            continue
+        if row.get("schema") != oracle_mailbox.SCHEMA:
+            continue
+        if type(row.get("seq")) is not int or row["seq"] != position + 1:
+            continue
+        actor, recipient = row.get("actor"), row.get("to")
+        kind, body = row.get("kind"), row.get("body")
+        if not isinstance(actor, str) or not oracle_mailbox._actor_ok(actor):
+            continue
+        if not isinstance(recipient, str) or recipient not in oracle_mailbox.RECIPIENTS:
+            continue
+        if not isinstance(kind, str) or kind not in oracle_mailbox.KINDS:
+            continue
+        if not (actor in oracle_mailbox.KINDS[kind]
+                or (actor.startswith("human:") and kind in oracle_mailbox.HUMAN_KINDS)):
+            continue
+        if not isinstance(body, dict) or not isinstance(row.get("msg_id"), str) or not row["msg_id"]:
+            continue
+        reply = row.get("in_reply_to")
+        if reply is not None and not isinstance(reply, str):
+            continue
+        if kind in {"receipt", "withdraw", "answer", "review", "question_resolution"} and not reply:
+            continue
+        at, expires = _when(row.get("ts")), _when(row.get("expires_at"))
+        if at is None or (row.get("expires_at") is not None and expires is None):
+            continue
+        if expires is not None and expires <= at:
+            continue
+        try:
+            if kind == "plan_item":
+                oracle_mailbox.validate_plan_item(body)
+            elif kind == "receipt" and body.get("state") not in oracle_mailbox.RECEIPT_STATES:
+                continue
+            elif kind == "review" and body.get("verdict") not in oracle_mailbox.VERDICTS:
+                continue
+            elif kind == "question_resolution":
+                oracle_mailbox.validate_question_resolution(body)
+        except Exception:
+            continue
+        previous = rows[position - 1] if position else None
+        previous_sha = previous.get("row_sha256") if isinstance(previous, dict) else None
+        if row.get("prev_sha256") != previous_sha:
+            continue
+        claimed_sha = row.get("row_sha256")
+        if not isinstance(claimed_sha, str) or re.fullmatch(r"[0-9a-f]{64}", claimed_sha) is None:
+            continue
+        without_sha = dict(row)
+        without_sha.pop("row_sha256")
+        if hashlib.sha256(oracle_mailbox._canonical(without_sha)).hexdigest() != claimed_sha:
+            continue
+        msg_id = without_sha.pop("msg_id")
+        expected_id = (
+            f"{actor.split(':')[0]}-"
+            f"{hashlib.sha256(oracle_mailbox._canonical(without_sha)).hexdigest()[:16]}"
+        )
+        if msg_id != expected_id:
+            continue
+        found.append(row)
+    return _relational_live_rows(found)
+
+
+def _relational_live_rows(rows: list[dict]) -> list[dict]:
+    """Keep only first identities and replies to one preceding admitted question.
+
+    Structural validity is not enough for owner actions. A future row cannot
+    retroactively make an earlier human answer claim or resolution valid, and
+    a later duplicate id cannot replace the question object the owner originally
+    saw. The first admitted identity wins; later duplicates remain append-only
+    evidence but are not projection state. Model answer rows remain context,
+    never terminal authority.
+    """
+    admitted: list[dict] = []
+    seen_ids: set[str] = set()
+    questions: dict[str, dict] = {}
+    owner_requests: dict[str, tuple[str, str, str]] = {}
+    for row in rows:
+        msg_id = row["msg_id"]
+        if msg_id in seen_ids:
+            continue
+        seen_ids.add(msg_id)
+        kind = row.get("kind")
+        human_answer = (kind == "answer" and isinstance(row.get("actor"), str)
+                        and row["actor"].startswith("human:"))
+        if kind == "question_resolution" or human_answer:
+            question = questions.get(row.get("in_reply_to"))
+            if question is None:
+                continue
+            if kind == "question_resolution":
+                actor = row.get("actor")
+                if not (isinstance(actor, str)
+                        and (actor == question.get("actor") or actor.startswith("human:"))):
+                    continue
+            if human_answer:
+                body = _body(row)
+                if body.get("via") == "owner-ui":
+                    request_id = body.get("request_id")
+                    revision = body.get("expected_plan_revision")
+                    if (not isinstance(request_id, str)
+                            or re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", request_id) is None
+                            or body.get("target_kind") != "question"
+                            or not isinstance(revision, str)
+                            or PLAN_NAME.fullmatch(f"{revision}.json") is None):
+                        continue
+                    binding = (str(row.get("in_reply_to")), revision,
+                               json.dumps(body, sort_keys=True, separators=(",", ":")))
+                    if request_id in owner_requests and owner_requests[request_id] != binding:
+                        continue
+                    owner_requests[request_id] = binding
+        admitted.append(row)
+        if kind == "question":
+            questions[msg_id] = row
+    return admitted
+
+
+def _projection_rows(rows: list[dict]) -> list[dict]:
+    """Structurally and relationally live rows, without mutating evidence."""
+    oracle_mailbox, _ = _orchestrator()
+    shared = getattr(oracle_mailbox, "live_rows", None)
+    return _relational_live_rows(shared(rows)) if callable(shared) else _fallback_live_rows(rows)
+
+
 def _project_focus(repo: Path) -> dict:
     _, research_focus = _orchestrator()
     return research_focus.project_focus(repo)
@@ -264,8 +573,10 @@ class _Git:
                                 "--format=%H%x1f%P%x1f%cI%x1f%s") if self.available else None
                 history = [line.split("\x1f", 3) for line in (log or "").splitlines()
                            if line.count("\x1f") == 3]
-                cached = {"history": history,
-                          "log": [[sha, when, subject] for sha, _, when, subject in history]}
+                cached = {
+                    "history": history,
+                    "log": [[sha, when, subject] for sha, _, when, subject in history],
+                }
                 _git_cache.clear()  # one repo, one main head: keep the cache bounded
                 _git_cache[key] = cached
         self.history = cached["history"]
@@ -344,7 +655,7 @@ def _exact_plan_anchor(row: dict, path: str, date: str, sha256: str | None) -> b
 
 
 def _legacy_plan_anchors(rows: list[dict], catalog: dict[str, tuple[str, str | None]]) -> dict[str, str]:
-    """msg_id -> sole plan path for an unambiguous pre-reference receipt.
+    """Map an unambiguous pre-reference receipt to its sole plan path.
 
     A structured receipt with a missing or wrong field is evidence of a failed
     publication, not permission to fall back to date matching.
@@ -389,9 +700,9 @@ def _revision_window(rows: list[dict], windows: dict, date: str, name: str | Non
         -> tuple[int, float, bool]:
     """Return the evidence interval for one immutable plan revision.
 
-    The exact plan-ready receipt is the authority boundary.  Reusing ``d1`` on
+    The exact plan-ready receipt is the authority boundary. Reusing ``d1`` on
     a later revision cannot pull in an earlier item, ready note, review, branch
-    or owner question.  The date window remains only for historical plans whose
+    or owner question. The date window remains only for historical plans whose
     publication did not carry a path-and-hash reference.
     """
     if name is None or sha256 is None:
@@ -401,8 +712,6 @@ def _revision_window(rows: list[dict], windows: dict, date: str, name: str | Non
     path = f"run_state/daily_plans/{name}"
     catalog_known = catalog is not None
     catalog = catalog or {path: (date, sha256)}
-    # Keep the caller's exact content identity authoritative even if a partial
-    # catalog was supplied.
     catalog = {**catalog, path: (date, sha256)}
     exact = [row for row in rows if _exact_plan_anchor(row, path, date, sha256)]
     legacy = _legacy_plan_anchors(rows, catalog) if catalog_known else {}
@@ -414,8 +723,6 @@ def _revision_window(rows: list[dict], windows: dict, date: str, name: str | Non
         fallback = [row for row, anchored_path in anchors if anchored_path == path
                     and row.get("msg_id") in legacy]
         if not fallback:
-            # A missing or malformed publication receipt is not a date-wide
-            # grant to consume old plan items, reviews, questions or branches.
             return float("inf"), float("inf"), True
         anchor = min(fallback, key=lambda row: row["seq"])
     end = min((row["seq"] for row, anchored_path in anchors
@@ -513,7 +820,7 @@ def work_items(plan: dict, rows: list[dict], windows: dict, git: _Git, now: date
                catalog: dict[str, tuple[str, str | None]] | None = None) -> tuple[list[dict], dict]:
     """One row per plan item, and the owner questions those items already claim."""
     oracle_mailbox, _ = _orchestrator()
-    folded = oracle_mailbox.fold(rows, now)
+    folded = oracle_mailbox.fold(rows, now, already_live=True)
     date = plan["date"]
     ids = [item["id"] for item in plan["items"]]
     start, end, revision_scoped = _revision_window(
@@ -530,13 +837,8 @@ def work_items(plan: dict, rows: list[dict], windows: dict, git: _Git, now: date
             question = _owner_question(item, ids, rows, window)
             if question is not None:
                 claimed[question["msg_id"]] = item["id"]
-            answer = _human_answer(question, rows) if question is not None else None
             resolution = _question_resolution(question, rows) if question is not None else None
-            if answer is not None:
-                status = "answered"
-                detail = f"Owner question {question['msg_id']} has a direct human answer {answer['msg_id']}."
-                msg, at = answer["msg_id"], _stamp(answer.get("ts"))
-            elif resolution is not None:
+            if resolution is not None:
                 body = _body(resolution)
                 disposition = body["disposition"]
                 status = "held" if disposition == "prerequisite" else "resolved"
@@ -548,10 +850,10 @@ def work_items(plan: dict, rows: list[dict], windows: dict, git: _Git, now: date
                 detail = f"Owner question {question['msg_id']} from {question.get('actor')} is open."
                 msg, at = question["msg_id"], _stamp(question.get("ts"))
             else:
-                # A plan field alone is not an owner question.  Making it a
-                # card used to create synthetic decisions with no answer path.
-                status = "not_started"
-                detail, msg, at = "No matching owner question has been posted.", None, None
+                status = "held"
+                detail = ("Held for agent action: no matching owner question has been posted; "
+                          "Oracle or Nara must resolve the item or post a structured owner question.")
+                msg, at = None, None
             sha = None
         else:
             status, detail, msg, sha, at = "not_started", f"No live producer for lane {lane}.", None, None, None
@@ -583,6 +885,7 @@ def _reply_to(row: dict | None) -> str:
 
 def waiting_on_you(plan_id: str | None, items: list[dict], claimed: dict, rows: list[dict],
                    plan_written: str | None) -> list[dict]:
+    rows = _relational_live_rows(rows)
     by_id = {row["msg_id"]: row for row in rows}
     waiting = []
     for item in items:
@@ -590,14 +893,17 @@ def waiting_on_you(plan_id: str | None, items: list[dict], claimed: dict, rows: 
             continue
         msg = item["evidence_msg_id"]
         question = by_id.get(msg) if msg else None
-        if question is None:  # defensive: a corrupt derived work item is not actionable
+        if question is None:  # an owner-facing action must have one concrete answer target
+            continue
+        if (question is not None and (_human_answer(question, rows) is not None
+                                     or _question_resolution(question, rows) is not None)):
             continue
         card = _question_card(question)
+        cli = (f"{CLI} --kind answer --to {_reply_to(question)} --in-reply-to {msg} "
+               f"--body '{{\"text\": \"...\"}}'")
         waiting.append({"kind": "owner_decision", "id": f"{plan_id}:{item['id']}", **card,
-                        "asked_by": _reply_to(question), "asked_at": item["evidence_at"] or plan_written,
-                        "msg_id": msg,
-                        "cli": f"{CLI} --kind answer --to {_reply_to(question)} --in-reply-to {msg} "
-                               f"--body '{{\"text\": \"...\"}}'"})
+                        "asked_by": _reply_to(question),
+                        "asked_at": item["evidence_at"] or plan_written, "msg_id": msg, "cli": cli})
     for row in rows:
         if (row.get("kind") != "question" or row.get("to") != "owner" or row["msg_id"] in claimed
                 or _human_answer(row, rows) is not None or _question_resolution(row, rows) is not None):
@@ -605,7 +911,8 @@ def waiting_on_you(plan_id: str | None, items: list[dict], claimed: dict, rows: 
         to = _reply_to(row)
         card = _question_card(row)
         waiting.append({
-            "kind": "question", "id": row["msg_id"], **card,
+            "kind": "question", "id": row["msg_id"],
+            **card,
             "asked_by": _clip(str(row.get("actor")), 60) or "?", "asked_at": _stamp(row.get("ts")),
             "msg_id": row["msg_id"],
             "cli": f"{CLI} --kind answer --to {to} --in-reply-to {row['msg_id']} --body '{{\"text\": \"...\"}}'",
@@ -678,10 +985,10 @@ def accomplishments(repo: Path, rows: list[dict], windows: dict, git: _Git, now:
             for item in items:
                 if item["status"] in {"merged", "validated"}:
                     evidence = item["evidence_sha"] or item["evidence_msg_id"] or name
-                    # The latest revision keeps the established identifier.  An
-                    # older same-day revision remains visible under its own
-                    # immutable name rather than colliding with a reused dN.
-                    identifier = f"{date}:{name[:-5]}:{item['id']}" if historical else f"{date}:{item['id']}"
+                    # Older same-day revisions retain an immutable id instead
+                    # of colliding with a reused dN in the plan of record.
+                    identifier = (f"{date}:{name[:-5]}:{item['id']}"
+                                  if historical else f"{date}:{item['id']}")
                     found.append({"id": identifier, "kind": item["status"],
                                   "title": f"{date} {item['id']} ({item['goal']}): {item['title']}",
                                   "at": item["evidence_at"] or _iso(written), "evidence": evidence})
@@ -717,8 +1024,14 @@ def build(repo: Path, now: datetime) -> dict:
     repo = Path(repo)
     warnings: list[str] = []
     try:
-        rows = _mailbox(repo)
+        recorded_rows = _mailbox(repo)
+        rows = _projection_rows(recorded_rows)
         mailbox_error = None
+        omitted = len(recorded_rows) - len(rows)
+        if omitted:
+            warnings.append(
+                f"Lab mailbox contains {omitted} structurally invalid row(s); they are preserved as evidence "
+                "but omitted from live actions and statuses.")
     except Exception as exc:  # a broken hash chain is shown, not papered over
         rows, mailbox_error = [], _clip(f"{type(exc).__name__}: {exc}", 200)
         warnings.append(f"Lab mailbox is unreadable ({mailbox_error}); work statuses are not derived.")
@@ -728,7 +1041,7 @@ def build(repo: Path, now: datetime) -> dict:
     plans = plan_files(repo)
     oldest = (now.astimezone(LAB_TZ) - timedelta(days=WINDOW_DAYS)).date().isoformat()
     catalog_plans = {date: revisions for date, revisions in plans.items() if date >= oldest}
-    if plans and max(plans) not in catalog_plans:  # retain a stale plan of record
+    if plans and max(plans) not in catalog_plans:
         catalog_plans[max(plans)] = plans[max(plans)]
     catalog = _plan_catalog(repo, catalog_plans)
     windows = plan_windows(rows)
@@ -884,11 +1197,10 @@ def validate_live(value: dict, agents_ok) -> None:
                                                "resolved_at", "evidence_msg_ids"}, 10, lambda r: (
                                                    _text(r["id"], 80) and _text(r["question_id"], 80)
                                                    and _text(r["title"], 300) and _text(r["question"], 300)
-                                                   and r["disposition"] in QUESTION_RESOLUTIONS
+                                                   and r["disposition"] in QUESTION_UPDATE_DISPOSITIONS
                                                    and _text(r["summary"], 1200) and _text(r["reason"], 1200)
                                                    and _text(r["blocking_artifact"], 240, optional=True)
-                                                   and _text(r["resolved_by"], 60)
-                                                   and _time(r["resolved_at"])
+                                                   and _text(r["resolved_by"], 60) and _time(r["resolved_at"])
                                                    and isinstance(r["evidence_msg_ids"], list)
                                                    and len(r["evidence_msg_ids"]) <= 8
                                                    and all(_text(value, 80) for value in r["evidence_msg_ids"]))):

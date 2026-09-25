@@ -29,6 +29,7 @@ vi.mock("../src/api/pollhub", () => ({
 }));
 
 import DailyOpsPanel, { makeRequestId, nowLine } from "../src/components/DailyOpsPanel";
+import { DailyOpsError } from "../src/api/dailyOps";
 
 const now = "2026-09-20T08:00:00Z";
 const PLAN = "2026-09-20-r2";
@@ -75,10 +76,12 @@ function summary(overrides: Loose = {}): Loose {
       item("d5", "owner_decision", "waiting_on_you", { evidence_msg_id: "claude-81a020b8a67564fb" }),
     ],
     waiting_on_you: [
-      { kind: "owner_decision", id: `${PLAN}:d5`, title: "Item d5 title", asked_by: "claude", asked_at: now,
+      { kind: "owner_decision", id: `${PLAN}:d5`, title: "Item d5 title", question: "Item d5 title",
+        context: null, choices: [], recommendation: null, consequence: null, asked_by: "claude", asked_at: now,
         msg_id: "claude-81a020b8a67564fb",
         cli: ".venv-chroma/bin/python -m orchestrator.oracle_mailbox post --as human:derrick --kind answer --to claude --in-reply-to claude-81a020b8a67564fb --body '{\"text\": \"...\"}'" },
-      { kind: "question", id: "claude-18ae939243e70e7d", title: "Two authority rulings", asked_by: "claude",
+      { kind: "question", id: "claude-18ae939243e70e7d", title: "Two authority rulings",
+        question: "Two authority rulings", context: null, choices: [], recommendation: null, consequence: null, asked_by: "claude",
         asked_at: now, msg_id: "claude-18ae939243e70e7d", cli: "answer claude-18ae939243e70e7d" },
     ],
     question_updates: [],
@@ -190,7 +193,7 @@ describe("DailyOpsPanel", () => {
     expect(screen.getByTestId("daily-work-card-d2")).toHaveTextContent("Depends ond1");
   });
 
-  it("lists what is waiting on the owner as plain questions with decision buttons, no commands", () => {
+  it("keeps the full decision actions on plan decisions and unstructured mailbox questions", () => {
     show();
     const waiting = screen.getByTestId("daily-waiting-on-you");
     expect(within(waiting).getByRole("heading", { name: "Waiting on you" })).toBeInTheDocument();
@@ -206,9 +209,12 @@ describe("DailyOpsPanel", () => {
     expect(question).toHaveTextContent("Two authority rulings");
     expect(question).not.toHaveTextContent("answer claude-18ae939243e70e7d");
     expect(within(question).getByRole("button", { name: "Approve" })).toBeInTheDocument();
+    expect(within(question).getByRole("button", { name: "Decline" })).toBeInTheDocument();
+    expect(within(question).getByRole("button", { name: "Defer" })).toBeInTheDocument();
+    expect(within(question).getByRole("button", { name: "Reply…" })).toBeInTheDocument();
   });
 
-  it("shows the decision, context, options and recommendation instead of a log-derived title", () => {
+  it("shows structured mailbox choices as a reply-only decision", () => {
     const base = summary();
     D.summary = summary({ waiting_on_you: [{
       ...base.waiting_on_you[1], title: "Choose review shape",
@@ -220,6 +226,8 @@ describe("DailyOpsPanel", () => {
     show();
     const card = screen.getByTestId("daily-waiting-claude-18ae939243e70e7d");
     expect(card).toHaveTextContent("Should the lane change be split into three reviewed branches?");
+    expect(within(card).getByTestId("daily-waiting-claude-18ae939243e70e7d-question"))
+      .toHaveTextContent("Should the lane change be split into three reviewed branches?");
     expect(card).toHaveTextContent("The unsplit branch also loses five newer protections.");
     expect(card).toHaveTextContent("A — split it (recommended)");
     expect(card).toHaveTextContent("Recommendation: A — split it");
@@ -228,9 +236,24 @@ describe("DailyOpsPanel", () => {
     expect(within(card).getByRole("button", { name: "Choose / reply" })).toBeInTheDocument();
   });
 
+  it("does not repeat a concise owner-question headline before its long source context", () => {
+    const base = summary();
+    const title = "Should the Nara lane build on main?";
+    const context = "The Flash checkout and main have divergent inputs, so the attended lane-base decision remains open.";
+    D.summary = summary({ waiting_on_you: [{
+      ...base.waiting_on_you[1], title, question: title, context,
+      choices: ["reconcile", "pin", "hold"], recommendation: "reconcile", consequence: "Nara remains held",
+    }] });
+    show();
+    const card = screen.getByTestId("daily-waiting-claude-18ae939243e70e7d");
+    expect(within(card).queryByTestId("daily-waiting-claude-18ae939243e70e7d-question")).toBeNull();
+    expect(card).toHaveTextContent(context);
+    expect(within(card).getByRole("button", { name: "Choose / reply" })).toBeInTheDocument();
+  });
+
   it("keeps resolved and prerequisite questions in a non-action update feed", () => {
     D.summary = summary({ waiting_on_you: [], question_updates: [{
-      id: "codex-resolution-1", question_id: "oracle-old-question", title: "Timer concurrency",
+      id: "oracle-resolution-1", question_id: "oracle-old-question", title: "Timer concurrency",
       question: "Should the timer change?", disposition: "prerequisite",
       summary: "No owner decision is needed until the service audit is complete.",
       reason: "The current measurements do not establish a timer fault.",
@@ -242,33 +265,50 @@ describe("DailyOpsPanel", () => {
     expect(updates).toHaveTextContent("Updated / prerequisites");
     expect(updates).toHaveTextContent("No owner decision is needed until the service audit is complete.");
     expect(updates).toHaveTextContent("Blocking artifact: run_state/timer-audit.json");
-    expect(updates).toHaveTextContent("source codex-resolution-1");
+    expect(updates).toHaveTextContent("source oracle-resolution-1");
     expect(within(updates).queryByRole("button", { name: "Approve" })).toBeNull();
   });
 
-  it("sends an owner decision on a waiting item and shows it was sent", async () => {
+  it("shows a contested resolution as a non-action provenance update", () => {
+    D.summary = summary({ waiting_on_you: [], question_updates: [{
+      id: "codex-contest-1", question_id: "claude-question-1", title: "Restore the checkout?",
+      question: "Restore the checkout?", disposition: "contested",
+      summary: "Contested attribution; the owner question is open again.",
+      reason: "Two later self-reports say the resolution used another actor label.",
+      blocking_artifact: null, resolved_by: "codex", resolved_at: now,
+      evidence_msg_ids: ["oracle-self-report-1", "oracle-self-report-2"],
+    }] });
+    show();
+    const update = screen.getByTestId("daily-question-update-codex-contest-1");
+    expect(update).toHaveTextContent("contested");
+    expect(update).toHaveTextContent("the owner question is open again");
+    expect(within(update).queryByRole("button")).toBeNull();
+  });
+
+  it("sends a non-terminal owner reconciliation request on a waiting item", async () => {
     sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
     show();
     const planDecision = screen.getByTestId(`daily-waiting-${PLAN}:d5`);
-    fireEvent.click(within(planDecision).getByRole("button", { name: "Approve" }));
+    fireEvent.click(within(planDecision).getByRole("button", { name: "Reconcile with owner…" }));
     const editor = screen.getByTestId("daily-decision-editor");
-    fireEvent.click(within(editor).getByRole("button", { name: "Send approval" }));
+    fireEvent.change(within(editor).getByLabelText("Context for owner reconciliation"), { target: { value: "Name the exact ruling." } });
+    fireEvent.click(within(editor).getByRole("button", { name: "Request owner reconciliation" }));
     await waitFor(() => expect(D.postDecision).toHaveBeenCalledWith(expect.objectContaining({
-      accessKey: "owner-secret", targetKind: "question", targetId: "claude-81a020b8a67564fb", action: "approve",
-      expectedPlanRevision: PLAN,
+      accessKey: "owner-secret", targetKind: "question", targetId: "claude-81a020b8a67564fb", action: "reply",
+      expectedPlanRevision: PLAN, note: "Name the exact ruling.",
     })));
-    expect(await within(editor).findByText(/Sent to Oracle|Request queued/)).toBeInTheDocument();
+    expect(await within(editor).findByText(/Reconciliation request sent/)).toHaveTextContent("question remains open");
   });
 
   it("requires a note before it will send a reply to a question", async () => {
     sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
     show();
     const question = screen.getByTestId("daily-waiting-claude-18ae939243e70e7d");
-    fireEvent.click(within(question).getByRole("button", { name: "Reply…" }));
+    fireEvent.click(within(question).getByRole("button", { name: "Reconcile with owner…" }));
     const editor = screen.getByTestId("daily-decision-editor");
-    expect(within(editor).getByRole("button", { name: "Send reply" })).toBeDisabled();
-    fireEvent.change(within(editor).getByLabelText("Your reply"), { target: { value: "Proceed carefully." } });
-    fireEvent.click(within(editor).getByRole("button", { name: "Send reply" }));
+    expect(within(editor).getByRole("button", { name: "Request owner reconciliation" })).toBeDisabled();
+    fireEvent.change(within(editor).getByLabelText("Context for owner reconciliation"), { target: { value: "Proceed carefully." } });
+    fireEvent.click(within(editor).getByRole("button", { name: "Request owner reconciliation" }));
     await waitFor(() => expect(D.postDecision).toHaveBeenCalledWith(expect.objectContaining({
       targetKind: "question", targetId: "claude-18ae939243e70e7d", action: "reply", note: "Proceed carefully.",
     })));
@@ -304,6 +344,7 @@ describe("DailyOpsPanel", () => {
       note: "Wait for d1.",
     }));
     expect(await within(editor).findByText(/Sent to Oracle/)).toHaveTextContent("No execution is implied");
+    expect(editor).not.toHaveTextContent("question remains open");
   });
 
   it("retries a lost decision response with its original revision after a plan roll-over", async () => {
@@ -344,6 +385,39 @@ describe("DailyOpsPanel", () => {
     await waitFor(() => expect(D.postDecision).toHaveBeenCalledTimes(3));
     expect(D.postDecision.mock.calls[2][0]).toEqual(expect.objectContaining({
       requestId: freshId, expectedPlanRevision: newerRevision,
+    }));
+  });
+
+  it("captures the editor revision before rollover and blocks resubmit after a stale 409", async () => {
+    sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
+    D.postDecision.mockRejectedValueOnce(new DailyOpsError(409, "plan revision changed"));
+    const view = show();
+    fireEvent.click(within(screen.getByTestId("daily-work-card-d2")).getByRole("button", { name: "Ask to modify" }));
+    let editor = screen.getByTestId("daily-decision-editor");
+    fireEvent.change(within(editor).getByLabelText("Required change"), { target: { value: "Wait for d1." } });
+
+    const newerRevision = "2026-09-21-r1";
+    const base = summary();
+    D.summary = summary({ current_plan_revision: newerRevision, daily_plan: {
+      ...base.daily_plan, id: newerRevision, date: "2026-09-21", revision: "r1",
+      path: `run_state/daily_plans/${newerRevision}.json`,
+    } });
+    view.rerender(<MemoryRouter><DailyOpsPanel legacyResearchOps={null} /></MemoryRouter>);
+    editor = screen.getByTestId("daily-decision-editor");
+    fireEvent.click(within(editor).getByRole("button", { name: "Queue modification request" }));
+    expect(await within(editor).findByText(/This decision is stale/)).toBeInTheDocument();
+    expect(D.postDecision).toHaveBeenCalledWith(expect.objectContaining({ expectedPlanRevision: PLAN }));
+    expect(within(editor).getByRole("button", { name: "Queue modification request" })).toBeDisabled();
+    fireEvent.click(within(editor).getByRole("button", { name: "Queue modification request" }));
+    expect(D.postDecision).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(within(editor).getByRole("button", { name: "Cancel" }));
+    fireEvent.click(within(screen.getByTestId("daily-work-card-d4")).getByRole("button", { name: "Ask to skip" }));
+    editor = screen.getByTestId("daily-decision-editor");
+    fireEvent.click(within(editor).getByRole("button", { name: "Queue skip request" }));
+    await waitFor(() => expect(D.postDecision).toHaveBeenCalledTimes(2));
+    expect(D.postDecision.mock.calls[1][0]).toEqual(expect.objectContaining({
+      expectedPlanRevision: newerRevision,
     }));
   });
 

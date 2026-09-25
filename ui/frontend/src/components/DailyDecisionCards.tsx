@@ -50,13 +50,12 @@ export type DailyWaitingItem = {
   msgId: string | null;
 };
 
-/** A non-action owner-question disposition, derived from an append-only mailbox row. */
 export type DailyQuestionUpdate = {
   id: string;
   questionId: string;
   title: string;
   question: string;
-  disposition: "withdrawn" | "superseded" | "prerequisite" | "informational";
+  disposition: "withdrawn" | "superseded" | "prerequisite" | "informational" | "contested";
   summary: string;
   reason: string;
   blockingArtifact: string | null;
@@ -76,11 +75,16 @@ export type DailyDecisionRequest = {
   priority?: DailyOpsDecisionPriority;
 };
 
-type EditorTarget = {
+type EditorSelection = {
   kind: DailyOpsDecisionTarget;
   id: string;
   title: string;
   action: DailyOpsDecisionAction;
+};
+
+type EditorTarget = EditorSelection & {
+  /** Snapshot at editor-open time; a later poll must not silently retarget it. */
+  expectedPlanRevision: string;
 };
 
 type SubmitState =
@@ -96,7 +100,7 @@ const actionLabel: Record<DailyOpsDecisionAction, string> = {
   approve: "Approve",
   decline: "Decline",
   defer: "Defer",
-  reply: "Reply…",
+  reply: "Reconcile with owner…",
 };
 
 const submitLabel: Record<DailyOpsDecisionAction, string> = {
@@ -106,7 +110,7 @@ const submitLabel: Record<DailyOpsDecisionAction, string> = {
   approve: "Send approval",
   decline: "Send decline",
   defer: "Send defer",
-  reply: "Send reply",
+  reply: "Request owner reconciliation",
 };
 
 const phrase = (value: string) => value.replaceAll("_", " ");
@@ -131,7 +135,7 @@ const statusLabel: Record<WorkStatus, string> = {
 function badgeStyle(value: string): React.CSSProperties {
   if (["merged", "validated", "accepted", "answered", "resolved"].includes(value))
     return { color: "var(--status-ok)", background: "var(--status-ok-bg)" };
-  if (["held", "failed", "rejected", "amend_requested", "waiting_on_you", "expired", "prerequisite"].includes(value))
+  if (["held", "failed", "rejected", "amend_requested", "waiting_on_you", "expired", "prerequisite", "contested"].includes(value))
     return { color: "var(--status-warn)", background: "var(--status-warn-bg)" };
   if (["building", "awaiting_review"].includes(value))
     return { color: "var(--status-info)", background: "var(--status-info-bg)" };
@@ -152,10 +156,14 @@ function timeLabel(value: string): string {
 function WorkCard({ card, requestAvailable, openEditor }: {
   card: DailyWorkCard;
   requestAvailable: boolean;
-  openEditor: (target: EditorTarget, trigger: HTMLButtonElement) => void;
+  openEditor: (target: EditorSelection, trigger: HTMLButtonElement) => void;
 }) {
   const headline = cardHeadline(card.summary, card.title);
   const mergedAt = card.status === "merged" ? card.evidenceAt : null;
+  // Owner-decision plan rows get their one non-terminal reconciliation path
+  // below under “Waiting on you”; never render plan-level approval controls
+  // that could be mistaken for a ruling on a composite owner question.
+  const actions = card.lane === "owner_decision" ? [] : card.actions.filter(action => action !== "reply");
   return <article data-testid={`daily-work-card-${card.id}`}
     className="rounded border border-[var(--border-1)] bg-[var(--surface-1)] p-3">
     <div className="flex flex-wrap items-start justify-between gap-2">
@@ -185,8 +193,8 @@ function WorkCard({ card, requestAvailable, openEditor }: {
       </dl>
     </details>
 
-    {card.actions.length > 0 && <div className="mt-3 flex flex-wrap gap-2" aria-label={`Actions for ${headline}`}>
-      {card.actions.map(action => <button key={action} type="button" disabled={!requestAvailable}
+    {actions.length > 0 && <div className="mt-3 flex flex-wrap gap-2" aria-label={`Actions for ${headline}`}>
+      {actions.map(action => <button key={action} type="button" disabled={!requestAvailable}
         aria-describedby={!requestAvailable ? "daily-decisions-readonly" : undefined}
         onClick={event => openEditor({ kind: "work_card", id: card.id, title: headline, action }, event.currentTarget)}
         className="rounded border border-[var(--border-2)] px-3 py-1.5 text-sm text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50">
@@ -196,12 +204,10 @@ function WorkCard({ card, requestAvailable, openEditor }: {
   </article>;
 }
 
-const WAITING_ACTIONS: DailyOpsDecisionAction[] = ["approve", "decline", "defer", "reply"];
-
 function WaitingOnYou({ items, requestAvailable, openEditor }: {
   items: DailyWaitingItem[];
   requestAvailable: boolean;
-  openEditor: (target: EditorTarget, trigger: HTMLButtonElement) => void;
+  openEditor: (target: EditorSelection, trigger: HTMLButtonElement) => void;
 }) {
   return <section aria-labelledby="daily-waiting-heading" data-testid="daily-waiting-on-you"
     className="mt-4 rounded border border-[var(--status-warn)] p-3">
@@ -216,7 +222,10 @@ function WaitingOnYou({ items, requestAvailable, openEditor }: {
         const targetKind: DailyOpsDecisionTarget = "question";
         const targetId = item.msgId ?? item.id;
         const canAct = item.msgId != null;
-        const actions = item.choices.length > 0 ? ["reply" as const] : WAITING_ACTIONS;
+        // Mailbox ``human:*`` labels are not durable authentication.  A card
+        // therefore never offers a one-click thesis vote: every question takes
+        // one contextual reconciliation request through the authorized route.
+        const actions: DailyOpsDecisionAction[] = ["reply"];
         return <li key={item.id} data-testid={`daily-waiting-${item.id}`}>
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <span className="font-medium">{headline}</span>
@@ -224,7 +233,8 @@ function WaitingOnYou({ items, requestAvailable, openEditor }: {
           </div>
           <p className="mt-1 text-xs text-[var(--fg-muted)]">Asked by {ownerWord(item.askedBy)}
             {item.askedAt ? ` · ${timeLabel(item.askedAt)}` : ""}</p>
-          <p className="mt-2 text-sm" data-testid={`daily-waiting-${item.id}-question`}>{item.question}</p>
+          {item.question !== headline && <p className="mt-2 text-sm"
+            data-testid={`daily-waiting-${item.id}-question`}>{item.question}</p>}
           {item.context && <p className="mt-2 text-sm text-[var(--fg-muted)]">{item.context}</p>}
           {item.choices.length > 0 && <div className="mt-2 text-sm">
             <p className="font-medium">Choices</p>
@@ -246,7 +256,7 @@ function WaitingOnYou({ items, requestAvailable, openEditor }: {
               aria-describedby={!requestAvailable ? "daily-decisions-readonly" : undefined}
               onClick={event => openEditor({ kind: targetKind, id: targetId, title: headline, action }, event.currentTarget)}
               className="rounded border border-[var(--border-2)] px-3 py-1.5 text-sm text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50">
-              {action === "reply" && item.choices.length > 0 ? "Choose / reply" : actionLabel[action]}
+              {actionLabel[action]}
             </button>)}
           </div> : <p className="mt-2 text-xs text-[var(--fg-muted)]">No open mailbox question exists yet for this plan item; use the plan item&apos;s buttons above once one is asked, or send Oracle a note.</p>}
         </li>;
@@ -290,6 +300,7 @@ export function DailyDecisionCards({ cards, waiting, updates, planRevision, requ
   const [note, setNote] = useState("");
   const [priority, setPriority] = useState<DailyOpsDecisionPriority>("next");
   const [submit, setSubmit] = useState<SubmitState>({ kind: "idle" });
+  const [staleEditor, setStaleEditor] = useState(false);
   const [retry, setRetry] = useState<{
     fingerprint: string;
     requestId: string;
@@ -299,6 +310,7 @@ export function DailyDecisionCards({ cards, waiting, updates, planRevision, requ
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const editorGeneration = useRef(0);
   const inFlightGeneration = useRef<number | null>(null);
+  const isQuestionReconciliation = editor?.kind === "question" && editor.action === "reply";
 
   useEffect(() => {
     if (editor) editorRef.current?.focus();
@@ -308,14 +320,16 @@ export function DailyDecisionCards({ cards, waiting, updates, planRevision, requ
     editorGeneration.current += 1;
   }, []);
 
-  function openEditor(target: EditorTarget, trigger: HTMLButtonElement) {
+  function openEditor(target: EditorSelection, trigger: HTMLButtonElement) {
+    if (!planRevision) return;
     editorGeneration.current += 1;
     triggerRef.current = trigger;
-    setEditor(target);
+    setEditor({ ...target, expectedPlanRevision: planRevision });
     setNote("");
     setPriority("next");
     setSubmit({ kind: "idle" });
     setRetry(null);
+    setStaleEditor(false);
   }
 
   function closeEditor() {
@@ -324,13 +338,14 @@ export function DailyDecisionCards({ cards, waiting, updates, planRevision, requ
     setNote("");
     setSubmit({ kind: "idle" });
     setRetry(null);
+    setStaleEditor(false);
     window.setTimeout(() => triggerRef.current?.focus(), 0);
   }
 
   async function send(event: React.FormEvent) {
     event.preventDefault();
     const generation = editorGeneration.current;
-    if (!editor || !planRevision || !canRequest || ["submitting", "queued"].includes(submit.kind) ||
+    if (!editor || staleEditor || !canRequest || ["submitting", "queued"].includes(submit.kind) ||
         inFlightGeneration.current === generation ||
         (["modify", "reply"].includes(editor.action) && !note.trim())) return;
     const normalizedNote = note.trim();
@@ -339,11 +354,8 @@ export function DailyDecisionCards({ cards, waiting, updates, planRevision, requ
       editor.action === "reprioritize" ? priority : null,
     ]);
     const prior = retry?.fingerprint === fingerprint ? retry : null;
-    // Keep the revision paired with its request id. A summary poll may observe
-    // a newer plan after a lost response, but this click is still a retry of
-    // the original durable request, not a new decision on the newer plan.
     const ident = prior?.requestId ?? requestId();
-    const expectedPlanRevision = prior?.expectedPlanRevision ?? planRevision;
+    const expectedPlanRevision = prior?.expectedPlanRevision ?? editor.expectedPlanRevision;
     inFlightGeneration.current = generation;
     setSubmit({ kind: "submitting" });
     try {
@@ -364,6 +376,7 @@ export function DailyDecisionCards({ cards, waiting, updates, planRevision, requ
       const detail = error instanceof DailyOpsError ? error.detail : String(error);
       const uncertain = !(error instanceof DailyOpsError) || error.status >= 500;
       setRetry(uncertain ? { fingerprint, requestId: ident, expectedPlanRevision } : null);
+      setStaleEditor(error instanceof DailyOpsError && error.status === 409);
       setSubmit({ kind: "failed", message: uncertain
         ? `Delivery unconfirmed; retry safely with the same request ID. ${detail}`
         : error instanceof DailyOpsError && error.status === 409
@@ -391,14 +404,14 @@ export function DailyDecisionCards({ cards, waiting, updates, planRevision, requ
       {readonlyReason}
     </p>}
 
-      <WaitingOnYou items={waiting} requestAvailable={requestAvailable} openEditor={openEditor} />
-      <QuestionUpdates updates={updates} />
+    <WaitingOnYou items={waiting} requestAvailable={requestAvailable} openEditor={openEditor} />
+    <QuestionUpdates updates={updates} />
 
     {editor && <section ref={editorRef} tabIndex={-1} data-testid="daily-decision-editor"
       aria-labelledby="daily-decision-editor-heading"
       className="mt-3 rounded border border-[var(--accent)] bg-[var(--surface-2)] p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <div><p className="text-xs font-semibold uppercase tracking-wide text-[var(--fg-muted)]">Owner direction · {phrase(editor.kind)}</p>
+        <div><p className="text-xs font-semibold uppercase tracking-wide text-[var(--fg-muted)]">{isQuestionReconciliation ? "Owner reconciliation" : "Owner direction"} · {phrase(editor.kind)}</p>
           <h4 id="daily-decision-editor-heading" className="mt-1 font-semibold">{actionLabel[editor.action]} · {editor.title}</h4></div>
         <button type="button" onClick={closeEditor} className="rounded px-2 py-1 text-sm text-[var(--accent)]">Cancel</button>
       </div>
@@ -409,19 +422,25 @@ export function DailyDecisionCards({ cards, waiting, updates, planRevision, requ
             <option value="now">Now</option><option value="next">Next</option><option value="later">Later</option>
           </select></label>}
         <label htmlFor="daily-decision-note" className="block text-sm font-medium">
-          {editor.action === "modify" ? "Required change" : editor.action === "reply" ? "Your reply" : "Note (optional)"}
+          {editor.action === "modify" ? "Required change" : editor.action === "reply" ? "Context for owner reconciliation" : "Note (optional)"}
         </label>
         <textarea id="daily-decision-note" rows={3} maxLength={3000} value={note}
           onChange={event => { setNote(event.target.value); setSubmit({ kind: "idle" }); }}
-          placeholder={editor.action === "modify" ? "What should change?" : editor.action === "reply" ? "Write your reply…" : "Add context for Oracle…"}
+          placeholder={editor.action === "modify" ? "What should change?" : editor.action === "reply" ? "State the specific ruling and context that needs genuine owner confirmation…" : "Add context for Oracle…"}
           className="mt-1 w-full rounded border border-[var(--border-2)] bg-[var(--surface-1)] px-3 py-2 text-sm" />
-        <p className="mt-2 text-xs text-[var(--fg-muted)]">This sends owner direction to Oracle. It does not execute work or create scientific credit.</p>
+        <p className="mt-2 text-xs text-[var(--fg-muted)]">{isQuestionReconciliation
+          ? "This sends contextual reconciliation through the authorized owner route. It remains non-terminal: repository code cannot prove a genuine owner identity or close this question."
+          : "This sends owner direction to Oracle. It does not execute work or create scientific credit."}</p>
         {!canRequest && <div className="mt-2 rounded border border-[var(--status-warn)] bg-[var(--status-warn-bg)] p-2 text-sm">
           <p>{blockedReason ?? "Owner decision controls are unavailable."}</p>
           <button type="button" onClick={onRequireAccess} className="mt-1 text-[var(--accent)]">Open owner access controls ↓</button>
         </div>}
+        {staleEditor && <p data-testid="daily-decision-stale"
+          className="mt-2 rounded border border-[var(--status-warn)] bg-[var(--status-warn-bg)] p-2 text-sm">
+          This editor is bound to an older plan or target. Cancel it and reopen the current card before sending again.
+        </p>}
         <div className="mt-3 flex flex-wrap items-center gap-3">
-          <button type="submit" disabled={!canRequest || ["submitting", "queued"].includes(submit.kind) ||
+          <button type="submit" disabled={!canRequest || staleEditor || ["submitting", "queued"].includes(submit.kind) ||
             (["modify", "reply"].includes(editor.action) && !note.trim())}
             className="rounded bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--accent-fg)] disabled:cursor-not-allowed disabled:opacity-50">
             {submit.kind === "submitting" ? "Sending…" : submitLabel[editor.action]}
@@ -432,7 +451,9 @@ export function DailyDecisionCards({ cards, waiting, updates, planRevision, requ
       <div aria-live="polite" className="mt-2 min-h-5 text-sm">
         {submit.kind === "failed" && <p className="text-[var(--status-bad)]">{submit.message}</p>}
         {submit.kind === "queued" && <p className="text-[var(--status-info)]">
-          {submit.receipt.duplicate ? "Already sent to Oracle" : "Sent to Oracle"}. No execution is implied.{" "}
+          {isQuestionReconciliation
+            ? <>{submit.receipt.duplicate ? "Reconciliation request already sent" : "Reconciliation request sent"}. The question remains open; no owner ruling or execution is implied.{" "}</>
+            : <>{submit.receipt.duplicate ? "Already sent to Oracle" : "Sent to Oracle"}. No execution is implied.{" "}</>}
           <details className="inline text-xs text-[var(--fg-muted)]">
             <summary className="inline cursor-pointer text-[var(--accent)]">Request id</summary>
             {" "}{submit.receipt.request_id}

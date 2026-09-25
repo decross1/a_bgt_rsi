@@ -885,7 +885,11 @@ def configured_bridge(state_dir: Path, config_path: str | None, *,
         return None
 
 
-_QUESTION_ACTIONS = {"approve", "decline", "defer", "reply"}
+# The append-only mailbox has no cryptographic identity for a ``human:*``
+# label.  The authorized UI can relay context, but it cannot manufacture a
+# terminal owner ruling.  Keep question interaction to one explicit
+# reconciliation reply rather than offering a thesis vote.
+_QUESTION_ACTIONS = {"reply"}
 _PLAN_ACTIONS = {"modify", "skip", "reprioritize", "approve", "decline", "defer"}
 
 
@@ -896,7 +900,11 @@ class LabMailboxRouter:
     contract as ``DailyOpsBridge.authorize`` (``_bearer_authorize``/`_owner_token`,
     reading the same private ``owner.key``). It does not touch the (dead) Pi
     relay's admission/envelope machinery; it writes directly to
-    ``run_state/oracle_nara_mailbox.jsonl`` via ``orchestrator.oracle_mailbox.post``.
+    ``run_state/oracle_nara_mailbox.jsonl`` via the mailbox's locked,
+    idempotent append path. A new plan-target request linearizes at the final
+    ``current_plan`` read under that writer lock. The row is non-executing and
+    remains bound to ``body.target.plan``; any later consumer must ignore it
+    after that revision stops being current.
     """
 
     def __init__(self, config: dict, *, repo_root: Path):
@@ -945,11 +953,13 @@ class LabMailboxRouter:
         target_kind, target_id, action = payload["target_kind"], payload["target_id"], payload["action"]
         note = payload.get("note") or ""
         if target_kind == "question":
-            body = {"text": note or action, "via": "owner-ui", "authority": "owner, D-084",
-                    "request_id": payload["request_id"], "target_kind": target_kind}
-            if action != "reply":
-                body["decision"] = action
-            exact = (row.get("actor") == self.owner_actor and row.get("kind") == "answer"
+            body = {"title": "Owner reconciliation requested", "text": note,
+                    "via": "authorized-owner-ui",
+                    "authority": "authorized route; not durable human authentication",
+                    "reconciliation": "genuine_owner_confirmation_required",
+                    "request_id": payload["request_id"], "target_kind": target_kind,
+                    "expected_plan_revision": payload["expected_plan_revision"]}
+            exact = (row.get("actor") == self.owner_actor and row.get("kind") == "note"
                      and row.get("in_reply_to") == target_id and row.get("body") == body)
         else:
             body = {
@@ -981,9 +991,6 @@ class LabMailboxRouter:
         mailbox_path = self.repo_root / "run_state" / "oracle_nara_mailbox.jsonl"
         target_kind, target_id, action = payload["target_kind"], payload["target_id"], payload["action"]
         note = payload.get("note") or ""
-        # The receipt is immutable evidence of the original owner action. A
-        # retry must remain safe even after a later daily plan has replaced the
-        # revision it originally targeted.
         prior = self._prior_owner_request(oracle_mailbox, mailbox_path, payload)
         if prior is not None:
             return self._decision_receipt(prior, payload, duplicate=True)
@@ -991,23 +998,26 @@ class LabMailboxRouter:
             if action not in _QUESTION_ACTIONS:
                 raise HTTPException(422, "action is not valid for a question")
             rows = oracle_mailbox.read(mailbox_path)
-            question = next((r for r in rows if r.get("msg_id") == target_id and r.get("kind") == "question"), None)
+            question = next((r for r in oracle_mailbox.live_rows(rows)
+                             if r.get("msg_id") == target_id and r.get("kind") == "question"), None)
             if question is None:
                 raise HTTPException(409, "owner decision target question is no longer present")
             to = str(question.get("actor", "oracle")).split(":")[0]
             if to not in {"oracle", "nara", "claude", "codex"}:
                 to = "oracle"
-            # Every action on a concrete question is a direct owner answer.
-            # A separate note leaves the question open and makes the UI lie
-            # about progress; the optional structured fields preserve whether
-            # this was approve/decline/defer or free-form text.
-            body = {"text": note or action, "via": "owner-ui", "authority": "owner, D-084",
-                    "request_id": payload["request_id"], "target_kind": target_kind}
-            if action != "reply":
-                body["decision"] = action
+            # The bearer-gated UI route is the only reconciliation path we can
+            # offer here, but a mailbox row cannot prove which human held that
+            # bearer.  Preserve the reply as non-terminal context; it never
+            # closes the question or purports to be a verified owner ruling.
+            body = {"title": "Owner reconciliation requested", "text": note,
+                    "via": "authorized-owner-ui",
+                    "authority": "authorized route; not durable human authentication",
+                    "reconciliation": "genuine_owner_confirmation_required",
+                    "request_id": payload["request_id"], "target_kind": target_kind,
+                    "expected_plan_revision": payload["expected_plan_revision"]}
             try:
                 row, duplicate = oracle_mailbox.post_once(
-                    self.owner_actor, "answer", body, to=to, in_reply_to=question["msg_id"],
+                    self.owner_actor, "note", body, to=to, in_reply_to=question["msg_id"],
                     idempotency_key=payload["request_id"], require_open_question=True, path=mailbox_path)
             except oracle_mailbox.MailboxError as exc:
                 raise HTTPException(409, str(exc)) from exc
@@ -1016,9 +1026,6 @@ class LabMailboxRouter:
                 raise HTTPException(422, "action is not valid for a plan target")
             current = current_plan(self.repo_root)
             if current is None or payload["expected_plan_revision"] != current[0]:
-                # An exact request can race a plan roll-over between the first
-                # locked lookup and this mutable revision check. Recheck the
-                # durable request before returning a stale-plan conflict.
                 prior = self._prior_owner_request(oracle_mailbox, mailbox_path, payload)
                 if prior is not None:
                     return self._decision_receipt(prior, payload, duplicate=True)
@@ -1041,9 +1048,27 @@ class LabMailboxRouter:
             }
             if action == "reprioritize":
                 body["priority"] = payload["priority"]
+
+            def linearize_on_current_plan() -> None:
+                """The last currentness read before append is this request's linearization point.
+
+                A plan rollover after this check overlaps the request and orders
+                after it.  The durable row remains revision-scoped in ``target``;
+                consumers must never apply it to another plan revision.
+                """
+                latest = current_plan(self.repo_root)
+                if latest is None or latest[0] != payload["expected_plan_revision"]:
+                    raise oracle_mailbox.MailboxError("plan revision changed; refresh before requesting changes")
+                latest_id, latest_plan = latest
+                still_present = (target_id == latest_id if target_kind == "agenda" else
+                                 any(candidate.get("id") == target_id for candidate in latest_plan["items"]))
+                if not still_present:
+                    raise oracle_mailbox.MailboxError("owner decision target is no longer current")
             try:
                 row, duplicate = oracle_mailbox.post_once(
-                    self.owner_actor, "note", body, to=to, idempotency_key=payload["request_id"], path=mailbox_path)
+                    self.owner_actor, "note", body, to=to,
+                    idempotency_key=payload["request_id"], path=mailbox_path,
+                    linearization_check=linearize_on_current_plan)
             except oracle_mailbox.MailboxError as exc:
                 raise HTTPException(409, str(exc)) from exc
         return self._decision_receipt(row, payload, duplicate=duplicate)

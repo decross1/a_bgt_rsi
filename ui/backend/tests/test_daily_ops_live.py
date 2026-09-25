@@ -51,6 +51,46 @@ class Box:
         return oracle_mailbox.post(actor, kind, body, to=to, in_reply_to=reply, path=self.path)
 
 
+def _append_hash_valid_row(box, *, schema, actor, kind, body, to, reply=None, msg_id=None):
+    """Append malformed-but-chain-valid evidence without the validated writer."""
+    rows = oracle_mailbox.read(box.path)
+    row = {
+        "schema": schema, "seq": len(rows) + 1, "ts": datetime.now(timezone.utc).isoformat(),
+        "actor": actor, "to": to, "kind": kind, "in_reply_to": reply, "body": body,
+        "expires_at": None, "prev_sha256": rows[-1]["row_sha256"] if rows else None,
+    }
+    row["msg_id"] = (msg_id
+                     or f"{actor.split(':')[0]}-"
+                     f"{hashlib.sha256(oracle_mailbox._canonical(row)).hexdigest()[:16]}")
+    row["row_sha256"] = hashlib.sha256(oracle_mailbox._canonical(row)).hexdigest()
+    with box.path.open("a") as handle:
+        handle.write(json.dumps(row) + "\n")
+    return row
+
+
+def _contest(box, resolution, *, reporter="oracle"):
+    """Append the two structured self-reports and conservative reviewer contest used by seq680."""
+    first = box.post(reporter, "note", {
+        "title": "NOT MINE", "text": "I used the wrong actor label.",
+        "ref": {"posted_row": f"{resolution['msg_id']} (seq {resolution['seq']})",
+                "command": f"oracle_mailbox post --as {resolution['actor']}"},
+    })
+    second = box.post(reporter, "note", {
+        "title": "Plan note with self-report", "text": "Preserve the contaminated row.",
+        "ref": {"self_reported_fault":
+                f"seq {resolution['seq']} posted with --as {resolution['actor']} by this session"},
+    })
+    contest = box.post("codex", "note", {
+        "title": "Contested attribution", "text": "Preserve the row and reopen the question.",
+        "provenance_contestation": {
+            "contested_msg_id": resolution["msg_id"], "claimed_actor": resolution["actor"],
+            "reported_actual_actor": reporter, "basis_msg_ids": [first["msg_id"], second["msg_id"]],
+            "effect": "invalidate_for_projection",
+        },
+    }, reply=resolution["msg_id"])
+    return first, second, contest
+
+
 def _git(repo, *args, at=None):
     env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
@@ -122,6 +162,13 @@ def test_plan_review_is_the_review_replying_to_the_plan_ready_note_for_that_file
     old = box.post("oracle", "note", {"title": "PLAN READY: 2026-09-23", "text": "x",
                                       "ref": {"path": "run_state/daily_plans/2026-09-23.json", "sha256": "0"}})
     box.post("claude", "review", {"verdict": "reject", "summary": "old"}, reply=old["msg_id"])
+    mismatched = box.post("oracle", "note", {
+        "title": "PLAN READY: 2026-09-23 (r2)",
+        "ref": {"path": "run_state/daily_plans/2026-09-23-r2.json", "sha256": "f" * 64},
+    })
+    box.post("claude", "review", {"verdict": "amend", "summary": "Wrong content."},
+             reply=mismatched["msg_id"])
+    assert _summary(repo)["daily_plan"]["review"] is None
     note = box.post("oracle", "note", {"title": "PLAN READY: 2026-09-23 (r2)", "text": "x",
                                        "ref": {"path": "run_state/daily_plans/2026-09-23-r2.json",
                                                "sha256": sha}})
@@ -164,15 +211,15 @@ def test_same_day_revision_uses_exact_plan_ready_window_not_reused_item_ids(repo
         "title": "READY FOR REVIEW: oracle/2026-09-23-d3",
         "ref": {"branch": "oracle/2026-09-23-d3", "item": "d3"},
     })
-    box.post("claude", "review", {"verdict": "reject", "summary": "Old revision."}, reply=old_d3["msg_id"])
+    box.post("claude", "review", {"verdict": "reject", "summary": "Old revision."},
+             reply=old_d3["msg_id"])
     old_d4 = box.post("oracle", "note", {
         "title": "READY FOR REVIEW: oracle/2026-09-23-d4",
         "ref": {"branch": "oracle/2026-09-23-d4", "item": "d4"},
     })
-    box.post("claude", "review", {"verdict": "amend", "summary": "Old revision."}, reply=old_d4["msg_id"])
+    box.post("claude", "review", {"verdict": "amend", "summary": "Old revision."},
+             reply=old_d4["msg_id"])
     box.post("claude", "question", {"question": "Old d5?", "ref": {"item": "d5"}}, to="owner")
-    # The old d3 branch is also already on main.  A new revision must not turn
-    # that durable historical fact into a current-R9 completion.
     _git(repo, "init", "-q", "-b", "main")
     _git(repo, "commit", "-q", "--allow-empty", "-m", "base")
     _git(repo, "checkout", "-q", "-b", "oracle/2026-09-23-d3")
@@ -186,8 +233,6 @@ def test_same_day_revision_uses_exact_plan_ready_window_not_reused_item_ids(repo
         _item("d4", "oracle_dev"),
         _item("d5", "owner_decision"),
     ])
-    # It names R10's branch but predates the exact R10 publication, so it is not
-    # admissible evidence for the revision.
     box.post("oracle", "note", {
         "title": "READY FOR REVIEW: oracle/2026-09-23-d3-r10",
         "ref": {"branch": "oracle/2026-09-23-d3-r10", "item": "d3"},
@@ -198,16 +243,15 @@ def test_same_day_revision_uses_exact_plan_ready_window_not_reused_item_ids(repo
                 "sha256": hashlib.sha256(current.read_bytes()).hexdigest()},
     })
     box.post("claude", "review", {"verdict": "amend", "summary": "R10 needs revision.",
-                                           "accepted_items": ["d2", "d4"]},
+                                   "accepted_items": ["d2", "d4"]},
              reply=current_ready["msg_id"])
 
     value = _summary(repo)
     assert value["daily_plan"]["review"]["verdict"] == "amend"
     assert value["daily_plan"]["review"]["accepted_items"] == ["d2", "d4"]
     assert {row["id"]: row["status"] for row in value["work_items"]} == {
-        "d1": "not_started", "d3": "not_started", "d4": "not_started", "d5": "not_started",
+        "d1": "not_started", "d3": "not_started", "d4": "not_started", "d5": "held",
     }
-    # The completed R9 plan remains an accomplishment, but not a current R10 badge.
     assert any(row["kind"] == "validated" and row["id"] == "2026-09-23:2026-09-23-r9:d1"
                for row in value["accomplishments"])
     assert old_ready["msg_id"] != current_ready["msg_id"]
@@ -225,8 +269,6 @@ def test_plan_window_ignores_foreign_and_bad_hash_anchors_and_first_duplicate_wi
         "title": "PLAN READY: 2026-09-23-r10",
         "ref": {"path": old.relative_to(repo).as_posix(), "sha256": old_sha},
     })
-    # Neither a different actor nor Oracle naming the wrong content may start
-    # R11 or terminate R10's evidence interval.
     box.post("claude", "note", {
         "title": "PLAN READY: 2026-09-23-r11",
         "ref": {"path": current.relative_to(repo).as_posix(), "sha256": current_sha},
@@ -575,7 +617,7 @@ def test_oracle_dev_item_follows_exact_ready_review_and_never_infers_merge(repo)
     assert value["accomplishments"] == []
 
 
-def test_owner_cards_require_a_real_question_and_direct_human_answer_or_explicit_resolution(repo):
+def test_owner_cards_require_a_real_question_and_non_owner_explicit_resolution(repo):
     _plan(repo, "2026-09-23.json", [_item("d5", "owner_decision"), _item("d6", "owner_decision")])
     box = Box(repo)
     box.post("oracle", "note", {"title": "PLAN READY: 2026-09-23", "text": "x"})
@@ -591,7 +633,8 @@ def test_owner_cards_require_a_real_question_and_direct_human_answer_or_explicit
     value = _summary(repo)
     items = {i["id"]: i for i in value["work_items"]}
     assert items["d5"]["status"] == "waiting_on_you"
-    assert items["d6"]["status"] == "not_started"  # a plan field is not an actual question
+    assert items["d6"]["status"] == "held"
+    assert "Oracle or Nara must" in items["d6"]["detail"]
     waiting = {w["id"]: w for w in value["waiting_on_you"]}
     assert set(waiting) == {"2026-09-23:d5", other["msg_id"]}
     assert waiting["2026-09-23:d5"]["msg_id"] == asked["msg_id"]
@@ -605,28 +648,313 @@ def test_owner_cards_require_a_real_question_and_direct_human_answer_or_explicit
     assert waiting[other["msg_id"]]["cli"].startswith(
         ".venv-chroma/bin/python -m orchestrator.oracle_mailbox post --as human:derrick")
 
-    # A relay is context only; it must not mark the owner's question answered.
+    box.post("claude", "answer", {"text": "relayed owner preference"}, to="oracle", reply=asked["msg_id"])
+    value = _summary(repo)
+    assert value["work_items"][0]["status"] == "waiting_on_you"
+    assert value["work_items"][1]["status"] == "held"
+
+    box.post("human:derrick", "answer", {"text": "Install on main."}, to="claude", reply=asked["msg_id"])
     box.post("claude", "answer", {"text": "relayed"}, to="oracle", reply=other["msg_id"])
     value = _summary(repo)
     assert value["work_items"][0]["status"] == "waiting_on_you"
+    # Model relays and human labels are context, not authenticated closures.
     assert {w["id"] for w in value["waiting_on_you"]} == {"2026-09-23:d5", other["msg_id"]}
-
-    box.post("human:derrick", "answer", {"text": "Use the reviewed worktree."}, to="claude", reply=asked["msg_id"])
-    box.post("oracle", "question_resolution", {
-        "disposition": "superseded", "summary": "The standalone ruling is superseded by the reviewed plan.",
-        "reason": "It duplicates the direct owner decision.", "evidence_msg_ids": [asked["msg_id"]],
+    assert any(row["disposition"] == "contested" for row in value["question_updates"])
+    other_resolution = box.post("oracle", "question_resolution", {
+        "disposition": "superseded", "summary": "The later plan replaced this ruling.",
+        "reason": "No owner action remains.",
     }, to="owner", reply=other["msg_id"])
     value = _summary(repo)
-    assert value["work_items"][0]["status"] == "answered"
-    assert value["waiting_on_you"] == []
-    assert value["question_updates"] == [{
-        "id": value["question_updates"][0]["id"], "question_id": other["msg_id"],
-        "title": "An unrelated ruling", "question": "An unrelated ruling", "disposition": "superseded",
-        "summary": "The standalone ruling is superseded by the reviewed plan.",
-        "reason": "It duplicates the direct owner decision.", "blocking_artifact": None,
-        "resolved_by": "oracle", "resolved_at": value["question_updates"][0]["resolved_at"],
-        "evidence_msg_ids": [asked["msg_id"]],
+    assert [row["id"] for row in value["waiting_on_you"]] == ["2026-09-23:d5"]
+    assert any(row["id"] == other_resolution["msg_id"] and row["disposition"] == "superseded"
+               for row in value["question_updates"])
+
+    d6_question = box.post("oracle", "question", {"title": "Item d6", "ref": {"item": "d6"}}, to="owner")
+    resolution = box.post("oracle", "question_resolution", {
+        "disposition": "superseded", "summary": "Oracle selected the replacement path.",
+        "reason": "The owner choice is no longer needed.",
+    }, to="owner", reply=d6_question["msg_id"])
+    value = _summary(repo)
+    assert value["work_items"][1]["status"] == "resolved"
+    assert value["work_items"][1]["evidence_msg_id"] == resolution["msg_id"]
+    assert [row["id"] for row in value["waiting_on_you"]] == ["2026-09-23:d5"]
+    assert {other_resolution["msg_id"], resolution["msg_id"]} <= {
+        row["id"] for row in value["question_updates"]
+    }
+
+
+@pytest.mark.parametrize("terminal", ["answer", "question_resolution"])
+def test_hash_valid_wrong_schema_terminal_cannot_hide_owner_card(repo, terminal):
+    path = _plan(repo, "2026-09-23-r2.json", [_item("d5", "owner_decision")])
+    box = Box(repo)
+    box.post("oracle", "note", {
+        "title": "PLAN READY: 2026-09-23-r2",
+        "ref": {"path": path.relative_to(repo).as_posix(),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest()},
+    })
+    question = box.post("claude", "question", {
+        "title": "Choose the lab profile", "ref": {"item": "d5"},
+    }, to="owner")
+    if terminal == "answer":
+        actor, body, to = "human:derrick", {"text": "Use C4."}, "claude"
+    else:
+        actor, body, to = "claude", {
+            "disposition": "superseded", "summary": "Claimed complete.",
+            "reason": "This row has the wrong schema.",
+        }, "owner"
+    malformed = _append_hash_valid_row(
+        box, schema="oracle-nara-mailbox/v999", actor=actor, kind=terminal,
+        body=body, to=to, reply=question["msg_id"])
+
+    # The source remains readable and append-only, but the action projection
+    # does not let the malformed terminal row close a real question.
+    assert oracle_mailbox.read(box.path)[-1]["msg_id"] == malformed["msg_id"]
+    value = _summary(repo)
+    assert value["work_items"][0]["status"] == "waiting_on_you"
+    assert [card["msg_id"] for card in value["waiting_on_you"]] == [question["msg_id"]]
+    assert any("structurally invalid row" in warning for warning in value["warnings"])
+
+
+@pytest.mark.parametrize("terminal", ["answer", "question_resolution"])
+def test_hash_valid_terminal_before_its_question_cannot_close_future_card(repo, monkeypatch, terminal):
+    box = Box(repo)
+    box.post("oracle", "note", {"title": "A preceding valid row"})
+    future_id = "claude-future-question"
+    if terminal == "answer":
+        actor, body, to = "human:derrick", {
+            "text": "Approve", "via": "owner-ui", "request_id": "11111111-1111-1111-1111-111111111111",
+            "target_kind": "question", "expected_plan_revision": "2026-09-25-r5",
+        }, "claude"
+    else:
+        actor, body, to = "claude", {
+            "disposition": "superseded", "summary": "Claimed complete.",
+            "reason": "This terminal predates the question it names.",
+        }, "owner"
+    terminal_row = _append_hash_valid_row(
+        box, schema=oracle_mailbox.SCHEMA, actor=actor, kind=terminal,
+        body=body, to=to, reply=future_id)
+    question = _append_hash_valid_row(
+        box, schema=oracle_mailbox.SCHEMA, actor="claude", kind="question",
+        body={"title": "The real future question"}, to="owner", msg_id=future_id)
+    recorded = oracle_mailbox.read(box.path)
+    assert [row["seq"] for row in recorded[-2:]] == [2, 3]
+    assert terminal_row["row_sha256"] == recorded[1]["row_sha256"]
+    if terminal == "answer":
+        assert live._human_answer(question, recorded) is None
+    else:
+        assert live._question_resolution(question, recorded) is None
+    assert terminal_row not in live._fallback_live_rows(recorded)
+    assert [(card["msg_id"], card["title"]) for card in
+            live.waiting_on_you(None, [], {}, recorded, None)] == [
+                (future_id, "The real future question")]
+
+    # Exercise the relational guard independently of whichever reviewed
+    # structural helper is present on the release base.
+    monkeypatch.setattr(oracle_mailbox, "live_rows", lambda rows: rows, raising=False)
+    projected = live._projection_rows(recorded)
+    assert terminal_row not in projected and question in projected
+    waiting = live.waiting_on_you(None, [], {}, projected, None)
+    assert [(card["msg_id"], card["title"]) for card in waiting] == [
+        (future_id, "The real future question")]
+
+
+def test_duplicate_question_id_cannot_replace_original_owner_card(repo):
+    path = _plan(repo, "2026-09-23-r2.json", [_item("d5", "owner_decision")])
+    box = Box(repo)
+    box.post("oracle", "note", {
+        "title": "PLAN READY: 2026-09-23-r2",
+        "ref": {"path": path.relative_to(repo).as_posix(),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest()},
+    })
+    question = box.post("claude", "question", {
+        "title": "Choose the reviewed profile", "ref": {"item": "d5"},
+    }, to="owner")
+    duplicate = _append_hash_valid_row(
+        box, schema=oracle_mailbox.SCHEMA, actor="claude", kind="question",
+        body={"title": "FORGED replacement title", "ref": {"item": "d5"}},
+        to="owner", msg_id=question["msg_id"])
+
+    recorded = oracle_mailbox.read(box.path)
+    assert recorded[-1]["row_sha256"] == duplicate["row_sha256"]
+    direct = live.waiting_on_you(None, [], {}, recorded, None)
+    assert [(card["msg_id"], card["title"]) for card in direct] == [
+        (question["msg_id"], "Choose the reviewed profile")]
+    value = _summary(repo)
+    assert value["work_items"][0]["evidence_msg_id"] == question["msg_id"]
+    assert [(card["msg_id"], card["title"]) for card in value["waiting_on_you"]] == [
+        (question["msg_id"], "Choose the reviewed profile")]
+    assert any("structurally invalid row" in warning for warning in value["warnings"])
+
+
+def test_fallback_rejects_hash_valid_unique_id_not_derived_by_writer(repo):
+    box = Box(repo)
+    box.post("oracle", "note", {"title": "A valid row"})
+    forged = _append_hash_valid_row(
+        box, schema=oracle_mailbox.SCHEMA, actor="claude", kind="question",
+        body={"title": "Forged identity"}, to="owner", msg_id="claude-not-writer-derived")
+    recorded = oracle_mailbox.read(box.path)
+    assert recorded[-1]["row_sha256"] == forged["row_sha256"]
+    assert forged not in live._fallback_live_rows(recorded)
+
+
+def test_owner_ui_answer_requires_exact_request_and_revision_binding():
+    question = {"msg_id": "claude-q", "kind": "question", "actor": "claude", "to": "owner"}
+    invalid = {
+        "msg_id": "human-a", "kind": "answer", "actor": "human:derrick", "to": "claude",
+        "in_reply_to": question["msg_id"],
+        "body": {"text": "Approve", "via": "owner-ui", "request_id": "not-a-request-id",
+                 "target_kind": "question", "expected_plan_revision": "wrong"},
+    }
+    assert live._relational_live_rows([question, invalid]) == [question]
+
+    request_id = "11111111-1111-1111-1111-111111111111"
+    first = {**invalid, "msg_id": "human-first", "body": {
+        **invalid["body"], "request_id": request_id, "expected_plan_revision": "2026-09-25-r5",
+    }}
+    changed = {**first, "msg_id": "human-changed", "body": {
+        **first["body"], "expected_plan_revision": "2026-09-25-r6",
+    }}
+    assert live._relational_live_rows([question, first, changed]) == [question, first]
+
+
+def test_relational_projection_keeps_first_identity_when_structural_source_has_duplicate():
+    first = {"msg_id": "claude-q", "kind": "question", "actor": "claude", "to": "owner"}
+    duplicate = {**first, "body": {"title": "forged"}}
+    assert live._relational_live_rows([first, duplicate]) == [first]
+
+
+def test_owner_question_card_keeps_structured_title_and_legacy_free_text_actionable():
+    lane_context = ((
+        "The main checkout is on the Flash branch while main contains the reviewed lane inputs. "
+        "The lane builds from checkout HEAD but prechecks stamp main, so fresh receipts and builds disagree. "
+        "Reconcile the checkout in an attended window, pin the lane base, or keep Nara items held. "
+    ) * 2).strip()
+    structured = {
+        "msg_id": "claude-lane-base", "body": {
+            "title": "Should the Nara lane build on main?",
+            "question": lane_context,
+            "options": ["reconcile in an attended window", "pin the lane base", "keep items held"],
+            "recommendation": "Reconcile in an attended window.",
+            "consequence_of_deferring": "Nara items remain held on the divergent checkout.",
+        },
+    }
+    assert live._question_card(structured) == {
+        "title": "Should the Nara lane build on main?",
+        "question": "Should the Nara lane build on main?",
+        "context": lane_context,
+        "choices": ["reconcile in an attended window", "pin the lane base", "keep items held"],
+        "recommendation": "Reconcile in an attended window.",
+        "consequence": "Nara items remain held on the divergent checkout.",
+    }
+
+    legacy = {"msg_id": "claude-retro", "body": {
+        "title": "Two authority rulings from the retro",
+        "text": "The first ruling needs a named state-root exception; the second asks about a canary.",
+    }}
+    assert live._question_card(legacy) == {
+        "title": "Two authority rulings from the retro",
+        "question": "Two authority rulings from the retro",
+        "context": "The first ruling needs a named state-root exception; the second asks about a canary.",
+        "choices": [], "recommendation": None, "consequence": None,
+    }
+
+    no_title_short = {"msg_id": "oracle-short", "body": {"question": "Run the source screen?"}}
+    assert live._question_card(no_title_short)["context"] is None
+    no_title_long = {"msg_id": "oracle-long", "body": {"question": lane_context}}
+    assert live._question_card(no_title_long) == {
+        "title": lane_context[:299].rstrip() + "…", "question": lane_context[:299].rstrip() + "…",
+        "context": lane_context, "choices": [], "recommendation": None, "consequence": None,
+    }
+    text_only_long = {"msg_id": "oracle-text", "body": {"text": lane_context}}
+    assert live._question_card(text_only_long) == {
+        "title": lane_context[:299].rstrip() + "…", "question": lane_context[:299].rstrip() + "…",
+        "context": lane_context, "choices": [], "recommendation": None, "consequence": None,
+    }
+    distinct_question = {"msg_id": "oracle-distinct", "body": {
+        "title": "Lane base", "question": "Reconcile or pin?", "context": "Why it matters.",
+    }}
+    assert live._question_card(distinct_question) == {
+        "title": "Lane base", "question": "Reconcile or pin?", "context": "Why it matters.",
+        "choices": [], "recommendation": None, "consequence": None,
+    }
+    malformed_title = {"msg_id": "oracle-malformed", "body": {
+        "title": {"not": "text"}, "question": "Valid question",
+    }}
+    assert live._question_card(malformed_title)["title"] == "Valid question"
+
+    object_choices = {"msg_id": "claude-checkout", "body": {
+        "title": "Restore the checkout?",
+        "options": [
+            {"id": "restore", "label": "Restore the pre-incident state", "effect": "Leaves services untouched."},
+            {"id": "hold", "label": "Leave it for now", "effect": "The split state remains."},
+        ],
+    }}
+    assert live._question_card(object_choices)["choices"] == [
+        "Restore the pre-incident state [restore] — Leaves services untouched.",
+        "Leave it for now [hold] — The split state remains.",
+    ]
+
+
+def test_projection_keeps_human_claims_open_and_allows_only_original_asker_dispositions():
+    question = {
+        "seq": 1, "msg_id": "claude-question", "actor": "claude", "to": "owner", "kind": "question",
+        "body": {"title": "Choose?"}, "ts": "2026-09-25T00:00:00+00:00",
+    }
+    relay = {
+        "seq": 2, "msg_id": "oracle-relay", "actor": "oracle", "to": "claude", "kind": "answer",
+        "in_reply_to": question["msg_id"], "body": {"text": "Owner said yes."},
+        "ts": "2026-09-25T00:01:00+00:00",
+    }
+    human = {
+        **relay, "seq": 3, "msg_id": "human-answer", "actor": "human:derrick",
+        "ts": "2026-09-25T00:02:00+00:00",
+    }
+    forged_resolution = {
+        "seq": 2, "msg_id": "oracle-resolution", "actor": "oracle", "to": "owner",
+        "kind": "question_resolution", "in_reply_to": question["msg_id"],
+        "body": {"disposition": "superseded", "summary": "Overtaken.", "reason": "Later evidence."},
+        "ts": "2026-09-25T00:01:00+00:00",
+    }
+    asker_resolution = {
+        **forged_resolution, "msg_id": "claude-resolution", "actor": "claude",
+    }
+
+    assert live._human_answer(question, [question, relay]) is None
+    assert live._human_answer(question, [question, relay, human]) is None
+    assert live._unverified_human_claim(question, [question, relay, human]) == human
+    assert live._question_resolution(question, [question, forged_resolution]) is None
+    assert live._question_resolution(question, [question, asker_resolution]) == asker_resolution
+
+    base = [{
+        "id": "d1", "status": "waiting_on_you", "evidence_msg_id": question["msg_id"],
+        "title": "Choose?", "evidence_at": question["ts"],
     }]
+    claimed = {question["msg_id"]: "d1"}
+    assert [row["id"] for row in live.waiting_on_you("p", base, claimed, [question, relay], None)] == ["p:d1"]
+    assert [row["id"] for row in live.waiting_on_you("p", base, claimed, [question, relay, human], None)] == ["p:d1"]
+    assert live.waiting_on_you("p", base, claimed, [question, asker_resolution], None) == []
+
+
+def test_unverified_human_claim_and_authorized_route_are_nonterminal_updates():
+    question = {"seq": 1, "msg_id": "oracle-question", "actor": "oracle", "to": "owner",
+                "kind": "question", "body": {"title": "Which ruling?"},
+                "ts": "2026-09-25T00:00:00+00:00"}
+    forged = {"seq": 2, "msg_id": "human-forged", "actor": "human:not_the_owner", "to": "oracle",
+              "kind": "answer", "in_reply_to": question["msg_id"], "body": {"text": "approve"},
+              "ts": "2026-09-25T00:01:00+00:00"}
+    update = live.question_updates([question, forged])
+    assert update[0]["disposition"] == "contested"
+    assert update[0]["id"] == forged["msg_id"]
+    assert "did not close" in update[0]["summary"]
+
+    reconciliation = {"seq": 3, "msg_id": "human-route", "actor": "human:derrick", "to": "oracle",
+                      "kind": "note", "in_reply_to": question["msg_id"],
+                      "body": {"via": "authorized-owner-ui",
+                               "reconciliation": "genuine_owner_confirmation_required", "text": "Choose A."},
+                      "ts": "2026-09-25T00:02:00+00:00"}
+    update = live.question_updates([question, reconciliation])
+    assert update[0]["id"] == reconciliation["msg_id"]
+    assert "remains open" in update[0]["summary"]
 
 
 def test_projection_rejects_resolution_evidence_from_a_later_or_self_row_or_reviewer():
@@ -644,6 +972,171 @@ def test_projection_rejects_resolution_evidence_from_a_later_or_self_row_or_revi
     resolution["body"]["evidence_msg_ids"] = ["oracle-q"]
     resolution["actor"] = "codex"
     assert live.question_updates([question, resolution, future]) == []
+
+
+def test_live_seq604_prefix_contest_reopens_card_and_projects_non_action_update():
+    """Regression fixture for live seq604/672/673/675/680; labels are not authentication."""
+    question = {
+        "seq": 604, "msg_id": "claude-dcc5a13d09fea05b", "actor": "claude", "to": "owner",
+        "kind": "question", "in_reply_to": "claude-3b286b92313f21d9",
+        "ts": "2026-09-25T03:13:18.072254+00:00",
+        "body": {"title": "Put the lab checkout back where it was? Oracle moved it by accident at 03:01"},
+    }
+    resolution = {
+        "seq": 672, "msg_id": "claude-7baa7cbad84ef310", "actor": "claude", "to": "owner",
+        "kind": "question_resolution", "in_reply_to": question["msg_id"],
+        "ts": "2026-09-25T05:14:48.020437+00:00",
+        "body": {"disposition": "superseded", "summary": "The restore already happened.",
+                 "reason": "The claimed asker rechecked the checkout."},
+    }
+    first = {
+        "seq": 673, "msg_id": "oracle-1adbcf744dad346b", "actor": "oracle", "to": "all",
+        "kind": "note", "in_reply_to": None, "ts": "2026-09-25T05:15:17.292300+00:00",
+        "body": {"ref": {"posted_row": f"{resolution['msg_id']} (seq 672)",
+                           "command": "python -m orchestrator.oracle_mailbox post --as claude"}},
+    }
+    second = {
+        "seq": 675, "msg_id": "oracle-23f01c1d12a41d66", "actor": "oracle", "to": "all",
+        "kind": "note", "in_reply_to": None, "ts": "2026-09-25T05:19:29.493710+00:00",
+        "body": {"ref": {"self_reported_fault":
+                           "seq 672 posted with --as claude by this session, disowned at seq 673"}},
+    }
+    contest = {
+        "seq": 680, "msg_id": "codex-8fbb6371871c852c", "actor": "codex", "to": "all",
+        "kind": "note", "in_reply_to": resolution["msg_id"],
+        "ts": "2026-09-25T05:24:14.856582+00:00",
+        "body": {"title": "Contested attribution for seq672; preserve and reopen seq604 in projections",
+                 "text": "Pi self-reported that it posted seq672 with --as claude.",
+                 "provenance_contestation": {
+                     "contested_msg_id": resolution["msg_id"], "claimed_actor": "claude",
+                     "reported_actual_actor": "oracle",
+                     "basis_msg_ids": [first["msg_id"], second["msg_id"]],
+                     "effect": "invalidate_for_projection",
+                 }},
+    }
+    rows = [question, resolution, first, second, contest]
+
+    assert oracle_mailbox.is_valid_question_resolution(question, resolution, rows[:-1]) is True
+    assert oracle_mailbox.is_valid_question_resolution(question, resolution, rows) is False
+    assert live._question_resolution(question, rows) is None
+    waiting = live.waiting_on_you("2026-09-25-r4", [{
+        "id": "d5", "status": "waiting_on_you", "evidence_msg_id": question["msg_id"],
+        "title": "Lane base", "evidence_at": question["ts"],
+    }], {question["msg_id"]: "d5"}, rows, None)
+    assert [card["id"] for card in waiting] == ["2026-09-25-r4:d5"]
+    updates = live.question_updates(rows)
+    assert len(updates) == 1
+    assert updates[0]["id"] == contest["msg_id"]
+    assert updates[0]["disposition"] == "contested"
+    assert updates[0]["evidence_msg_ids"] == [first["msg_id"], second["msg_id"]]
+
+
+def test_contested_question_keeps_later_claim_and_authorized_context_distinct():
+    question = {"seq": 604, "msg_id": "claude-q", "actor": "claude", "to": "owner",
+                "kind": "question", "body": {"title": "Name the ruling"},
+                "ts": "2026-09-25T03:13:18+00:00"}
+    resolution = {"seq": 672, "msg_id": "claude-r", "actor": "claude", "to": "owner",
+                  "kind": "question_resolution", "in_reply_to": question["msg_id"],
+                  "body": {"disposition": "superseded", "summary": "Claimed done.", "reason": "Claim."},
+                  "ts": "2026-09-25T05:14:48+00:00"}
+    first = {"seq": 673, "msg_id": "oracle-a", "actor": "oracle", "to": "all", "kind": "note",
+             "body": {"ref": {"posted_row": "claude-r", "command": "post --as claude"}},
+             "ts": "2026-09-25T05:15:17+00:00"}
+    second = {"seq": 675, "msg_id": "oracle-b", "actor": "oracle", "to": "all", "kind": "note",
+              "body": {"ref": {"self_reported_fault": "seq 672 posted with --as claude by this session"}},
+              "ts": "2026-09-25T05:19:29+00:00"}
+    contest = {"seq": 680, "msg_id": "codex-c", "actor": "codex", "to": "all", "kind": "note",
+               "in_reply_to": resolution["msg_id"], "ts": "2026-09-25T05:24:14+00:00",
+               "body": {"provenance_contestation": {
+                   "contested_msg_id": resolution["msg_id"], "claimed_actor": "claude",
+                   "reported_actual_actor": "oracle", "basis_msg_ids": [first["msg_id"], second["msg_id"]],
+                   "effect": "invalidate_for_projection"}}}
+    claim = {"seq": 681, "msg_id": "human-later", "actor": "human:derrick", "to": "claude",
+             "kind": "answer", "in_reply_to": question["msg_id"], "body": {"text": "Use the pinned base."},
+             "ts": "2026-09-25T05:25:00+00:00"}
+    reconciliation = {"seq": 682, "msg_id": "owner-route", "actor": "human:derrick", "to": "claude",
+                      "kind": "note", "in_reply_to": question["msg_id"],
+                      "body": {"via": "authorized-owner-ui",
+                               "reconciliation": "genuine_owner_confirmation_required",
+                               "text": "Confirm pinned base for the next run."},
+                      "ts": "2026-09-25T05:26:00+00:00"}
+    rows = [question, resolution, first, second, contest, claim, reconciliation]
+
+    updates = live.question_updates(rows)
+    assert {row["id"] for row in updates} == {contest["msg_id"], claim["msg_id"], reconciliation["msg_id"]}
+    assert any("pinned base" in row["summary"] for row in updates if row["id"] == claim["msg_id"])
+    assert any("next run" in row["summary"] for row in updates if row["id"] == reconciliation["msg_id"])
+    assert live._human_answer(question, rows) is None
+
+
+def test_contest_requires_structured_evidence_deduplicates_and_yields_to_fresh_terminal(repo):
+    path = _plan(repo, "2026-09-23.json", [_item("d5", "owner_decision")])
+    box = Box(repo)
+    box.post("oracle", "note", {
+        "title": "PLAN READY: 2026-09-23",
+        "ref": {"path": path.relative_to(repo).as_posix(),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest()},
+    })
+    question = box.post("claude", "question", {"title": "Item d5", "ref": {"item": "d5"}}, to="owner")
+    resolution = box.post("claude", "question_resolution", {
+        "disposition": "superseded", "summary": "Already done.", "reason": "Rechecked.",
+    }, to="owner", reply=question["msg_id"])
+
+    fake_a = box.post("oracle", "note", {"title": "Claim", "text": "I posted it."})
+    fake_b = box.post("oracle", "note", {"title": "Claim again", "text": "Trust me."})
+    box.post("codex", "note", {
+        "title": "Unsubstantiated contest", "text": "Actor labels remain unauthenticated.",
+        "provenance_contestation": {
+            "contested_msg_id": resolution["msg_id"], "claimed_actor": "claude",
+            "reported_actual_actor": "oracle", "basis_msg_ids": [fake_a["msg_id"], fake_b["msg_id"]],
+            "effect": "invalidate_for_projection",
+        },
+    }, reply=resolution["msg_id"])
+    assert _summary(repo)["work_items"][0]["status"] == "resolved"
+
+    _first, _second, contest = _contest(box, resolution)
+    duplicate = box.post("codex", "note", contest["body"], reply=resolution["msg_id"])
+    value = _summary(repo)
+    assert value["work_items"][0]["status"] == "waiting_on_you"
+    updates = [row for row in value["question_updates"] if row["question_id"] == question["msg_id"]]
+    assert len(updates) == 1 and updates[0]["id"] == duplicate["msg_id"]
+
+    fresh = box.post("claude", "question_resolution", {
+        "disposition": "informational", "summary": "Fresh independent recheck.",
+        "reason": "The original asker verified it after the contest.",
+    }, to="owner", reply=question["msg_id"])
+    value = _summary(repo)
+    assert value["work_items"][0]["status"] == "resolved"
+    updates = [row for row in value["question_updates"] if row["question_id"] == question["msg_id"]]
+    assert len(updates) == 1 and updates[0]["id"] == fresh["msg_id"]
+
+    second_question = box.post("claude", "question", {"title": "A second choice"}, to="owner")
+    second_resolution = box.post("claude", "question_resolution", {
+        "disposition": "superseded", "summary": "Already done.", "reason": "Rechecked.",
+    }, to="owner", reply=second_question["msg_id"])
+    _contest(box, second_resolution)
+    later_claim = box.post("human:derrick", "answer", {"text": "Use the safe path."}, to="claude",
+                           reply=second_question["msg_id"])
+    value = _summary(repo)
+    assert second_question["msg_id"] in {card["msg_id"] for card in value["waiting_on_you"]}
+    later_updates = [row for row in value["question_updates"]
+                     if row["question_id"] == second_question["msg_id"]]
+    assert any(row["id"] == later_claim["msg_id"] and row["disposition"] == "contested"
+               and "Use the safe path." in row["summary"] for row in later_updates)
+
+
+def test_malformed_contest_schema_is_rejected(repo):
+    box = Box(repo)
+    question = box.post("claude", "question", {"title": "Choice"}, to="owner")
+    resolution = box.post("claude", "question_resolution", {
+        "disposition": "superseded", "summary": "Done.", "reason": "Checked.",
+    }, to="owner", reply=question["msg_id"])
+    with pytest.raises(oracle_mailbox.MailboxError, match="provenance_contestation"):
+        box.post("codex", "note", {"provenance_contestation": {
+            "contested_msg_id": resolution["msg_id"], "claimed_actor": "claude",
+            "reported_actual_actor": "oracle", "basis_msg_ids": [],
+            "effect": "invalidate_for_projection",
+        }}, reply=resolution["msg_id"])
 
 
 @pytest.mark.parametrize(("projection", "expected"), [
