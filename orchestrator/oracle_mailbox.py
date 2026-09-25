@@ -781,6 +781,17 @@ def fold(rows: list[dict], now: datetime | None = None, *, already_live: bool = 
     return items
 
 
+def _list_summary(body: object) -> str:
+    """Return the safe, useful one-line mailbox summary for the CLI."""
+    if not isinstance(body, dict):
+        return ""
+    for key in ("title", "question", "summary", "state", "verdict", "text"):
+        value = body.get(key)
+        if isinstance(value, str) and value:
+            return value[:80]
+    return ""
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -810,8 +821,7 @@ def main(argv: list[str] | None = None) -> int:
             rows = [r for r in read() if (not args.to or r["to"] in {args.to, "all"})
                     and (not args.kind or r["kind"] == args.kind)]  # an inbox includes broadcasts
             for r in rows[-args.last:]:
-                summary = (r["body"].get("title") or r["body"].get("state") or r["body"].get("verdict")
-                           or r["body"].get("text", "")[:80])
+                summary = _list_summary(r.get("body"))
                 print(json.dumps({"seq": r["seq"], "msg_id": r["msg_id"], "actor": r["actor"], "to": r["to"],
                                   "kind": r["kind"], "re": r.get("in_reply_to"), "summary": summary}))
         elif args.command == "fold":

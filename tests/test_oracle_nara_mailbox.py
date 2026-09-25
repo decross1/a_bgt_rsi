@@ -133,6 +133,26 @@ def test_post_read_fold_and_chain(tmp_path):
         mailbox.read(path)
 
 
+@pytest.mark.parametrize(("body", "expected"), [
+    ({"title": "Title", "question": "Question", "summary": "Summary", "state": "held", "verdict": "amend", "text": "Text"}, "Title"),
+    ({"title": 7, "question": "Question", "summary": "Summary", "state": "held", "verdict": "amend", "text": "Text"}, "Question"),
+    ({"summary": "Summary", "state": "held", "verdict": "amend", "text": "Text"}, "Summary"),
+    ({"state": "held", "verdict": "amend", "text": "Text"}, "held"),
+    ({"verdict": "amend", "text": "Text"}, "amend"),
+    ({"text": "x" * 81}, "x" * 80),
+])
+def test_list_summary_fallback_order(monkeypatch, capsys, body, expected):
+    """Question-only and summary-only mailbox rows remain legible in ``list``."""
+    row = {
+        "seq": 1, "msg_id": "oracle-list-summary", "actor": "oracle", "to": "owner",
+        "kind": "question", "in_reply_to": None, "body": body,
+    }
+    monkeypatch.setattr(mailbox, "read", lambda: [row])
+
+    assert mailbox.main(["list"]) == 0
+    assert json.loads(capsys.readouterr().out)["summary"] == expected
+
+
 def test_actor_and_shape_rules(tmp_path):
     path = tmp_path / "mb.jsonl"
     with pytest.raises(mailbox.MailboxError, match="may not post"):
