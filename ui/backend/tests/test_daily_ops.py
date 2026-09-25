@@ -149,13 +149,14 @@ def _request(token=None):
     })
 
 
-def _get_request(path, token=None, *, method="GET", origin=None):
+def _get_request(path, token=None, *, method="GET", origin=None, root_path=""):
     headers = [] if token is None else [
         (b"authorization", f"Bearer {token}".encode()),
     ]
     if origin is not None:
         headers.append((b"origin", origin.encode()))
     return Request({"type": "http", "method": method, "path": path,
+                    "root_path": root_path,
                     "headers": headers, "query_string": b"", "server": ("test", 80),
                     "client": ("127.0.0.1", 1), "scheme": "http"})
 
@@ -271,6 +272,9 @@ def test_summary_http_gate_denies_before_projection_and_preserves_owner_auth_con
         _get_request("/api/daily-ops/summary", "wrong"),
         _get_request("/api/daily-ops/summary/", "key", origin="http://evil.invalid"),
         _get_request("/api/daily-ops/summary", method="HEAD"),
+        _get_request("/mount/api/daily-ops/summary", root_path="/mount"),
+        _get_request("/mount/api/daily-ops/summary", method="HEAD", root_path="/mount"),
+        _get_request("/api/daily-ops/summary", root_path="/mount"),
     )
     for request in denied:
         response = asyncio.run(dispatch(request, call_next))
@@ -286,12 +290,13 @@ def test_summary_http_gate_denies_before_projection_and_preserves_owner_auth_con
         _get_request(
             "/api/daily-ops/summary", "key", method="HEAD", origin=allowed_origin,
         ),
+        _get_request("/mount/api/daily-ops/summary", "key", root_path="/mount"),
     ):
         response = asyncio.run(dispatch(request, call_next))
         assert response.status_code == 200
         assert response.headers["Cache-Control"] == "no-store"
         assert response.headers["Vary"] == "Authorization, Origin"
-    assert reached == ["GET", "HEAD"]
+    assert reached == ["GET", "HEAD", "GET"]
 
 
 def test_summary_http_gate_hides_authentication_failures(tmp_path):

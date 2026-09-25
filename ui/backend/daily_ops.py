@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
+from starlette._utils import get_route_path
 from starlette.responses import JSONResponse, Response
 
 LEGACY_SUMMARY_SCHEMA = "daily-ops-summary/v1"
@@ -632,7 +633,9 @@ def register(
 
     @app.middleware("http")
     async def _daily_ops_private_response_headers(request: Request, call_next):
-        path = request.url.path.rstrip("/")
+        # Match the same ASGI path that Starlette routes. request.url.path can
+        # still include root_path and otherwise bypass the pre-read gate.
+        path = get_route_path(request.scope).rstrip("/")
         if path == "/api/daily-ops/summary" and request.method in {"GET", "HEAD"}:
             # This legacy route can contain owner recommendations. Authenticate
             # before any projection refresh or cache read, using the same
