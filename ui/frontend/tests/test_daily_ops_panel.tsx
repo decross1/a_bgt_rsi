@@ -190,7 +190,7 @@ describe("DailyOpsPanel", () => {
     expect(screen.getByTestId("daily-work-card-d2")).toHaveTextContent("Depends ond1");
   });
 
-  it("lists what is waiting on the owner as plain questions with decision buttons, no commands", () => {
+  it("keeps the full decision actions on plan decisions and unstructured mailbox questions", () => {
     show();
     const waiting = screen.getByTestId("daily-waiting-on-you");
     expect(within(waiting).getByRole("heading", { name: "Waiting on you" })).toBeInTheDocument();
@@ -206,9 +206,12 @@ describe("DailyOpsPanel", () => {
     expect(question).toHaveTextContent("Two authority rulings");
     expect(question).not.toHaveTextContent("answer claude-18ae939243e70e7d");
     expect(within(question).getByRole("button", { name: "Approve" })).toBeInTheDocument();
+    expect(within(question).getByRole("button", { name: "Decline" })).toBeInTheDocument();
+    expect(within(question).getByRole("button", { name: "Defer" })).toBeInTheDocument();
+    expect(within(question).getByRole("button", { name: "Reply…" })).toBeInTheDocument();
   });
 
-  it("shows the decision, context, options and recommendation instead of a log-derived title", () => {
+  it("shows structured mailbox choices as a reply-only decision", () => {
     const base = summary();
     D.summary = summary({ waiting_on_you: [{
       ...base.waiting_on_you[1], title: "Choose review shape",
@@ -220,11 +223,28 @@ describe("DailyOpsPanel", () => {
     show();
     const card = screen.getByTestId("daily-waiting-claude-18ae939243e70e7d");
     expect(card).toHaveTextContent("Should the lane change be split into three reviewed branches?");
+    expect(within(card).getByTestId("daily-waiting-claude-18ae939243e70e7d-question"))
+      .toHaveTextContent("Should the lane change be split into three reviewed branches?");
     expect(card).toHaveTextContent("The unsplit branch also loses five newer protections.");
     expect(card).toHaveTextContent("A — split it (recommended)");
     expect(card).toHaveTextContent("Recommendation: A — split it");
     expect(card).toHaveTextContent("If deferred: B delays the next safe lane run.");
     expect(within(card).queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(within(card).getByRole("button", { name: "Choose / reply" })).toBeInTheDocument();
+  });
+
+  it("does not repeat a concise owner-question headline before its long source context", () => {
+    const base = summary();
+    const title = "Should the Nara lane build on main?";
+    const context = "The Flash checkout and main have divergent inputs, so the attended lane-base decision remains open.";
+    D.summary = summary({ waiting_on_you: [{
+      ...base.waiting_on_you[1], title, question: title, context,
+      choices: ["reconcile", "pin", "hold"], recommendation: "reconcile", consequence: "Nara remains held",
+    }] });
+    show();
+    const card = screen.getByTestId("daily-waiting-claude-18ae939243e70e7d");
+    expect(within(card).queryByTestId("daily-waiting-claude-18ae939243e70e7d-question")).toBeNull();
+    expect(card).toHaveTextContent(context);
     expect(within(card).getByRole("button", { name: "Choose / reply" })).toBeInTheDocument();
   });
 
@@ -246,7 +266,7 @@ describe("DailyOpsPanel", () => {
     expect(within(updates).queryByRole("button", { name: "Approve" })).toBeNull();
   });
 
-  it("sends an owner decision on a waiting item and shows it was sent", async () => {
+  it("sends approval for a plan decision and shows it was sent", async () => {
     sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
     show();
     const planDecision = screen.getByTestId(`daily-waiting-${PLAN}:d5`);

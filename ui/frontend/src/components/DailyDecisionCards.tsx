@@ -216,7 +216,10 @@ function WaitingOnYou({ items, requestAvailable, openEditor }: {
         const targetKind: DailyOpsDecisionTarget = "question";
         const targetId = item.msgId ?? item.id;
         const canAct = item.msgId != null;
-        const actions = item.choices.length > 0 ? ["reply" as const] : WAITING_ACTIONS;
+        // Card kind controls the badge, while source shape controls the actions:
+        // structured choices get one reply path; cards without choices retain
+        // the established approve/decline/defer/reply decision affordances.
+        const actions: DailyOpsDecisionAction[] = item.choices.length > 0 ? ["reply"] : WAITING_ACTIONS;
         return <li key={item.id} data-testid={`daily-waiting-${item.id}`}>
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <span className="font-medium">{headline}</span>
@@ -224,7 +227,8 @@ function WaitingOnYou({ items, requestAvailable, openEditor }: {
           </div>
           <p className="mt-1 text-xs text-[var(--fg-muted)]">Asked by {ownerWord(item.askedBy)}
             {item.askedAt ? ` · ${timeLabel(item.askedAt)}` : ""}</p>
-          <p className="mt-2 text-sm" data-testid={`daily-waiting-${item.id}-question`}>{item.question}</p>
+          {item.question !== headline && <p className="mt-2 text-sm"
+            data-testid={`daily-waiting-${item.id}-question`}>{item.question}</p>}
           {item.context && <p className="mt-2 text-sm text-[var(--fg-muted)]">{item.context}</p>}
           {item.choices.length > 0 && <div className="mt-2 text-sm">
             <p className="font-medium">Choices</p>
