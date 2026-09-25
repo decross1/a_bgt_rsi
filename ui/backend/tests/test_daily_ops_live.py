@@ -1095,7 +1095,13 @@ def test_primary_mailbox_replay_anchors_only_the_reviewed_cards():
     if not primary.is_file():
         pytest.skip("primary lab mailbox is not available in this checkout")
     rows = oracle_mailbox.read(primary)
-    assert rows[-1]["seq"] == 857  # exact reviewed ledger prefix, never a moving count
+    # The operational mailbox is append-only: new coordination notes must not
+    # invalidate the exact reviewed fixture or silently enter its assertions.
+    assert len(rows) >= 857
+    assert rows[856]["seq"] == 857
+    assert rows[856]["row_sha256"] == (
+        "9f04c90d3e9374aed7b423994a61870b2094c04ae935df1683c0dc01f0d5e5cb")
+    rows = rows[:857]
     cards = live._waiting_cards(None, [], {}, rows, None)
     by_id = {card["msg_id"]: card for card in cards}
     archived = {row[0] for row in card_policy.HISTORICAL_ARCHIVES}
