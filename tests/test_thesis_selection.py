@@ -191,6 +191,29 @@ def _rewrite_mailbox_with_canonical_ids(root: Path, mutate) -> list[dict]:
     return rows
 
 
+def _append_hash_valid_quarantined_note(root: Path) -> dict:
+    """Append evidence that is chain-valid but has a forged writer identity."""
+    path = root / "run_state/oracle_nara_mailbox.jsonl"
+    rows = mailbox.read(path)
+    row = {
+        "schema": mailbox.SCHEMA,
+        "seq": len(rows) + 1,
+        "ts": mailbox.datetime.now(mailbox.timezone.utc).isoformat(),
+        "actor": "oracle",
+        "to": "all",
+        "kind": "note",
+        "in_reply_to": None,
+        "body": {"status": "hash-valid evidence, not live coordination state"},
+        "expires_at": None,
+        "prev_sha256": rows[-1]["row_sha256"] if rows else None,
+        "msg_id": "oracle-0000000000000000",
+    }
+    row["row_sha256"] = hashlib.sha256(thesis._canonical(row)).hexdigest()
+    with path.open("a") as stream:
+        stream.write(json.dumps(row) + "\n")
+    return row
+
+
 def test_real_nara_terminal_receipt_feeds_cli_selection(tmp_path, monkeypatch, capsys):
     root = _git_root(tmp_path); accept, source_set = _staged(root, monkeypatch)
     created = thesis.create_meta_accept(root, accept)
@@ -219,6 +242,38 @@ def test_live_question_resolution_rows_do_not_invalidate_selection_snapshot(tmp_
         "reason": "Selection never requests an owner vote.",
     }, to="owner", in_reply_to=question["msg_id"], path=mailbox_path)
     assert thesis.create_meta_accept(root, accept)["chosen_candidate_id"] == "c-alpha"
+
+
+def test_selection_cutoff_survives_a_quarantined_sequence_gap(tmp_path, monkeypatch):
+    root = _git_root(tmp_path)
+    accept, _source = _staged(root, monkeypatch)
+    created = thesis.create_meta_accept(root, accept)
+    quarantined = _append_hash_valid_quarantined_note(root)
+    mailbox_path = root / "run_state/oracle_nara_mailbox.jsonl"
+    live_tail = mailbox.post(
+        "oracle", "note", {"status": "live row after quarantined evidence"},
+        to="all", path=mailbox_path,
+    )
+    raw = mailbox.read(mailbox_path)
+    assert any(item["seq"] == quarantined["seq"] and item["reason"] == "msg_id"
+               for item in mailbox.quarantine(raw))
+    live = mailbox.live_rows(raw)
+    assert live[-1]["msg_id"] == live_tail["msg_id"]
+    assert live_tail["seq"] > len(live)  # raw sequence numbers are intentionally sparse
+
+    selected = thesis.select_thesis_focus(
+        root, meta_accept_sha256=created["meta_accept_sha256"],
+        reason="Reviewed canonical selection.",
+    )
+    assert selected["mailbox_cutoff_seq"] == live_tail["seq"]
+    assert selected["mailbox_cutoff_sha256"] == live_tail["row_sha256"]
+    assert research_focus.project_focus(root)["status"] == "selected"
+    recovered = thesis.select_thesis_focus(
+        root, meta_accept_sha256=created["meta_accept_sha256"],
+        reason="Reviewed canonical selection.",
+    )
+    assert recovered["status"] == "selected"
+    assert research_focus.project_focus(root)["status"] == "selected"
 
 
 def test_old_empty_generation_review_cannot_win_after_select_then_kill_aba(tmp_path, monkeypatch):
