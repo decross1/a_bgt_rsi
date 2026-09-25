@@ -144,8 +144,8 @@ def test_precheck_against_a_correct_stub_is_green_and_receipts(tmp_path, monkeyp
     report = lane.precheck(TEST_PATH, REPO_TEST, ARGV, stubs=[STUB], sandbox=_host_sandbox)
     assert report["green_run"]["passed"] is True
     sha = report["test_sha256"] == lane.test_sha256(REPO_TEST)
-    receipt = lane.receipt_path(report["test_sha256"], root=root)
-    assert receipt == root / "run_state/precheck_receipts" / f"{report['test_sha256']}.json"
+    receipt = lane.receipt_path(report["receipt_sha256"], root=root)
+    assert receipt == root / "run_state/precheck_receipts" / f"{report['receipt_sha256']}.json"
     assert report["green_receipt"] == str(receipt) and sha
     body = json.loads(receipt.read_text())
     assert body["state"] == "green" and body["test_sha256"] == report["test_sha256"]
@@ -238,11 +238,31 @@ def test_lane_admits_the_exact_receipted_content(tmp_path, monkeypatch):
     """(c3) The other half of the sha binding: with the matching green receipt,
     admission() reports no reason at all."""
     root = _repo(tmp_path, monkeypatch)
-    sha = lane.test_sha256(REPO_TEST)
-    lane.receipt_path(sha, root=root).parent.mkdir(parents=True, exist_ok=True)
-    lane.receipt_path(sha, root=root).write_text(json.dumps({"test_sha256": sha, "test_path": TEST_PATH,
-                                                            "state": "green"}))
+    lane.precheck(TEST_PATH, REPO_TEST, ARGV, stubs=[STUB], sandbox=_host_sandbox)
     assert lane.admission({"actor": "oracle", "body": _plan()}) == []
+
+
+def test_precheck_receipt_is_held_when_head_advances(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    lane.precheck(TEST_PATH, REPO_TEST, ARGV, stubs=[STUB], sandbox=_host_sandbox)
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "advance"],
+                   cwd=root, check=True)
+    assert any("exact checkout HEAD" in reason for reason in lane.admission({"actor": "oracle", "body": _plan()}))
+
+
+def test_forged_nonancestor_base_receipt_is_not_prechecked(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    base, tree = lane._build_base()
+    foreign = subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit-tree", tree, "-m", "foreign"], cwd=root,
+                             check=True, capture_output=True, text=True).stdout.strip()
+    sha = lane.test_sha256(REPO_TEST)
+    key = lane._receipt_sha(sha, TEST_PATH, ARGV, base, tree)
+    path = lane.receipt_path(key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"schema": "nara-lane-precheck/v2", "state": "green", "test_sha256": sha,
+        "test_path": TEST_PATH, "test_argv_sha256": lane._argv_sha256(ARGV), "base_sha": foreign,
+        "base_tree_sha256": tree, "receipt_sha256": key}))
+    assert lane._prechecked({"body": _plan()}, base=(base, tree)) is False
 
 
 def test_precheck_is_not_green_against_a_broken_stub(tmp_path, monkeypatch):
@@ -355,7 +375,7 @@ def test_precheck_receipts_live_in_run_state_not_in_a_worktree(tmp_path, monkeyp
     fixture worktree is removed afterwards, stub and all."""
     root = _repo(tmp_path, monkeypatch)
     report = lane.precheck(TEST_PATH, REPO_TEST, ARGV, stubs=[STUB], sandbox=_host_sandbox)
-    assert lane.receipt_path(report["test_sha256"], root=root).is_file()
+    assert lane.receipt_path(report["receipt_sha256"], root=root).is_file()
     # The directory the run actually drew from, not one that stays empty either way:
     # report["fixture"] names the worktree, its parent is this run's mkdtemp directory.
     per_run = pathlib.Path(report["fixture"]).parent

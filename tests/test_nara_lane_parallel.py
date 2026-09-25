@@ -72,7 +72,7 @@ def repo(tmp_path, monkeypatch):
     monkeypatch.setattr(lane, "ROOT", root)
     monkeypatch.setattr(lane, "WORKTREES", tmp_path / "wt")
     monkeypatch.setattr(lane, "RUN_LOG", tmp_path / "run.jsonl")
-    monkeypatch.setattr(lane, "_prechecked", lambda _item: True)  # precheck gate tested in its own file
+    monkeypatch.setattr(lane, "_prechecked", lambda _item, **_kw: True)  # precheck gate tested in its own file
     monkeypatch.delenv(lane.CONCURRENCY_ENV, raising=False)
     return root
 
