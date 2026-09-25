@@ -168,6 +168,29 @@ def _rehash(root: Path, mutate) -> None:
     path.write_text("".join(json.dumps(row) + "\n" for row in rows))
 
 
+def _rewrite_mailbox_with_canonical_ids(root: Path, mutate) -> list[dict]:
+    """Rewrite a scratch mailbox as if each changed row had been posted once."""
+    path = root / "run_state/oracle_nara_mailbox.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    mutate(rows)
+    previous = None
+    changed_ids: dict[str, str] = {}
+    for index, row in enumerate(rows, 1):
+        old_id = row["msg_id"]
+        if row.get("in_reply_to") in changed_ids:
+            row["in_reply_to"] = changed_ids[row["in_reply_to"]]
+        row["seq"], row["prev_sha256"] = index, previous
+        row.pop("row_sha256", None)
+        row.pop("msg_id", None)
+        actor = row["actor"].split(":", 1)[0]
+        row["msg_id"] = f"{actor}-{hashlib.sha256(thesis._canonical(row)).hexdigest()[:16]}"
+        row["row_sha256"] = hashlib.sha256(thesis._canonical(row)).hexdigest()
+        changed_ids[old_id] = row["msg_id"]
+        previous = row["row_sha256"]
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    return rows
+
+
 def test_real_nara_terminal_receipt_feeds_cli_selection(tmp_path, monkeypatch, capsys):
     root = _git_root(tmp_path); accept, source_set = _staged(root, monkeypatch)
     created = thesis.create_meta_accept(root, accept)
@@ -290,6 +313,50 @@ def test_base_bound_source_does_not_replace_explicit_oracle_relevance_screen(tmp
     alpha["verdicts"]["prior_work"] = "fail"
     screened = thesis.create_screen(root, proposed["candidate_set_sha256"], screen)
     assert "c-alpha" not in screened["eligible_ids"]
+
+
+@pytest.mark.parametrize(
+    "clock_case,expected",
+    [
+        ("future", "invalid candidate source plan review ts"),
+        ("after_receipt", "plan review chronology is non-monotonic"),
+    ],
+)
+def test_accepting_plan_review_clock_must_fall_between_plan_and_receipt(
+    tmp_path, monkeypatch, clock_case, expected,
+):
+    root = _git_root(tmp_path)
+    source_set, terminal, plan = _produce(root, monkeypatch)
+    if clock_case == "future":
+        review_stamp = "2099-01-01T00:00:00+00:00"
+    else:
+        review_stamp = (
+            mailbox.datetime.fromisoformat(terminal["ts"])
+            + mailbox.timedelta(microseconds=1)
+        ).isoformat()
+
+    def move_review_clock(rows):
+        review = next(
+            row for row in rows
+            if row["actor"] == "claude" and row["kind"] == "review"
+            and row["in_reply_to"] == plan["msg_id"]
+        )
+        review["ts"] = review_stamp
+
+    _rewrite_mailbox_with_canonical_ids(root, move_review_clock)
+    mailbox_path = root / "run_state/oracle_nara_mailbox.jsonl"
+    recorded = mailbox.read(mailbox_path)
+    assert mailbox.quarantine(recorded) == []
+    rewritten_terminal = next(
+        row for row in recorded
+        if row["actor"] == "nara" and row["kind"] == "receipt"
+        and row["in_reply_to"] == plan["msg_id"]
+        and row["body"].get("state") == "validated"
+    )
+    source_set["source"]["receipt_msg_id"] = rewritten_terminal["msg_id"]
+    source_set["source"]["receipt_row_sha256"] = rewritten_terminal["row_sha256"]
+    with pytest.raises(thesis.ThesisSelectionError, match=expected):
+        thesis._verify_candidate_provenance(root, source_set, "0" * 64, admission=True)
 
 
 def test_git_evidence_rejects_a_symlink_blob(tmp_path):

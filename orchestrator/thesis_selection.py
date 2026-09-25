@@ -549,8 +549,9 @@ def _verify_candidate_provenance(root: Path, candidate_set: dict, candidate_set_
         raise ThesisSelectionError("Oracle plan source declaration differs from candidate set")
     if source["branch"] != f"nara/{plan['msg_id']}":
         raise ThesisSelectionError("candidate source branch differs from real Nara lane branch")
-    receipt_time = _mailbox_time(receipt.get("ts"), "Nara receipt ts")
-    if _mailbox_time(plan.get("ts"), "Oracle plan ts") > receipt_time:
+    receipt_time = _mailbox_time(receipt.get("ts"), "Nara receipt ts", allow_future=False)
+    plan_time = _mailbox_time(plan.get("ts"), "Oracle plan ts", allow_future=False)
+    if plan_time > receipt_time:
         raise ThesisSelectionError("candidate source terminal receipt precedes its plan")
     expiry = plan.get("expires_at")
     if expiry is not None and receipt_time > _mailbox_time(expiry, "Oracle plan expires_at", allow_future=True):
@@ -636,6 +637,11 @@ def _verify_candidate_provenance(root: Path, candidate_set: dict, candidate_set_
         reviews = [row for row in rows[plan_index + 1:receipt_index] if row.get("actor") in {"claude", "codex"} and row.get("kind") == "review" and row.get("in_reply_to") == plan.get("msg_id")]
         if not reviews or reviews[-1].get("body", {}).get("verdict") != "accept":
             raise ThesisSelectionError("latest plan review before Nara receipt does not accept")
+        review_time = _mailbox_time(
+            reviews[-1].get("ts"), "candidate source plan review ts", allow_future=False,
+        )
+        if not plan_time <= review_time <= receipt_time:
+            raise ThesisSelectionError("candidate source plan review chronology is non-monotonic")
         if any(row.get("kind") == "withdraw" and row.get("in_reply_to") == plan.get("msg_id") for row in rows[plan_index + 1:receipt_index]):
             raise ThesisSelectionError("candidate source Oracle plan was withdrawn before receipt")
         if not plan_receipts or plan_receipts[-1].get("msg_id") != receipt.get("msg_id"):
