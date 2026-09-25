@@ -481,9 +481,9 @@ def precheck(test_path: str, test_content: str, test_argv: list[str], *,
     shown, so they are refused here (review claude-c0a841a1831ad8a6): a stub may
     not write the acceptance test - it would overwrite the test whose sha the
     receipt names, so the passing run would not be the posted test - and every
-    stub runs on a worktree reset to main including tracked modifications, so a
-    stub never passes on a previous stub's leftover edit.  The reset returns to
-    the fixture's captured checkout base, not a symbolic branch.
+    stub runs on a worktree reset to its captured checkout HEAD, including
+    tracked modifications, so a stub never passes on a previous stub's leftover
+    edit. The reset uses an exact commit, not a symbolic branch.
 
     Raises PrecheckError on an inadmissible test (checked by admission(), not
     reimplemented here), a stub that writes the acceptance test, or a test that is
