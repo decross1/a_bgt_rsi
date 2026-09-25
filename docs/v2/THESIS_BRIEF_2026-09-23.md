@@ -2,9 +2,11 @@
 
 Status: **the brief for goal G1.1.** Nara generates 3–5 candidate theses from
 it on local weights. Oracle screens them, the meta-oracle reviews the screen,
-and the owner picks one; it becomes the focus through the G0.2 selection CLI.
-Nothing here is a hypothesis: under D-061 the meta-oracle frames the brief
-and does not write theses. See D-086 for the owner's words.
+and Oracle selects one after independent meta-oracle review; it becomes the
+focus through the G0.2 selection CLI. Owner approval is required only for any
+later live-trading action. Nothing here is a hypothesis: under D-061 the
+meta-oracle frames the brief and does not write theses. See D-086 for the
+owner's words.
 
 ## Direction
 

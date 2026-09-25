@@ -102,6 +102,15 @@ class LaneError(RuntimeError):
     pass
 
 
+class TerminalReceiptUncertain(LaneError):
+    """A terminal append may be visible, but its durability acknowledgement failed.
+
+    Retrying such an append can create two terminal rows.  Callers report this
+    condition and leave the verified prefix for the next pass to interpret.
+    """
+    pass
+
+
 class FixtureCheckError(RuntimeError):
     """A declared fixture source cannot be read, parsed or judged. Refuse the item
     rather than skip the row: a silently-skipped row is how a gate starts lying."""
@@ -1060,15 +1069,76 @@ def _compact(body: dict) -> dict:
     return out
 
 
-def _receipt(path: Path, msg_id: str, body: dict) -> dict:
+def _claimed_item(rows: list[dict], msg_id: str) -> bool:
+    current = mailbox.fold(rows).get(msg_id)
+    return current is not None and current["state"] == "claimed"
+
+
+def _terminal_receipt(rows: list[dict], msg_id: str) -> dict | None:
+    """Return the first visible Nara terminal receipt for one plan item."""
+    return next((row for row in mailbox.live_rows(rows)
+                 if row["kind"] == "receipt" and row.get("in_reply_to") == msg_id
+                 and row["body"].get("state") in mailbox.TERMINAL), None)
+
+
+def _uncertain_after_error(path: Path, msg_id: str, exc: mailbox.MailboxError,
+                           *, attempt: str) -> list[dict]:
+    """Read a verified prefix after an append error, without writing anything."""
     try:
-        return mailbox.post("nara", "receipt", _compact(body), to="oracle", in_reply_to=msg_id, path=path)
+        rows = _read_mailbox(path)
+    except mailbox.MailboxError as read_exc:
+        raise TerminalReceiptUncertain(
+            f"{attempt} failed ({exc}); mailbox reconciliation also failed ({read_exc}); "
+            "no retry was attempted"
+        ) from exc
+    terminal = _terminal_receipt(rows, msg_id)
+    if terminal is not None:
+        raise TerminalReceiptUncertain(
+            f"{attempt} reported {exc}, but terminal receipt {terminal['msg_id']} is visible; "
+            "retained without retry because durability acknowledgement is uncertain"
+        ) from exc
+    return rows
+
+
+def _receipt(path: Path, msg_id: str, body: dict) -> dict | None:
+    """Publish an outcome only while its item is still claimed.
+
+    A MailboxError can occur after the row was appended but before the caller
+    received a durability acknowledgement.  Re-read the verified prefix first:
+    a visible terminal is reported as uncertain and never retried; a compact
+    fallback is attempted once, conditionally, only when the item is still
+    claimed.  A withdrawal or another terminal outcome always wins.
+    """
+    compact = _compact(body)
+    try:
+        return mailbox.post_if(
+            "nara", "receipt", compact, to="oracle", in_reply_to=msg_id, path=path,
+            condition=lambda rows: _claimed_item(rows, msg_id),
+        )
     except mailbox.MailboxError as exc:
-        return mailbox.post("nara", "receipt", {"state": body["state"], "reason": f"full receipt rejected: {exc}"[:500],
-                                                "branch": body.get("branch"), "head_sha": body.get("head_sha"),
-                                                "base_sha": body.get("base_sha"),
-                                                "base_tree_oid": body.get("base_tree_oid")},
-                            to="oracle", in_reply_to=msg_id, path=path)
+        rows = _uncertain_after_error(path, msg_id, exc, attempt="terminal receipt append")
+        if not _claimed_item(rows, msg_id):
+            return None
+        fallback = {
+            "state": body["state"], "reason": f"full receipt rejected: {exc}"[:500],
+            "branch": body.get("branch"), "head_sha": body.get("head_sha"),
+            "base_sha": body.get("base_sha"), "base_tree_oid": body.get("base_tree_oid"),
+        }
+        try:
+            return mailbox.post_if(
+                "nara", "receipt", fallback, to="oracle", in_reply_to=msg_id, path=path,
+                condition=lambda current: _claimed_item(current, msg_id),
+            )
+        except mailbox.MailboxError as fallback_exc:
+            current = _uncertain_after_error(
+                path, msg_id, fallback_exc, attempt="fallback terminal receipt append",
+            )
+            if not _claimed_item(current, msg_id):
+                return None
+            raise TerminalReceiptUncertain(
+                f"fallback terminal receipt failed ({fallback_exc}) while the item remains claimed; "
+                "no further retry was attempted"
+            ) from fallback_exc
 
 
 def _open_item(rows: list[dict], item: dict) -> bool:
@@ -1141,13 +1211,23 @@ def _finish(path: Path, entry: dict, claim, build, sandbox, keep, contain: bool)
                 raise
             outcome = {"state": "failed", "reason": f"lane worker crashed: {type(exc).__name__}: {exc}"}
         try:
-            keep(_receipt(path, msg_id, outcome))
+            receipt = _receipt(path, msg_id, outcome)
+        except TerminalReceiptUncertain as exc:
+            log(msg_id, "uncertain", str(exc), "one durable terminal receipt")
+            if not contain:
+                raise
+            return
         except BaseException as exc:
             if not contain:
                 raise
             log(msg_id, "failed", f"terminal receipt not posted: {type(exc).__name__}: {exc}",
                 "terminal receipt posted")
             return
+        if receipt is None:
+            log(msg_id, "deferred", "item changed before terminal receipt; no outcome appended",
+                "item still claimed")
+            return
+        keep(receipt)
         log(msg_id, "completed" if outcome["state"] == "validated" else "failed",
             json.dumps({k: outcome.get(k) for k in ("state", "reason", "branch", "head_sha", "attempts")}),
             "validated branch", duration_ms=int((time.monotonic() - started) * 1000))
@@ -1221,8 +1301,16 @@ def run_queue(path: Path | None = None, build=builder, sandbox=sandbox_run, read
                         break
                     if claim is None:
                         continue
-                    with claim:
-                        keep(_receipt(path, msg_id, {"state": "failed", "reason": "lane interrupted; item abandoned"}))
+                    try:
+                        with claim:
+                            recovered = _receipt(
+                                path, msg_id, {"state": "failed", "reason": "lane interrupted; item abandoned"},
+                            )
+                    except TerminalReceiptUncertain as exc:
+                        log(msg_id, "uncertain", str(exc), "one durable terminal receipt")
+                        continue
+                    if recovered is not None:
+                        keep(recovered)
                     continue
                 if entry["state"] != "open":
                     continue

@@ -466,6 +466,50 @@ def test_a_terminal_receipt_write_failure_is_recovered_on_the_next_pass(repo, mo
     }
 
 
+def test_fsync_then_raise_leaves_exactly_one_terminal_receipt(repo, monkeypatch):
+    """An exception after the terminal row is durable must never trigger a retry.
+
+    The worker reports the uncertain acknowledgement, releases its claim lock,
+    and a later pass observes the already-terminal item instead of recovering it
+    as abandoned or appending a second outcome.
+    """
+    _deployment(repo, 4)
+    _policy(repo, max_concurrent_items=2)
+    path = repo / "run_state/mb.jsonl"
+    item = mailbox.post("oracle", "plan_item", _plan(title="sync uncertainty"), to="nara", path=path)
+    arm_failure, failed_once = threading.Event(), threading.Event()
+    real_sync = mailbox._durably_sync
+
+    def sync_then_raise(sync_path, handle=None):
+        real_sync(sync_path, handle)
+        if arm_failure.is_set() and not failed_once.is_set():
+            failed_once.set()
+            raise mailbox.MailboxError("simulated fsync acknowledgement fault")
+
+    def build(*args, **kwargs):
+        arm_failure.set()
+        return dict(GOOD)
+
+    monkeypatch.setattr(mailbox, "_durably_sync", sync_then_raise)
+    posted = lane.run_queue(path, build=build, sandbox=_fake_sandbox, ready=lambda: True)
+
+    assert failed_once.is_set()
+    assert _by_item(posted) == {item["msg_id"]: ["claimed"]}
+    assert _mailbox_states(path) == {item["msg_id"]: ["claimed", "validated"]}
+    assert len([row for row in mailbox.read(path)
+                if row["kind"] == "receipt" and row["in_reply_to"] == item["msg_id"]
+                and row["body"]["state"] in mailbox.TERMINAL]) == 1
+    assert any(
+        row["task_id"] == f"nara-lane:{item['msg_id']}"
+        and row["status"] == "uncertain"
+        and "without retry" in row["observable_actual"]
+        for row in _run_log(repo)
+    )
+    assert lane.run_queue(path, build=lambda *a, **k: pytest.fail("terminal item must not rebuild"),
+                          sandbox=_fake_sandbox, ready=lambda: True) == []
+    assert _mailbox_states(path) == {item["msg_id"]: ["claimed", "validated"]}
+
+
 def test_a_dead_runner_leaves_claims_recovered_exactly_once(repo, monkeypatch):
     """A runner process dies with two items in flight: the next run posts one
     abandoned receipt for each, and a third run posts nothing."""
@@ -525,6 +569,38 @@ def test_withdrawn_during_admission_does_not_receive_a_stale_held_receipt(repo, 
                           ready=lambda: True) == []
     assert mailbox.fold(mailbox.read(path))[item["msg_id"]]["state"] == "withdrawn"
     assert not [row for row in mailbox.read(path) if row["kind"] == "receipt"]
+
+
+def test_withdrawn_during_build_does_not_receive_a_terminal_receipt(repo):
+    """Oracle may withdraw while a worker holds the claim lock and builds.
+
+    Terminal publication rechecks the folded state under the mailbox writer
+    lock, so completion computed from the older claim cannot land afterwards.
+    """
+    path = repo / "run_state/mb.jsonl"
+    item = mailbox.post("oracle", "plan_item", _plan(title="withdraw during build"), to="nara", path=path)
+    started, release = threading.Event(), threading.Event()
+    posted = []
+
+    def build(*args, **kwargs):
+        started.set()
+        assert release.wait(30)
+        return dict(GOOD)
+
+    runner = threading.Thread(target=lambda: posted.extend(
+        lane.run_queue(path, build=build, sandbox=_fake_sandbox, ready=lambda: True)))
+    runner.start()
+    assert started.wait(30)
+    withdrawn = mailbox.post("oracle", "withdraw", {}, to="nara", in_reply_to=item["msg_id"], path=path)
+    release.set()
+    runner.join(120)
+
+    assert not runner.is_alive()
+    assert _by_item(posted) == {item["msg_id"]: ["claimed"]}
+    rows = mailbox.read(path)
+    assert mailbox.fold(rows)[item["msg_id"]]["state"] == "withdrawn"
+    assert not [row for row in rows if row["kind"] == "receipt"
+                and row["in_reply_to"] == item["msg_id"] and row["seq"] > withdrawn["seq"]]
 
 
 @pytest.mark.parametrize("verdict", ["amend", "reject"])
