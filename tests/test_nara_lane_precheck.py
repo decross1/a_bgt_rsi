@@ -8,9 +8,11 @@ it; one of those tests failed 9 of 11 checks from a defect in the test itself.
 Precheck runs that claim instead of asserting it: it draws a fixture worktree
 from main, writes the acceptance test, runs it with no implementation (it must
 be red), then again with an author-supplied known-good stub (a green stub makes
-the item prechecked), and writes a receipt named for sha256(test_content) under
+the item prechecked), and writes a receipt named for a descriptor of test
+content, path, argv, and exact checkout commit/tree under
 run_state/precheck_receipts/. admission() holds an item whose test has no
-matching green receipt, so an undiscriinating test never costs a lane cycle.
+matching green receipt, so an undiscriminating test never costs a lane cycle.
+The descriptor hash is an integrity/correlation discipline, not authentication.
 
 Scope, per the meta review (claude-bfc06cece11638c0): the gate lives in
 admission(), not in oracle_mailbox.post() - the mailbox is a generic channel and
@@ -139,7 +141,7 @@ def test_precheck_reports_red_when_the_tool_is_absent(tmp_path, monkeypatch):
 
 def test_precheck_against_a_correct_stub_is_green_and_receipts(tmp_path, monkeypatch):
     """(b) The same item prechecked against a stub that satisfies the test is
-    green, and the green run writes a receipt bound to sha256(test_content)."""
+    green, and the green run writes a receipt bound to its exact descriptor."""
     root = _repo(tmp_path, monkeypatch)
     report = lane.precheck(TEST_PATH, REPO_TEST, ARGV, stubs=[STUB], sandbox=_host_sandbox)
     assert report["green_run"]["passed"] is True
@@ -261,7 +263,7 @@ def test_forged_nonancestor_base_receipt_is_not_prechecked(tmp_path, monkeypatch
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"schema": "nara-lane-precheck/v2", "state": "green", "test_sha256": sha,
         "test_path": TEST_PATH, "test_argv_sha256": lane._argv_sha256(ARGV), "base_sha": foreign,
-        "base_tree_sha256": tree, "receipt_sha256": key}))
+        "base_tree_oid": tree, "receipt_sha256": key}))
     assert lane._prechecked({"body": _plan()}, base=(base, tree)) is False
 
 

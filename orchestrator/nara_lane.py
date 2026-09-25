@@ -24,8 +24,9 @@ an acceptance test discriminates was asserted without being run twice, and the
 cost was three postings, two withdrawals and six lane holds. `precheck()` runs
 the claim instead: in the sandbox with no implementation (it must be red) and
 again with an author-supplied known-good stub (it must be green), then writes a
-receipt named for sha256(test_content) under run_state/precheck_receipts/. An
-item whose test has no matching green receipt is held by admission(). The gate
+receipt named for a descriptor of test content, path, argv, and exact checkout
+commit/tree under run_state/precheck_receipts/. An item whose test has no
+matching green receipt is held by admission(). The gate
 is deliberately not in oracle_mailbox.post() - the mailbox is a generic channel
 and its own tests post plan items without receipts - so it can only be enforced
 at the lane, which means a hold costs a withdraw-and-repost (a `held` receipt is
@@ -387,7 +388,7 @@ def admission(item: dict, *, repo_root: Path | None = None) -> list[str]:
             reasons.append(f"fixture_sources cannot be checked: {exc}")
     if not reasons and not _prechecked(item):  # last, so it never masks an earlier reason
         sha = test_sha256(acceptance["test_content"])
-        reasons.append(f"no green precheck receipt for sha256(test_content) {sha} at this exact checkout HEAD: run "
+        reasons.append(f"no green precheck receipt for test descriptor (content sha256 {sha}) at this exact checkout HEAD: run "
                        "`python -m orchestrator.nara_lane precheck --test-path P --test-file F --stub S`; "
                        "the receipt is keyed by test content, argv, and the exact checkout base")
     return reasons
@@ -416,7 +417,7 @@ def _argv_sha256(argv: list[str]) -> str:
 
 def _receipt_sha(test_sha: str, test_path: str, argv: list[str], base: str, tree: str) -> str:
     return hashlib.sha256(json.dumps({"test_sha256": test_sha, "test_path": test_path,
-        "test_argv_sha256": _argv_sha256(argv), "base_sha": base, "base_tree_sha256": tree},
+        "test_argv_sha256": _argv_sha256(argv), "base_sha": base, "base_tree_oid": tree},
         sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
@@ -458,7 +459,7 @@ def _prechecked(item: dict, *, base: tuple[str, str] | None = None) -> bool:
     return (body.get("schema") == "nara-lane-precheck/v2" and body.get("state") == "green"
             and body.get("test_sha256") == test_sha and body.get("test_path") == acceptance["test_path"]
             and body.get("test_argv_sha256") == _argv_sha256(list(acceptance["test_argv"]))
-            and body.get("base_sha") == base_sha and body.get("base_tree_sha256") == tree_sha
+            and body.get("base_sha") == base_sha and body.get("base_tree_oid") == tree_sha
             and body.get("receipt_sha256") == expected == path.stem)
 
 
@@ -474,8 +475,10 @@ def precheck(test_path: str, test_content: str, test_argv: list[str], *,
     Draws a fixture worktree from main, writes the test, and runs it with no
     implementation (must be red) and once per supplied stub (a green stub makes
     the item prechecked). Reports each run's output so a non-discriminating test
-    is diagnosable, and writes run_state/precheck_receipts/<sha256>.json only on
-    a green run. The stub is a fixture for this check only: it is never copied
+    is diagnosable, and writes a receipt named by the test/build-base descriptor
+    under run_state/precheck_receipts/ only on a green run. Its SHA-256 is an
+    integrity/correlation discipline, not authentication. The stub is a fixture
+    for this check only: it is never copied
     into Nara's worktree, which is created fresh by implement().
 
     Two things would otherwise let a green receipt record a claim that was never
@@ -542,7 +545,7 @@ def precheck(test_path: str, test_content: str, test_argv: list[str], *,
                 break
         receipt_sha = _receipt_sha(sha, test_path, list(test_argv), base, base_tree)
         report = {"test_sha256": sha, "test_path": test_path, "base_sha": base,
-                  "base_tree_sha256": base_tree, "receipt_sha256": receipt_sha, "fixture": str(fixture),
+                  "base_tree_oid": base_tree, "receipt_sha256": receipt_sha, "fixture": str(fixture),
                   "red_run": red, "green_run": green, "green_receipt": None, "runs": runs}
         if green is not None:
             path = receipt_path(receipt_sha)
@@ -550,7 +553,7 @@ def precheck(test_path: str, test_content: str, test_argv: list[str], *,
             path.write_text(json.dumps({
                 "schema": "nara-lane-precheck/v2", "test_sha256": sha, "test_path": test_path,
                 "test_argv_sha256": _argv_sha256(list(test_argv)), "state": "green",
-                "stub_paths": green["stub"], "base_sha": base, "base_tree_sha256": base_tree,
+                "stub_paths": green["stub"], "base_sha": base, "base_tree_oid": base_tree,
                 "receipt_sha256": receipt_sha,
                 "prechecked_at": datetime.now(timezone.utc).isoformat(),
                 "note": "a discipline, not authentication: the test author writes this receipt"},
