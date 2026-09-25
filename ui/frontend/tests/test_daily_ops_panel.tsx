@@ -22,8 +22,8 @@ vi.mock("../src/api/dailyOps", async importOriginal => ({
 
 vi.mock("../src/api/pollhub", () => ({
   usePolled: (key: string) => ({
-    data: key === "daily_ops_summary" ? D.summary : key === "daily_ops_v3_summary" ? D.v3 : D.messages,
-    error: key === "daily_ops_summary" ? null : D.messageError,
+    data: key === "daily_ops_summary" ? D.summary : key.startsWith("daily_ops_v3_summary:") ? D.v3 : D.messages,
+    error: key.startsWith("daily_ops_messages:") ? D.messageError : null,
     failing: false,
     asOf: Date.now(),
   }),
@@ -168,6 +168,7 @@ afterEach(() => {
 describe("DailyOpsPanel", () => {
   it("prefers the read-only v3 mailbox cards and splits exact handoffs from reconciliation", () => {
     D.v3 = v3Summary();
+    sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
     show();
 
     expect(screen.getByTestId("daily-ops-v3-panel")).toBeInTheDocument();
@@ -182,12 +183,19 @@ describe("DailyOpsPanel", () => {
     }] }))).toBeNull();
   });
 
+  it("rejects an awaiting-asker card without its handoff identity", () => {
+    expect(admitDailyOpsV3Summary(v3Summary({ waiting_on_you: [{
+      ...v3Summary().waiting_on_you[1], handoff_msg_id: null,
+    }] }))).toBeNull();
+  });
+
   it("admits a historical plan only as read-only context without a current revision", () => {
     const base = v3Summary();
     D.v3 = v3Summary({
       current_plan_revision: null,
       daily_plan: { ...base.daily_plan, is_current: false },
     });
+    sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
     show();
 
     expect(screen.getByTestId("daily-ops-v3-panel")).toBeInTheDocument();
@@ -221,6 +229,14 @@ describe("DailyOpsPanel", () => {
     expect(screen.queryByTestId("daily-ops-v3-panel")).toBeNull();
     expect(screen.getByTestId("daily-ops-v3-fallback")).toBeInTheDocument();
     expect(screen.getByTestId("daily-decision-cards")).toBeInTheDocument();
+  });
+
+  it("keeps v3 private until the owner key is unlocked", () => {
+    D.v3 = v3Summary();
+    show();
+
+    expect(screen.queryByTestId("daily-ops-v3-panel")).toBeNull();
+    expect(screen.getByTestId("daily-ops-v3-fallback")).toHaveTextContent("Unlock owner access");
   });
 
   it("replaces verbose goals with three concise source-bound work cards", () => {

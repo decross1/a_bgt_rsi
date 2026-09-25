@@ -288,7 +288,8 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
     )
     # This is intentionally a separate route and live read model.  It does
     # not alter the existing daily-ops summary/decision bridge or its cache.
-    register_daily_ops_live_api(app, repo_root=Path(loop_v0_repo))
+    register_daily_ops_live_api(app, repo_root=Path(loop_v0_repo),
+                                owner_authorizer=daily_ops_authorizer)
 
     # 2026-08-14 work order A+C: loop-alert flag + ideas-board read seams.
     # Same primary-checkout run_state/memory split as the coordinator reads.

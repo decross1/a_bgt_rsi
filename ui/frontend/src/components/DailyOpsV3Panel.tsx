@@ -128,7 +128,7 @@ function waiting(value: unknown): V3Waiting[] | null {
     const choices = strings(item.choices, 8, 300);
     if (context === undefined || recommendation === undefined || consequence === undefined || askedAt === undefined ||
         msgId === undefined || handoffMsgId === undefined || !text(item.cli, 600) || choices === null ||
-        (!item.awaiting_asker && handoffMsgId !== null)) return null;
+        (item.awaiting_asker ? handoffMsgId === null : handoffMsgId !== null)) return null;
     rows.push({ id: item.id, kind: String(item.kind), title: item.title, question: item.question, context,
       choices, recommendation, consequence, askedBy: item.asked_by, askedAt, msgId,
       awaitingAsker: item.awaiting_asker, handoffMsgId });

@@ -714,13 +714,13 @@ def current_plan(repo: Path, now: datetime | None = None) -> tuple[str, dict] | 
     return name[:-5], plan
 
 
-def plan_windows(rows: list[dict]) -> dict[str, tuple[int, float]]:
-    """date -> [first PLAN READY seq for that date, first PLAN READY seq of a later date)."""
+def plan_windows(rows: list[dict], max_date: str | None = None) -> dict[str, tuple[int, float]]:
+    """Date windows; a future receipt cannot end today's evidence window."""
     firsts: dict[str, int] = {}
     for row in rows:
         match = (PLAN_READY.match(_title(row))
                  if row.get("kind") == "note" and row.get("actor") == "oracle" else None)
-        if match:
+        if match and (max_date is None or match.group(1) <= max_date):
             firsts.setdefault(match.group(1), row["seq"])
     ordered = sorted(firsts.items(), key=lambda pair: pair[0])
     windows = {}
@@ -830,6 +830,10 @@ def _revision_window(rows: list[dict], windows: dict, date: str, name: str | Non
     legacy = _legacy_plan_anchors(rows, catalog) if catalog_known else {}
     anchors = [(row, _verified_plan_anchor(row, catalog, legacy)) for row in rows]
     anchors = [(row, anchored_path) for row, anchored_path in anchors if anchored_path]
+    def identity(anchored_path: str) -> tuple[str, int]:
+        match = PLAN_NAME.match(anchored_path.rsplit("/", 1)[-1])
+        return (match.group(1), int(match.group(2) or 1)) if match else ("", 0)
+    target_identity = identity(path)
     if exact:
         anchor = min(exact, key=lambda row: row["seq"])
     else:
@@ -838,8 +842,14 @@ def _revision_window(rows: list[dict], windows: dict, date: str, name: str | Non
         if not fallback:
             return float("inf"), float("inf"), True
         anchor = min(fallback, key=lambda row: row["seq"])
+    # Old/backdated receipts cannot truncate a newer plan or gain a fresh
+    # window after that newer plan was already published.
+    if any(row["seq"] <= anchor["seq"] and identity(anchored_path) > target_identity
+           for row, anchored_path in anchors):
+        return float("inf"), float("inf"), True
     end = min((row["seq"] for row, anchored_path in anchors
-               if row["seq"] > anchor["seq"] and anchored_path != path), default=float("inf"))
+               if row["seq"] > anchor["seq"] and identity(anchored_path) > target_identity),
+              default=float("inf"))
     return anchor["seq"], end, True
 
 
@@ -1175,18 +1185,20 @@ def build(repo: Path, now: datetime, *, recorded_rows: list[dict] | None = None)
     if not git.available:
         warnings.append("Read-only git on main is unavailable; merged status and improvements are not derived.")
     plans = plan_files(repo)
-    oldest = (now.astimezone(LAB_TZ) - timedelta(days=WINDOW_DAYS)).date().isoformat()
-    catalog_plans = {date: revisions for date, revisions in plans.items() if date >= oldest}
-    if plans and max(plans) not in catalog_plans:
-        catalog_plans[max(plans)] = plans[max(plans)]
+    lab_now = now.astimezone(LAB_TZ)
+    today = lab_now.date().isoformat()
+    oldest = (lab_now - timedelta(days=WINDOW_DAYS)).date().isoformat()
+    eligible_plans = {date: revisions for date, revisions in plans.items() if date <= today}
+    catalog_plans = {date: revisions for date, revisions in eligible_plans.items() if date >= oldest}
+    if eligible_plans and max(eligible_plans) not in catalog_plans:
+        catalog_plans[max(eligible_plans)] = eligible_plans[max(eligible_plans)]
     catalog = _plan_catalog(repo, catalog_plans)
-    windows = plan_windows(rows)
+    windows = plan_windows(rows, max_date=today)
     daily_plan, items, claimed, plan_id = None, [], {}, None
     if plans:
-        today = now.astimezone(LAB_TZ).date().isoformat()
         # A queued future plan is useful history, but must never shadow a
         # valid plan for the lab's present day.
-        date = today if today in plans else max(plans)
+        date = today if today in plans else max(eligible_plans) if eligible_plans else min(plans)
         revision, name = plans[date][-1]
         try:
             plan, sha, written = _load_plan(repo, name)
@@ -1194,7 +1206,7 @@ def build(repo: Path, now: datetime, *, recorded_rows: list[dict] | None = None)
                                            timezone.utc)
             plan_id = name[:-5]
             bottlenecks = plan.get("bottlenecks") if isinstance(plan.get("bottlenecks"), list) else []
-            is_current = date == now.astimezone(LAB_TZ).date().isoformat()
+            is_current = date == today
             daily_plan = {
                 "id": plan_id, "date": date, "revision": f"r{revision}", "path": f"run_state/daily_plans/{name}",
                 "sha256": sha, "written_at": _iso(written),
@@ -1208,7 +1220,7 @@ def build(repo: Path, now: datetime, *, recorded_rows: list[dict] | None = None)
                 items, claimed = work_items(plan, rows, windows, git, now, first, name, sha, catalog)
             elif not is_current:
                 warnings.append(
-                    f"Newest daily plan {name} is stale; it remains visible as history, but its work and owner controls are disabled."
+                    f"Daily plan {name} is outside the current lab day; it remains visible as context, but its work and owner controls are disabled."
                 )
         except (OSError, ValueError) as exc:
             warnings.append(_clip(f"Newest daily plan {name} is unreadable: {exc}", 480))
@@ -1241,7 +1253,7 @@ def build(repo: Path, now: datetime, *, recorded_rows: list[dict] | None = None)
         "work_items": items,
         "waiting_on_you": waiting,
         "question_updates": question_updates(rows),
-        "accomplishments": accomplishments(repo, rows, windows, git, now, plans, catalog),
+        "accomplishments": accomplishments(repo, rows, windows, git, now, eligible_plans, catalog),
         "improvements": improvements(git, now),
         "warnings": warnings,
         "sources": {
@@ -1392,7 +1404,7 @@ def validate_live(value: dict, agents_ok) -> None:
                      and _text(r["msg_id"], 80, optional=True) and _text(r["cli"], 600)
                      and type(r["awaiting_asker"]) is bool
                      and _text(r["handoff_msg_id"], 80, optional=True)
-                     and (r["awaiting_asker"] or r["handoff_msg_id"] is None))):
+                     and (r["awaiting_asker"] == (r["handoff_msg_id"] is not None)))):
         raise ValueError("v3 owner requests are invalid")
     if not _rows(value["question_updates"], {"id", "question_id", "title", "question", "disposition",
                                                "summary", "reason", "blocking_artifact", "resolved_by",

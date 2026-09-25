@@ -1121,6 +1121,39 @@ def test_future_plan_does_not_shadow_today_plan(repo):
     assert value["current_plan_revision"] == "2026-09-23"
 
 
+@pytest.mark.parametrize(("current_name", "intruder_name"), [
+    ("2026-09-23-r10.json", "2026-09-24.json"),
+    ("2026-09-23-r10.json", "2026-09-23-r9.json"),
+    ("2026-09-23.json", "2026-09-22.json"),
+])
+def test_future_or_delayed_older_anchor_cannot_erase_current_work(repo, current_name, intruder_name):
+    current = _plan(repo, current_name, [_item("d1", "nara_dev", "Current item")])
+    intruder = _plan(repo, intruder_name, [_item("d1", "nara_dev", "Other item")])
+    box = Box(repo)
+    for path in (current, intruder):
+        box.post("oracle", "note", {
+            "title": f"PLAN READY: {path.name[:10]}",
+            "ref": {"path": path.relative_to(repo).as_posix(),
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest()},
+        })
+    item = box.post("oracle", "plan_item", {**PLAN_ITEM, "title": "Current item"}, to="nara")
+    value = _summary(repo, NOW)
+    assert value["current_plan_revision"] == current.stem
+    assert [(row["id"], row["status"], row["evidence_msg_id"]) for row in value["work_items"]] == [
+        ("d1", "awaiting_review", item["msg_id"])]
+
+
+def test_handoff_flag_requires_an_exact_handoff_message_id(repo):
+    box = Box(repo)
+    box.post("claude", "question", {"title": "A fresh owner question"}, to="owner")
+    value = _summary(repo)
+    assert value["waiting_on_you"][0]["awaiting_asker"] is False
+    value["waiting_on_you"][0]["awaiting_asker"] = True
+    assert value["waiting_on_you"][0]["handoff_msg_id"] is None
+    with pytest.raises(ValueError, match="owner requests"):
+        live.validate_live(value, live.validate_agents)
+
+
 def test_unverified_human_claim_and_authorized_route_are_nonterminal_updates():
     question = {"seq": 1, "msg_id": "oracle-question", "actor": "oracle", "to": "owner",
                 "kind": "question", "body": {"title": "Which ruling?"},

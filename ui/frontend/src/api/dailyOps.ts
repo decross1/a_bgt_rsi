@@ -90,8 +90,8 @@ export const getDailyOpsSummary = (): Promise<unknown> =>
  * read-only endpoint: callers must never fall through to the v2 decision
  * route when a v3 card is being displayed.
  */
-export const getDailyOpsV3Summary = (): Promise<unknown> =>
-  getJson("/api/daily-ops/v3/summary");
+export const getDailyOpsV3Summary = (accessKey: string): Promise<unknown> =>
+  getJson("/api/daily-ops/v3/summary", accessKey);
 
 export const getDailyOpsMessages = (accessKey: string): Promise<unknown> =>
   getJson("/api/daily-ops/messages?limit=40", accessKey);

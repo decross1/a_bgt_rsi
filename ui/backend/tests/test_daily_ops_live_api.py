@@ -2,8 +2,22 @@
 import pytest
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 from backend.daily_ops_live_api import register
+
+
+def _request(token="owner", origin="http://10.0.0.73:5173"):
+    return Request({"type": "http", "method": "GET", "path": "/api/daily-ops/v3/summary",
+                    "headers": [(b"authorization", f"Bearer {token}".encode()),
+                                (b"origin", origin.encode())],
+                    "query_string": b"", "server": ("test", 80),
+                    "client": ("10.0.0.4", 4000), "scheme": "http"})
+
+
+def _authorize(request):
+    return (request.headers.get("authorization") == "Bearer owner"
+            and request.headers.get("origin") == "http://10.0.0.73:5173")
 
 
 def _valid_summary():
@@ -29,8 +43,9 @@ def _valid_summary():
 
 def test_v3_summary_is_live_validated_and_private(tmp_path):
     app = FastAPI()
-    register(app, repo_root=tmp_path, summary=_valid_summary)
-    response = TestClient(app).get("/api/daily-ops/v3/summary")
+    register(app, repo_root=tmp_path, summary=_valid_summary, owner_authorizer=_authorize)
+    response = TestClient(app).get("/api/daily-ops/v3/summary", headers={
+        "Authorization": "Bearer owner", "Origin": "http://10.0.0.73:5173"})
     assert response.status_code == 200
     assert response.json()["schema_version"] == "daily-ops-summary/v3"
     assert response.headers["cache-control"] == "no-store"
@@ -40,8 +55,10 @@ def test_v3_summary_is_live_validated_and_private(tmp_path):
 
 def test_v3_summary_fails_closed_without_reading_a_legacy_cache(tmp_path):
     app = FastAPI()
-    register(app, repo_root=tmp_path, summary=lambda: {"schema_version": "daily-ops-summary/v2"})
-    response = TestClient(app).get("/api/daily-ops/v3/summary")
+    register(app, repo_root=tmp_path, summary=lambda: {"schema_version": "daily-ops-summary/v2"},
+             owner_authorizer=_authorize)
+    response = TestClient(app).get("/api/daily-ops/v3/summary", headers={
+        "Authorization": "Bearer owner", "Origin": "http://10.0.0.73:5173"})
     assert response.status_code == 503
     assert response.headers["cache-control"] == "no-store"
 
@@ -53,21 +70,48 @@ def test_v3_summary_fails_closed_for_an_actual_broken_mailbox_source(tmp_path):
     # must return 503 rather than convert it into a healthy empty projection.
     mailbox.write_text('{"schema":"oracle-nara-mailbox/v1","seq":1}\n')
     app = FastAPI()
-    router = register(app, repo_root=tmp_path)
+    router = register(app, repo_root=tmp_path, owner_authorizer=_authorize)
     endpoint = next(route.endpoint for route in router.routes
                     if route.path == "/api/daily-ops/v3/summary")
     # The installed TestClient/ASGI transport is known to hang in this lab.
     # The route's admission decision itself is deterministic and transport-free.
     with pytest.raises(HTTPException) as error:
-        endpoint(Response())
+        endpoint(_request(), Response())
     assert error.value.status_code == 503
     assert error.value.headers["Cache-Control"] == "no-store"
+
+
+def test_v3_requires_owner_bearer_and_allowed_origin_before_reading(tmp_path):
+    calls = []
+    app = FastAPI()
+    router = register(app, repo_root=tmp_path,
+                      summary=lambda: calls.append("read") or _valid_summary(),
+                      owner_authorizer=_authorize)
+    endpoint = next(route.endpoint for route in router.routes
+                    if route.path == "/api/daily-ops/v3/summary")
+    for request in (_request(token="wrong"), _request(origin="http://evil.invalid")):
+        with pytest.raises(HTTPException) as error:
+            endpoint(request, Response())
+        assert error.value.status_code == 403
+        assert error.value.headers["Cache-Control"] == "no-store"
+    assert calls == []
+    response = Response()
+    assert endpoint(_request(), response)["schema_version"] == "daily-ops-summary/v3"
+    assert calls == ["read"] and response.headers["cache-control"] == "no-store"
+
+    unavailable = register(FastAPI(), repo_root=tmp_path, summary=_valid_summary)
+    endpoint = next(route.endpoint for route in unavailable.routes
+                    if route.path == "/api/daily-ops/v3/summary")
+    with pytest.raises(HTTPException) as error:
+        endpoint(_request(), Response())
+    assert error.value.status_code == 503
 
 
 def test_v3_route_does_not_shadow_legacy_daily_ops_paths(tmp_path):
     app = FastAPI()
     app.get("/api/daily-ops/summary")(lambda: {"schema_version": "daily-ops-summary/v2"})
-    register(app, repo_root=tmp_path, summary=_valid_summary)
+    register(app, repo_root=tmp_path, summary=_valid_summary, owner_authorizer=_authorize)
     client = TestClient(app)
     assert client.get("/api/daily-ops/summary").json()["schema_version"] == "daily-ops-summary/v2"
-    assert client.get("/api/daily-ops/v3/summary").json()["schema_version"] == "daily-ops-summary/v3"
+    assert client.get("/api/daily-ops/v3/summary", headers={
+        "Authorization": "Bearer owner", "Origin": "http://10.0.0.73:5173"}).json()["schema_version"] == "daily-ops-summary/v3"

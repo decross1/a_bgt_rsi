@@ -4,17 +4,17 @@ import { getDailyOpsMessages, getDailyOpsV3Summary, postDailyOpsDecision, postDa
 afterEach(() => vi.unstubAllGlobals());
 
 describe("daily operations owner authentication", () => {
-  it("reads the additive v3 view without an owner credential or write contract", async () => {
+  it("reads the additive v3 view with an owner credential and no write contract", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       schema_version: "daily-ops-summary/v3", generated_at: "2026-09-25T08:00:00Z",
     }), { status: 200, headers: { "Content-Type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await getDailyOpsV3Summary();
+    await getDailyOpsV3Summary("owner key with spaces");
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toContain("/api/daily-ops/v3/summary");
-    expect(init).toBeUndefined();
+    expect(init).toEqual({ headers: { Authorization: "Bearer owner key with spaces" } });
   });
 
   it("keeps the owner key out of the message URL and sends it as a bearer header", async () => {
