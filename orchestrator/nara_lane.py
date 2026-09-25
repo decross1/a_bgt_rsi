@@ -447,14 +447,10 @@ def _prechecked(item: dict, *, base: tuple[str, str] | None = None) -> bool:
         return False
     if not isinstance(body, dict):
         return False
-    receipt_base = body.get("base_sha")
-    if not isinstance(receipt_base, str):
-        return False
-    try:
-        if subprocess.run(["git", "merge-base", "--is-ancestor", receipt_base, base_sha],
-                          cwd=ROOT, timeout=30).returncode != 0:
-            return False
-    except (OSError, subprocess.SubprocessError):
+    # Receipt identity is exact, not ancestor-compatible.  Do not turn an
+    # untrusted receipt field into another Git query: it must be a canonical
+    # SHA-1 commit spelling and then equal the captured base below.
+    if not isinstance(body.get("base_sha"), str) or not re.fullmatch(r"[0-9a-f]{40}", body["base_sha"]):
         return False
     return (body.get("schema") == "nara-lane-precheck/v2" and body.get("state") == "green"
             and body.get("test_sha256") == test_sha and body.get("test_path") == acceptance["test_path"]
@@ -472,7 +468,7 @@ def precheck(test_path: str, test_content: str, test_argv: list[str], *,
              timeout: float = TEST_TIMEOUT_S) -> dict:
     """Run an acceptance test's discrimination claim in the sandbox before posting it.
 
-    Draws a fixture worktree from main, writes the test, and runs it with no
+    Draws a fixture worktree from the captured checkout HEAD, writes the test, and runs it with no
     implementation (must be red) and once per supplied stub (a green stub makes
     the item prechecked). Reports each run's output so a non-discriminating test
     is diagnosable, and writes a receipt named by the test/build-base descriptor

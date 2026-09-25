@@ -6,7 +6,7 @@ discriminated (red without the tool, green with a correct one) without running
 it; one of those tests failed 9 of 11 checks from a defect in the test itself.
 
 Precheck runs that claim instead of asserting it: it draws a fixture worktree
-from main, writes the acceptance test, runs it with no implementation (it must
+from the captured checkout HEAD, writes the acceptance test, runs it with no implementation (it must
 be red), then again with an author-supplied known-good stub (a green stub makes
 the item prechecked), and writes a receipt named for a descriptor of test
 content, path, argv, and exact checkout commit/tree under
@@ -96,8 +96,8 @@ def _precheck_root_of(root):
 
 
 def _repo(tmp_path, monkeypatch):
-    """A scratch git repo standing in for the lab. precheck and the lane both draw
-    their worktree from its HEAD, so it must not carry the module under test."""
+    """A scratch git repo standing in for the lab. Precheck captures its current
+    HEAD, and the lane draws its worktree from that captured base."""
     root = tmp_path / "repo"
     (root / "run_state").mkdir(parents=True)
     subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
@@ -247,12 +247,161 @@ def test_lane_admits_the_exact_receipted_content(tmp_path, monkeypatch):
 def test_precheck_receipt_is_held_when_head_advances(tmp_path, monkeypatch):
     root = _repo(tmp_path, monkeypatch)
     lane.precheck(TEST_PATH, REPO_TEST, ARGV, stubs=[STUB], sandbox=_host_sandbox)
-    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "advance"],
-                   cwd=root, check=True)
+    _advance_head(root)
     assert any("exact checkout HEAD" in reason for reason in lane.admission({"actor": "oracle", "body": _plan()}))
 
 
-def test_forged_nonancestor_base_receipt_is_not_prechecked(tmp_path, monkeypatch):
+def _advance_head(root):
+    """An independent checkout writer changing only the commit identity."""
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "advance"],
+                   cwd=root, check=True)
+
+
+def _real_receipted_entry(tmp_path, monkeypatch, msg_id="base-binding"):
+    """An implement() entry backed by an actual v2 receipt, never a gate stub."""
+    root = _repo(tmp_path, monkeypatch)
+    lane.precheck(TEST_PATH, REPO_TEST, ARGV, stubs=[STUB], sandbox=_host_sandbox)
+    item = {"actor": "oracle", "msg_id": msg_id,
+            "body": _plan(allowed_write_paths=sorted(STUB))}
+    return root, {"item": item}
+
+
+def _good_stub_builder(body, worktree, feedback, timeout=0):
+    return dict(STUB)
+
+
+def _branch_exists(root, branch):
+    return subprocess.run(["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
+                          cwd=root).returncode == 0
+
+
+def test_implement_refuses_a_real_receipt_when_root_advanced_before_start(tmp_path, monkeypatch):
+    """Mutation proof: without implement's initial exact-receipt guard this reaches
+    worktree creation; the assertion below then fails rather than masking the race."""
+    root, entry = _real_receipted_entry(tmp_path, monkeypatch, "advanced-before-start")
+    _advance_head(root)
+
+    result = lane.implement(entry, build=_good_stub_builder, sandbox=_host_sandbox)
+
+    worktree = lane.WORKTREES / entry["item"]["msg_id"]
+    assert result["state"] == "failed" and "precheck receipt" in result["reason"]
+    assert not worktree.exists()
+    assert not _branch_exists(root, f"nara/{entry['item']['msg_id']}")
+
+
+def test_implement_refuses_root_move_immediately_after_worktree_add(tmp_path, monkeypatch):
+    """Mutation proof: removing the post-add base check lets this dispatch a builder."""
+    root, entry = _real_receipted_entry(tmp_path, monkeypatch, "moved-after-add")
+    real_git, builds = lane._git, []
+
+    def move_after_add(*args, cwd=None):
+        result = real_git(*args, cwd=cwd)
+        if args[:2] == ("worktree", "add"):
+            _advance_head(root)
+        return result
+
+    monkeypatch.setattr(lane, "_git", move_after_add)
+    result = lane.implement(entry, build=lambda *a, **k: builds.append(a) or dict(STUB), sandbox=_host_sandbox)
+
+    assert result["state"] == "failed" and result["reason"] == "checkout HEAD moved during worktree creation"
+    assert builds == []
+
+
+def test_implement_refuses_root_move_before_first_builder_dispatch(tmp_path, monkeypatch):
+    """Mutation proof: without the per-dispatch check the builder below is called."""
+    root, entry = _real_receipted_entry(tmp_path, monkeypatch, "moved-before-builder")
+    calls = {"sandbox": 0, "builder": 0}
+
+    def move_after_red(worktree, argv, timeout=0):
+        rc, output = _host_sandbox(worktree, argv, timeout=timeout)
+        calls["sandbox"] += 1
+        if calls["sandbox"] == 1:
+            _advance_head(root)
+        return rc, output
+
+    def builder(*args, **kwargs):
+        calls["builder"] += 1
+        return dict(STUB)
+
+    result = lane.implement(entry, build=builder, sandbox=move_after_red)
+
+    assert result["state"] == "failed" and result["reason"] == "checkout HEAD moved before builder dispatch"
+    assert calls["builder"] == 0
+
+
+def test_implement_refuses_root_move_between_builder_attempts(tmp_path, monkeypatch):
+    """Mutation proof: removing the next-attempt guard invokes this builder twice."""
+    root, entry = _real_receipted_entry(tmp_path, monkeypatch, "moved-between-attempts")
+    calls = {"sandbox": 0, "builder": 0}
+
+    def move_after_first_attempt(worktree, argv, timeout=0):
+        rc, output = _host_sandbox(worktree, argv, timeout=timeout)
+        calls["sandbox"] += 1
+        if calls["sandbox"] == 2:  # red-first run, then the first failed build
+            _advance_head(root)
+        return rc, output
+
+    def broken_then_good(*args, **kwargs):
+        calls["builder"] += 1
+        return {"tools/precheck_slug_fixture.py": "def slugify(text):\n    return text.lower()\n"}
+
+    result = lane.implement(entry, build=broken_then_good, sandbox=move_after_first_attempt)
+
+    assert result["state"] == "failed" and result["reason"] == "checkout HEAD moved before builder dispatch"
+    assert calls["builder"] == 1
+
+
+def test_implement_refuses_root_move_before_commit(tmp_path, monkeypatch):
+    """Mutation proof: without the pre-commit check this successful build commits."""
+    root, entry = _real_receipted_entry(tmp_path, monkeypatch, "moved-before-commit")
+    calls = {"sandbox": 0}
+
+    def move_after_green(worktree, argv, timeout=0):
+        rc, output = _host_sandbox(worktree, argv, timeout=timeout)
+        calls["sandbox"] += 1
+        if calls["sandbox"] == 2:  # initial red run, then a green builder result
+            _advance_head(root)
+        return rc, output
+
+    result = lane.implement(entry, build=_good_stub_builder, sandbox=move_after_green)
+
+    assert result["state"] == "failed" and result["reason"] == "checkout HEAD moved before commit"
+    branch_head = subprocess.run(["git", "rev-parse", f"nara/{entry['item']['msg_id']}"], cwd=root,
+                                 check=True, capture_output=True, text=True).stdout.strip()
+    assert branch_head == result["base_sha"], "the branch was created by worktree add but was never committed"
+
+
+def test_implement_never_validates_when_root_moves_during_worktree_commit(tmp_path, monkeypatch):
+    """Inject immediately after the worktree commit. Mutation proof: without the
+    final recheck this returns `validated` even though ROOT advanced in that window."""
+    root, entry = _real_receipted_entry(tmp_path, monkeypatch, "moved-during-commit")
+    real_git = lane._git
+
+    def move_after_commit(*args, cwd=None):
+        result = real_git(*args, cwd=cwd)
+        if cwd is not None and "commit" in args:
+            _advance_head(root)
+        return result
+
+    monkeypatch.setattr(lane, "_git", move_after_commit)
+    result = lane.implement(entry, build=_good_stub_builder, sandbox=_host_sandbox)
+
+    assert result["state"] == "failed" and result["reason"] == "checkout HEAD moved during commit"
+    assert "head_sha" not in result
+
+
+def test_implement_validates_with_the_exact_real_receipt_and_unchanged_head(tmp_path, monkeypatch):
+    root, entry = _real_receipted_entry(tmp_path, monkeypatch, "exact-happy-path")
+
+    result = lane.implement(entry, build=_good_stub_builder, sandbox=_host_sandbox)
+
+    assert result["state"] == "validated", result
+    assert result["base_sha"] == subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True,
+                                                   capture_output=True, text=True).stdout.strip()
+    assert _branch_exists(root, f"nara/{entry['item']['msg_id']}")
+
+
+def test_forged_nonmatching_base_receipt_is_not_prechecked(tmp_path, monkeypatch):
     root = _repo(tmp_path, monkeypatch)
     base, tree = lane._build_base()
     foreign = subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit-tree", tree, "-m", "foreign"], cwd=root,
@@ -267,14 +416,15 @@ def test_forged_nonancestor_base_receipt_is_not_prechecked(tmp_path, monkeypatch
     assert lane._prechecked({"body": _plan()}, base=(base, tree)) is False
 
 
-def test_malformed_receipt_base_type_fails_closed(tmp_path, monkeypatch):
+@pytest.mark.parametrize("bad_base", [["not-a-commit"], "A" * 40, "a" * 39])
+def test_malformed_receipt_base_fails_closed(tmp_path, monkeypatch, bad_base):
     root = _repo(tmp_path, monkeypatch)
     base, tree = lane._build_base()
     sha = lane.test_sha256(REPO_TEST)
     key = lane._receipt_sha(sha, TEST_PATH, ARGV, base, tree)
     path = lane.receipt_path(key)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"base_sha": ["not-a-commit"]}))
+    path.write_text(json.dumps({"base_sha": bad_base}))
     assert lane._prechecked({"body": _plan()}, base=(base, tree)) is False
 
 
