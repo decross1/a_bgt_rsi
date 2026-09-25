@@ -1115,11 +1115,14 @@ def test_contest_requires_structured_evidence_deduplicates_and_yields_to_fresh_t
         "disposition": "superseded", "summary": "Already done.", "reason": "Rechecked.",
     }, to="owner", reply=second_question["msg_id"])
     _contest(box, second_resolution)
-    box.post("human:derrick", "answer", {"text": "Use the safe path."}, to="claude",
-             reply=second_question["msg_id"])
+    later_claim = box.post("human:derrick", "answer", {"text": "Use the safe path."}, to="claude",
+                           reply=second_question["msg_id"])
     value = _summary(repo)
-    assert second_question["msg_id"] not in {card["msg_id"] for card in value["waiting_on_you"]}
-    assert second_question["msg_id"] not in {row["question_id"] for row in value["question_updates"]}
+    assert second_question["msg_id"] in {card["msg_id"] for card in value["waiting_on_you"]}
+    later_updates = [row for row in value["question_updates"]
+                     if row["question_id"] == second_question["msg_id"]]
+    assert any(row["id"] == later_claim["msg_id"] and row["disposition"] == "contested"
+               and "Use the safe path." in row["summary"] for row in later_updates)
 
 
 def test_malformed_contest_schema_is_rejected(repo):
