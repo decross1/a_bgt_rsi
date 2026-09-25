@@ -204,10 +204,13 @@ SSRN 6366838, written 2026-03-03 and posted 2026-03-09.
   [`R/analysis_pipeline.R`](https://github.com/garcijo4/algorithmic_anchoring/blob/328a354d0e9d98ac81121202ffc716077eb736e1/R/analysis_pipeline.R)
   was 122,811 bytes with SHA-256
   `59fb9ea93985fa21ecf2ef20434b5a46bc536a64169d960d9252e800adbfc939`.
-- **Observed negative/limit.** The two reported inferential procedures disagree
-  at a conventional `.05` threshold. Without the manuscript, this screen cannot
-  determine their preregistered priority or safely map that interaction to the
-  abstract's 52% headline.
+- **Observed negative/limit.** The repository itself heads the relevant block
+  `[5C/13] PRIMARY: Cell-mean randomization inference`; its H4 adversarial
+  interaction has `p=0.1406` and therefore does not reject at `.05` under that
+  labeled-primary procedure. The CR2 output above gives `p=0.00806`. Without
+  the full manuscript, the preregistered priority remains unknown, and this
+  contrast does not establish no effect, equivalence, or failure of the paper's
+  other results.
 
 ## Bounded synthesis
 
