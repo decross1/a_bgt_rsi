@@ -229,6 +229,66 @@ def test_owner_decision_and_open_questions_are_waiting_on_you_until_answered(rep
     assert [w["id"] for w in value["waiting_on_you"]] == ["2026-09-23:d6"]
 
 
+def test_owner_question_card_keeps_structured_title_and_legacy_free_text_actionable():
+    lane_context = ((
+        "The main checkout is on the Flash branch while main contains the reviewed lane inputs. "
+        "The lane builds from checkout HEAD but prechecks stamp main, so fresh receipts and builds disagree. "
+        "Reconcile the checkout in an attended window, pin the lane base, or keep Nara items held. "
+    ) * 2).strip()
+    structured = {
+        "msg_id": "claude-lane-base", "body": {
+            "title": "Should the Nara lane build on main?",
+            "question": lane_context,
+            "options": ["reconcile in an attended window", "pin the lane base", "keep items held"],
+            "recommendation": "Reconcile in an attended window.",
+            "consequence_of_deferring": "Nara items remain held on the divergent checkout.",
+        },
+    }
+    assert live._question_card(structured) == {
+        "title": "Should the Nara lane build on main?",
+        "question": "Should the Nara lane build on main?",
+        "context": lane_context,
+        "choices": ["reconcile in an attended window", "pin the lane base", "keep items held"],
+        "recommendation": "Reconcile in an attended window.",
+        "consequence": "Nara items remain held on the divergent checkout.",
+    }
+
+    legacy = {"msg_id": "claude-retro", "body": {
+        "title": "Two authority rulings from the retro",
+        "text": "The first ruling needs a named state-root exception; the second asks about a canary.",
+    }}
+    assert live._question_card(legacy) == {
+        "title": "Two authority rulings from the retro",
+        "question": "Two authority rulings from the retro",
+        "context": "The first ruling needs a named state-root exception; the second asks about a canary.",
+        "choices": [], "recommendation": None, "consequence": None,
+    }
+
+    no_title_short = {"msg_id": "oracle-short", "body": {"question": "Run the source screen?"}}
+    assert live._question_card(no_title_short)["context"] is None
+    no_title_long = {"msg_id": "oracle-long", "body": {"question": lane_context}}
+    assert live._question_card(no_title_long) == {
+        "title": lane_context[:299].rstrip() + "…", "question": lane_context[:299].rstrip() + "…",
+        "context": lane_context, "choices": [], "recommendation": None, "consequence": None,
+    }
+    text_only_long = {"msg_id": "oracle-text", "body": {"text": lane_context}}
+    assert live._question_card(text_only_long) == {
+        "title": lane_context[:299].rstrip() + "…", "question": lane_context[:299].rstrip() + "…",
+        "context": lane_context, "choices": [], "recommendation": None, "consequence": None,
+    }
+    distinct_question = {"msg_id": "oracle-distinct", "body": {
+        "title": "Lane base", "question": "Reconcile or pin?", "context": "Why it matters.",
+    }}
+    assert live._question_card(distinct_question) == {
+        "title": "Lane base", "question": "Reconcile or pin?", "context": "Why it matters.",
+        "choices": [], "recommendation": None, "consequence": None,
+    }
+    malformed_title = {"msg_id": "oracle-malformed", "body": {
+        "title": {"not": "text"}, "question": "Valid question",
+    }}
+    assert live._question_card(malformed_title)["title"] == "Valid question"
+
+
 @pytest.mark.parametrize(("projection", "expected"), [
     ({"status": "selected", "focus_id": "f", "title": "T", "stage": "needs_clean_refinement",
       "next_action": "Do X.", "intake_policy": "focus_before_new_topics",

@@ -95,6 +95,15 @@ def _clip(value: object, maximum: int = 240) -> str | None:
     return text if len(text) <= maximum else text[:maximum - 1].rstrip() + "…"
 
 
+def _first_clip(*values: object, maximum: int) -> str | None:
+    """Return the first usable bounded display value, not merely the first truthy value."""
+    for value in values:
+        clipped = _clip(value, maximum)
+        if clipped is not None:
+            return clipped
+    return None
+
+
 def _body(row: dict) -> dict:
     return row["body"] if isinstance(row.get("body"), dict) else {}
 
@@ -106,6 +115,39 @@ def _ref(row: dict) -> dict:
 
 def _title(row: dict) -> str:
     return str(_body(row).get("title") or "")
+
+
+def _question_card(row: dict) -> dict:
+    """Bounded, typed display fields for a genuine owner question."""
+    body = _body(row)
+    title_from_body = _clip(body.get("title"), 300)
+    title = _first_clip(body.get("title"), body.get("question"), body.get("text"), maximum=300) or row["msg_id"]
+    question = title
+    full_question = _clip(body.get("question"), 1200)
+    short_question = _clip(body.get("question"), 300)
+    context = _first_clip(body.get("context"), body.get("decision_context"), body.get("why"), maximum=1200)
+    if context is not None and title_from_body is not None and short_question is not None and short_question != title:
+        question = short_question
+    if context is None and full_question is not None and (
+            (title_from_body is not None and short_question != title)
+            or (title_from_body is None and full_question != short_question)):
+        context = full_question
+    if context is None:
+        text = _clip(body.get("text"), 1200)
+        if text is not None and text != title:
+            context = text
+    choices = body.get("options")
+    if not isinstance(choices, list):
+        choices = []
+    return {
+        "title": title,
+        "question": question,
+        "context": context,
+        "choices": [_clip(choice, 300) for choice in choices[:8] if _clip(choice, 300)],
+        "recommendation": _clip(body.get("recommendation"), 600),
+        "consequence": _clip(body.get("consequence") or body.get("impact") or body.get("if_deferred")
+                             or body.get("consequence_of_deferring"), 600),
+    }
 
 
 def _word(value: str, text: str) -> bool:
@@ -388,10 +430,14 @@ def waiting_on_you(plan_id: str | None, items: list[dict], claimed: dict, rows: 
             continue
         msg = item["evidence_msg_id"]
         question = by_id.get(msg) if msg else None
+        card = _question_card(question) if question is not None else {
+            "title": item["title"], "question": item["title"], "context": None,
+            "choices": [], "recommendation": None, "consequence": None,
+        }
         cli = (f"{CLI} --kind answer --to {_reply_to(question)} --in-reply-to {msg} "
                f"--body '{{\"text\": \"...\"}}'" if msg
                else f"{CLI} --kind note --to oracle --body '{{\"text\": \"{plan_id} {item['id']}: ...\"}}'")
-        waiting.append({"kind": "owner_decision", "id": f"{plan_id}:{item['id']}", "title": item["title"],
+        waiting.append({"kind": "owner_decision", "id": f"{plan_id}:{item['id']}", **card,
                         "asked_by": _reply_to(question) if question else "oracle",
                         "asked_at": item["evidence_at"] or plan_written, "msg_id": msg, "cli": cli})
     for row in rows:
@@ -399,9 +445,10 @@ def waiting_on_you(plan_id: str | None, items: list[dict], claimed: dict, rows: 
                 or row["msg_id"] in claimed):
             continue
         to = _reply_to(row)
+        card = _question_card(row)
         waiting.append({
             "kind": "question", "id": row["msg_id"],
-            "title": _clip(_title(row) or _body(row).get("text"), 300) or row["msg_id"],
+            **card,
             "asked_by": _clip(str(row.get("actor")), 60) or "?", "asked_at": _stamp(row.get("ts")),
             "msg_id": row["msg_id"],
             "cli": f"{CLI} --kind answer --to {to} --in-reply-to {row['msg_id']} --body '{{\"text\": \"...\"}}'",
@@ -647,10 +694,17 @@ def validate_live(value: dict, agents_ok) -> None:
             and _text(r["evidence_msg_id"], 80, optional=True) and _text(r["evidence_sha"], 40, optional=True)
             and _time(r["evidence_at"], optional=True))):
         raise ValueError("v3 work items are invalid")
-    if not _rows(value["waiting_on_you"], {"kind", "id", "title", "asked_by", "asked_at", "msg_id", "cli"},
+    if not _rows(value["waiting_on_you"], {"kind", "id", "title", "question", "context", "choices",
+                                             "recommendation", "consequence", "asked_by", "asked_at", "msg_id", "cli"},
                  MAX_ROWS, lambda r: (
                      r["kind"] in {"question", "owner_decision"} and _text(r["id"], 120)
-                     and _text(r["title"], 300) and _text(r["asked_by"], 60) and _time(r["asked_at"], optional=True)
+                     and _text(r["title"], 300) and _text(r["question"], 300)
+                     and _text(r["context"], 1200, optional=True)
+                     and isinstance(r["choices"], list) and len(r["choices"]) <= 8
+                     and all(_text(choice, 300) for choice in r["choices"])
+                     and _text(r["recommendation"], 600, optional=True)
+                     and _text(r["consequence"], 600, optional=True)
+                     and _text(r["asked_by"], 60) and _time(r["asked_at"], optional=True)
                      and _text(r["msg_id"], 80, optional=True) and _text(r["cli"], 600))):
         raise ValueError("v3 owner requests are invalid")
     if not _rows(value["accomplishments"], {"id", "kind", "title", "at", "evidence"}, MAX_ROWS, lambda r: (

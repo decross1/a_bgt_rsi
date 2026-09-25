@@ -210,11 +210,18 @@ function waiting(value: unknown): DailyWaitingItem[] {
         !bounded(item.title, 300) || !bounded(item.asked_by, 60) || !bounded(item.cli, 600)) return [];
     const askedAt = nullableTime(item.asked_at);
     const msgId = nullableText(item.msg_id, 80);
-    if (askedAt === undefined || msgId === undefined) return [];
+    const question = nullableText(item.question, 300);
+    const context = nullableText(item.context, 1200);
+    const recommendation = nullableText(item.recommendation, 600);
+    const consequence = nullableText(item.consequence, 600);
+    const choices = item.choices === undefined ? [] : strings(item.choices, 8, 300);
+    if (askedAt === undefined || msgId === undefined || question === undefined || context === undefined ||
+        recommendation === undefined || consequence === undefined || choices === null) return [];
     // owner_decision ids are "<plan revision>:<item id>"; the plan item's own id is what
     // the decision route needs as target_id.
     const itemId = item.kind === "owner_decision" ? item.id.split(":").slice(1).join(":") || item.id : item.id;
     return [{ kind: item.kind as DailyWaitingItem["kind"], id: item.id, itemId, title: item.title,
+      question: question ?? item.title, context, choices, recommendation, consequence,
       askedBy: item.asked_by, askedAt, msgId }];
   });
 }

@@ -75,10 +75,12 @@ function summary(overrides: Loose = {}): Loose {
       item("d5", "owner_decision", "waiting_on_you", { evidence_msg_id: "claude-81a020b8a67564fb" }),
     ],
     waiting_on_you: [
-      { kind: "owner_decision", id: `${PLAN}:d5`, title: "Item d5 title", asked_by: "claude", asked_at: now,
+      { kind: "owner_decision", id: `${PLAN}:d5`, title: "Item d5 title", question: "Item d5 title",
+        context: null, choices: [], recommendation: null, consequence: null, asked_by: "claude", asked_at: now,
         msg_id: "claude-81a020b8a67564fb",
         cli: ".venv-chroma/bin/python -m orchestrator.oracle_mailbox post --as human:derrick --kind answer --to claude --in-reply-to claude-81a020b8a67564fb --body '{\"text\": \"...\"}'" },
-      { kind: "question", id: "claude-18ae939243e70e7d", title: "Two authority rulings", asked_by: "claude",
+      { kind: "question", id: "claude-18ae939243e70e7d", title: "Two authority rulings",
+        question: "Two authority rulings", context: null, choices: [], recommendation: null, consequence: null, asked_by: "claude",
         asked_at: now, msg_id: "claude-18ae939243e70e7d", cli: "answer claude-18ae939243e70e7d" },
     ],
     accomplishments: [
@@ -189,7 +191,7 @@ describe("DailyOpsPanel", () => {
     expect(screen.getByTestId("daily-work-card-d2")).toHaveTextContent("Depends ond1");
   });
 
-  it("lists what is waiting on the owner as plain questions with decision buttons, no commands", () => {
+  it("keeps the full decision actions on plan decisions and unstructured mailbox questions", () => {
     show();
     const waiting = screen.getByTestId("daily-waiting-on-you");
     expect(within(waiting).getByRole("heading", { name: "Waiting on you" })).toBeInTheDocument();
@@ -205,6 +207,46 @@ describe("DailyOpsPanel", () => {
     expect(question).toHaveTextContent("Two authority rulings");
     expect(question).not.toHaveTextContent("answer claude-18ae939243e70e7d");
     expect(within(question).getByRole("button", { name: "Approve" })).toBeInTheDocument();
+    expect(within(question).getByRole("button", { name: "Decline" })).toBeInTheDocument();
+    expect(within(question).getByRole("button", { name: "Defer" })).toBeInTheDocument();
+    expect(within(question).getByRole("button", { name: "Reply…" })).toBeInTheDocument();
+  });
+
+  it("shows structured mailbox choices as a reply-only decision", () => {
+    const base = summary();
+    D.summary = summary({ waiting_on_you: [{
+      ...base.waiting_on_you[1], title: "Choose review shape",
+      question: "Should the lane change be split into three reviewed branches?",
+      context: "The unsplit branch also loses five newer protections.",
+      choices: ["A — split it (recommended)", "B — review one large branch"],
+      recommendation: "A — split it", consequence: "B delays the next safe lane run.",
+    }] });
+    show();
+    const card = screen.getByTestId("daily-waiting-claude-18ae939243e70e7d");
+    expect(card).toHaveTextContent("Should the lane change be split into three reviewed branches?");
+    expect(within(card).getByTestId("daily-waiting-claude-18ae939243e70e7d-question"))
+      .toHaveTextContent("Should the lane change be split into three reviewed branches?");
+    expect(card).toHaveTextContent("The unsplit branch also loses five newer protections.");
+    expect(card).toHaveTextContent("A — split it (recommended)");
+    expect(card).toHaveTextContent("Recommendation: A — split it");
+    expect(card).toHaveTextContent("If deferred: B delays the next safe lane run.");
+    expect(within(card).queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(within(card).getByRole("button", { name: "Choose / reply" })).toBeInTheDocument();
+  });
+
+  it("does not repeat a concise owner-question headline before its long source context", () => {
+    const base = summary();
+    const title = "Should the Nara lane build on main?";
+    const context = "The Flash checkout and main have divergent inputs, so the attended lane-base decision remains open.";
+    D.summary = summary({ waiting_on_you: [{
+      ...base.waiting_on_you[1], title, question: title, context,
+      choices: ["reconcile", "pin", "hold"], recommendation: "reconcile", consequence: "Nara remains held",
+    }] });
+    show();
+    const card = screen.getByTestId("daily-waiting-claude-18ae939243e70e7d");
+    expect(within(card).queryByTestId("daily-waiting-claude-18ae939243e70e7d-question")).toBeNull();
+    expect(card).toHaveTextContent(context);
+    expect(within(card).getByRole("button", { name: "Choose / reply" })).toBeInTheDocument();
   });
 
   it("sends an owner decision on a waiting item and shows it was sent", async () => {
@@ -215,7 +257,7 @@ describe("DailyOpsPanel", () => {
     const editor = screen.getByTestId("daily-decision-editor");
     fireEvent.click(within(editor).getByRole("button", { name: "Send approval" }));
     await waitFor(() => expect(D.postDecision).toHaveBeenCalledWith(expect.objectContaining({
-      accessKey: "owner-secret", targetKind: "work_card", targetId: "d5", action: "approve",
+      accessKey: "owner-secret", targetKind: "question", targetId: "claude-81a020b8a67564fb", action: "approve",
       expectedPlanRevision: PLAN,
     })));
     expect(await within(editor).findByText(/Sent to Oracle|Request queued/)).toBeInTheDocument();

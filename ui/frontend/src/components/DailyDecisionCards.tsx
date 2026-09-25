@@ -6,7 +6,7 @@ import {
   type DailyOpsDecisionReceipt,
   type DailyOpsDecisionTarget,
 } from "../api/dailyOps";
-import { cardHeadline, deriveSummary, ownerWord, statusSentence } from "./dailyOpsCopy";
+import { cardHeadline, ownerWord, statusSentence } from "./dailyOpsCopy";
 
 /** Live status of one plan item, derived from the lab mailbox and git (daily_ops_live.py). */
 export type WorkStatus =
@@ -39,6 +39,12 @@ export type DailyWaitingItem = {
   /** For a plan item, the plan item's own id (without the "<plan>:" prefix). */
   itemId: string;
   title: string;
+  /** Exact prompt, separate from a short card label. */
+  question: string;
+  context: string | null;
+  choices: string[];
+  recommendation: string | null;
+  consequence: string | null;
   askedBy: string;
   askedAt: string | null;
   msgId: string | null;
@@ -186,10 +192,17 @@ function WaitingOnYou({ items, requestAvailable, openEditor }: {
     {items.length === 0 ? <p className="mt-1 text-sm text-[var(--fg-muted)]">
       No open owner question in the lab mailbox and no owner decision in today&apos;s plan.</p> :
       <ul className="mt-2 space-y-3">{items.map(item => {
-        const headline = deriveSummary(item.title);
-        const targetKind: DailyOpsDecisionTarget = item.kind === "question" ? "question" : "work_card";
-        const targetId = item.kind === "question" ? (item.msgId ?? item.id) : item.itemId;
-        const canAct = item.kind !== "question" || item.msgId != null;
+        const headline = item.title;
+        // A plan-linked card is still a reply to its concrete mailbox question.
+        // Routing it as a work card creates an unrelated note and cannot close
+        // the question that made the card actionable.
+        const targetKind: DailyOpsDecisionTarget = "question";
+        const targetId = item.msgId ?? item.id;
+        const canAct = item.msgId != null;
+        // Card kind controls the badge, while source shape controls the actions:
+        // structured choices get one reply path; cards without choices retain
+        // the established approve/decline/defer/reply decision affordances.
+        const actions: DailyOpsDecisionAction[] = item.choices.length > 0 ? ["reply"] : WAITING_ACTIONS;
         return <li key={item.id} data-testid={`daily-waiting-${item.id}`}>
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <span className="font-medium">{headline}</span>
@@ -197,19 +210,30 @@ function WaitingOnYou({ items, requestAvailable, openEditor }: {
           </div>
           <p className="mt-1 text-xs text-[var(--fg-muted)]">Asked by {ownerWord(item.askedBy)}
             {item.askedAt ? ` · ${timeLabel(item.askedAt)}` : ""}</p>
+          {item.question !== headline && <p className="mt-2 text-sm"
+            data-testid={`daily-waiting-${item.id}-question`}>{item.question}</p>}
+          {item.context && <p className="mt-2 text-sm text-[var(--fg-muted)]">{item.context}</p>}
+          {item.choices.length > 0 && <div className="mt-2 text-sm">
+            <p className="font-medium">Choices</p>
+            <ul className="mt-1 list-disc space-y-1 pl-5 text-[var(--fg-muted)]">
+              {item.choices.map((choice, index) => <li key={`${item.id}-${index}`}>{choice}</li>)}
+            </ul>
+          </div>}
+          {item.recommendation && <p className="mt-2 text-sm"><span className="font-medium">Recommendation: </span>{item.recommendation}</p>}
+          {item.consequence && <p className="mt-2 text-sm text-[var(--fg-muted)]"><span className="font-medium">If deferred: </span>{item.consequence}</p>}
           <details className="mt-1 text-xs text-[var(--fg-muted)]">
             <summary className="cursor-pointer text-[var(--accent)]">Details</summary>
             <dl className="mt-2 grid gap-1">
-              <div><dt className="inline font-semibold">Full text: </dt><dd className="inline">{item.title}</dd></div>
+              <div><dt className="inline font-semibold">Card label: </dt><dd className="inline">{item.title}</dd></div>
               {item.msgId && <div><dt className="inline font-semibold">Message: </dt><dd className="inline">{item.msgId}</dd></div>}
             </dl>
           </details>
           {canAct ? <div className="mt-2 flex flex-wrap gap-2" aria-label={`Actions for ${headline}`}>
-            {WAITING_ACTIONS.map(action => <button key={action} type="button" disabled={!requestAvailable}
+            {actions.map(action => <button key={action} type="button" disabled={!requestAvailable}
               aria-describedby={!requestAvailable ? "daily-decisions-readonly" : undefined}
               onClick={event => openEditor({ kind: targetKind, id: targetId, title: headline, action }, event.currentTarget)}
               className="rounded border border-[var(--border-2)] px-3 py-1.5 text-sm text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50">
-              {actionLabel[action]}
+              {action === "reply" && item.choices.length > 0 ? "Choose / reply" : actionLabel[action]}
             </button>)}
           </div> : <p className="mt-2 text-xs text-[var(--fg-muted)]">No open mailbox question exists yet for this plan item; use the plan item&apos;s buttons above once one is asked, or send Oracle a note.</p>}
         </li>;
