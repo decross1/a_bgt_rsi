@@ -207,7 +207,9 @@ SSRN 6366838, written 2026-03-03 and posted 2026-03-09.
 - **Observed negative/limit.** The repository itself heads the relevant block
   `[5C/13] PRIMARY: Cell-mean randomization inference`; its H4 adversarial
   interaction has `p=0.1406` and therefore does not reject at `.05` under that
-  labeled-primary procedure. The CR2 output above gives `p=0.00806`. Without
+  procedure. The CR2 output above, in block `[5B/13] PRIMARY: Cell-mean
+  regressions (H1, H4)`, gives `p=0.00806`. The repository labels both
+  procedures PRIMARY, so its labels do not settle which one governs. Without
   the full manuscript, the preregistered priority remains unknown, and this
   contrast does not establish no effect, equivalence, or failure of the paper's
   other results.
