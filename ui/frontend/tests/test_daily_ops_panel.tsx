@@ -193,7 +193,7 @@ describe("DailyOpsPanel", () => {
     expect(screen.getByTestId("daily-work-card-d2")).toHaveTextContent("Depends ond1");
   });
 
-  it("keeps the full decision actions on plan decisions and unstructured mailbox questions", () => {
+  it("keeps each open owner question to one nonterminal reconciliation action", () => {
     show();
     const waiting = screen.getByTestId("daily-waiting-on-you");
     expect(within(waiting).getByRole("heading", { name: "Waiting on you" })).toBeInTheDocument();
@@ -201,20 +201,20 @@ describe("DailyOpsPanel", () => {
     expect(planDecision).toHaveTextContent("plan decision");
     expect(planDecision).not.toHaveTextContent("--kind answer");
     expect(planDecision).not.toHaveTextContent(".venv-chroma/bin/python");
-    expect(within(planDecision).getByRole("button", { name: "Approve" })).toBeInTheDocument();
-    expect(within(planDecision).getByRole("button", { name: "Decline" })).toBeInTheDocument();
-    expect(within(planDecision).getByRole("button", { name: "Defer" })).toBeInTheDocument();
-    expect(within(planDecision).getByRole("button", { name: "Reply…" })).toBeInTheDocument();
+    expect(within(planDecision).queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(within(planDecision).queryByRole("button", { name: "Decline" })).toBeNull();
+    expect(within(planDecision).queryByRole("button", { name: "Defer" })).toBeNull();
+    expect(within(planDecision).getByRole("button", { name: "Reconcile with owner…" })).toBeInTheDocument();
     const question = screen.getByTestId("daily-waiting-claude-18ae939243e70e7d");
     expect(question).toHaveTextContent("Two authority rulings");
     expect(question).not.toHaveTextContent("answer claude-18ae939243e70e7d");
-    expect(within(question).getByRole("button", { name: "Approve" })).toBeInTheDocument();
-    expect(within(question).getByRole("button", { name: "Decline" })).toBeInTheDocument();
-    expect(within(question).getByRole("button", { name: "Defer" })).toBeInTheDocument();
-    expect(within(question).getByRole("button", { name: "Reply…" })).toBeInTheDocument();
+    expect(within(question).queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(within(question).queryByRole("button", { name: "Decline" })).toBeNull();
+    expect(within(question).queryByRole("button", { name: "Defer" })).toBeNull();
+    expect(within(question).getByRole("button", { name: "Reconcile with owner…" })).toBeInTheDocument();
   });
 
-  it("shows structured mailbox choices as a reply-only decision", () => {
+  it("shows structured mailbox choices with a nonterminal reconciliation action", () => {
     const base = summary();
     D.summary = summary({ waiting_on_you: [{
       ...base.waiting_on_you[1], title: "Choose review shape",
@@ -233,7 +233,7 @@ describe("DailyOpsPanel", () => {
     expect(card).toHaveTextContent("Recommendation: A — split it");
     expect(card).toHaveTextContent("If deferred: B delays the next safe lane run.");
     expect(within(card).queryByRole("button", { name: "Approve" })).toBeNull();
-    expect(within(card).getByRole("button", { name: "Choose / reply" })).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "Reconcile with owner…" })).toBeInTheDocument();
   });
 
   it("does not repeat a concise owner-question headline before its long source context", () => {
@@ -248,7 +248,7 @@ describe("DailyOpsPanel", () => {
     const card = screen.getByTestId("daily-waiting-claude-18ae939243e70e7d");
     expect(within(card).queryByTestId("daily-waiting-claude-18ae939243e70e7d-question")).toBeNull();
     expect(card).toHaveTextContent(context);
-    expect(within(card).getByRole("button", { name: "Choose / reply" })).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "Reconcile with owner…" })).toBeInTheDocument();
   });
 
   it("keeps resolved and prerequisite questions in a non-action update feed", () => {

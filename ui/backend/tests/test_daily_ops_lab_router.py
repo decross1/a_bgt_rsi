@@ -172,7 +172,7 @@ def test_reprioritize_persists_priority_and_rejects_changed_priority_retry(repo,
     assert len(oracle_mailbox.read(mailbox)) == 1
 
 
-def test_reply_to_a_question_posts_an_answer_in_reply_to_it(repo, config):
+def test_reply_to_a_question_posts_a_nonterminal_reconciliation_note(repo, config):
     mailbox = repo / "run_state" / "oracle_nara_mailbox.jsonl"
     question = oracle_mailbox.post("oracle", "question", {"title": "What next?"}, to="owner", path=mailbox)
     router = LabMailboxRouter(config, repo_root=repo)
@@ -183,13 +183,15 @@ def test_reply_to_a_question_posts_an_answer_in_reply_to_it(repo, config):
     })
     assert receipt["target_kind"] == "question"
     rows = oracle_mailbox.read(mailbox)
-    answer = rows[-1]
-    assert answer["kind"] == "answer"
-    assert answer["actor"] == "human:derrick"
-    assert answer["to"] == "oracle"
-    assert answer["in_reply_to"] == question["msg_id"]
-    assert answer["body"]["text"] == "Do the safe thing."
-    assert answer["body"]["expected_plan_revision"] == REVISION
+    note = rows[-1]
+    assert note["kind"] == "note"
+    assert note["actor"] == "human:derrick"
+    assert note["to"] == "oracle"
+    assert note["in_reply_to"] == question["msg_id"]
+    assert note["body"]["title"] == "Owner reconciliation requested"
+    assert note["body"]["text"] == "Do the safe thing."
+    assert note["body"]["expected_plan_revision"] == REVISION
+    assert note["body"]["reconciliation"] == "genuine_owner_confirmation_required"
     retry = router.route_decision({
         "request_id": "33333333-3333-3333-3333-333333333333",
         "target_kind": "question", "target_id": question["msg_id"], "action": "reply",
@@ -197,13 +199,16 @@ def test_reply_to_a_question_posts_an_answer_in_reply_to_it(repo, config):
     })
     assert retry["duplicate"] is True
     assert len(oracle_mailbox.read(mailbox)) == 2
-    with pytest.raises(HTTPException, match="no longer open"):
-        router.route_decision({
-            "request_id": "34333333-3333-3333-3333-333333333333",
-            "target_kind": "question", "target_id": question["msg_id"], "action": "reply",
-            "expected_plan_revision": REVISION, "note": "A second answer.",
-        })
-    assert len(oracle_mailbox.read(mailbox)) == 2
+    second = router.route_decision({
+        "request_id": "34333333-3333-3333-3333-333333333333",
+        "target_kind": "question", "target_id": question["msg_id"], "action": "reply",
+        "expected_plan_revision": REVISION, "note": "A second reconciliation request.",
+    })
+    assert second["duplicate"] is False
+    rows = oracle_mailbox.read(mailbox)
+    assert len(rows) == 3
+    assert rows[-1]["kind"] == "note"
+    assert not any(row["kind"] == "answer" for row in rows[1:])
 
 
 def test_question_retry_binds_expected_plan_revision(repo, config):
