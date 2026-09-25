@@ -308,46 +308,82 @@ def test_post_once_never_returns_a_receipt_before_file_and_directory_sync(tmp_pa
     """Short writes and sync failures are uncertainty, not durable acceptance."""
     path = tmp_path / "mb.jsonl"
     question = mailbox.post("oracle", "question", {"question": "Proceed?"}, to="owner", path=path)
+    complete_prefix = path.read_bytes()
     body = {"text": "context", "request_id": "sync-request"}
     real_open = Path.open
 
     class ShortWrite:
+        def __init__(self, wrapped):
+            self.wrapped = wrapped
+
         def __enter__(self):
+            self.wrapped.__enter__()
             return self
 
-        def __exit__(self, *_args):
-            return False
+        def __exit__(self, *args):
+            return self.wrapped.__exit__(*args)
 
         def write(self, payload):
-            return len(payload) - 1
+            written = len(payload) // 2
+            assert self.wrapped.write(payload[:written]) == written
+            return written
 
         def fileno(self):
-            return -1
+            return self.wrapped.fileno()
+
+        def tell(self):
+            return self.wrapped.tell()
+
+        def truncate(self, offset):
+            return self.wrapped.truncate(offset)
 
     def short_open(self, mode="r", *args, **kwargs):
         if self == path and mode == "ab":
-            return ShortWrite()
+            return ShortWrite(real_open(self, mode, *args, **kwargs))
         return real_open(self, mode, *args, **kwargs)
 
     monkeypatch.setattr(Path, "open", short_open)
-    with pytest.raises(mailbox.MailboxError, match="short; durability is unconfirmed"):
+    with pytest.raises(mailbox.MailboxError, match="short and rolled back"):
         mailbox.post_once("human:derrick", "answer", body, to="oracle", in_reply_to=question["msg_id"],
                           idempotency_key="sync-request", require_open_question=True, path=path)
-    assert mailbox.find_idempotency_key("sync-request", path=path) is None
+    assert path.read_bytes() == complete_prefix
     monkeypatch.setattr(Path, "open", real_open)
+    retry, duplicate = mailbox.post_once("human:derrick", "answer", body, to="oracle",
+                                         in_reply_to=question["msg_id"], idempotency_key="sync-request",
+                                         require_open_question=True, path=path)
+    assert duplicate is False and retry["body"] == body
 
     real_fsync = mailbox.os.fsync
+    fsync_body = {"text": "context", "request_id": "fsync-request"}
     monkeypatch.setattr(mailbox.os, "fsync", lambda _fd: (_ for _ in ()).throw(OSError("sync fault")))
     with pytest.raises(mailbox.MailboxError, match="durability is unconfirmed"):
-        mailbox.post_once("human:derrick", "answer", body, to="oracle", in_reply_to=question["msg_id"],
-                          idempotency_key="sync-request", require_open_question=True, path=path)
+        mailbox.post_once("human:derrick", "answer", fsync_body, to="oracle", in_reply_to=question["msg_id"],
+                          idempotency_key="fsync-request", require_open_question=True, path=path)
     # A row may be visible after an interrupted durability boundary, but it is
     # not a success receipt until a retry synchronizes both file and directory.
     monkeypatch.setattr(mailbox.os, "fsync", real_fsync)
-    row, duplicate = mailbox.post_once("human:derrick", "answer", body, to="oracle",
-                                       in_reply_to=question["msg_id"], idempotency_key="sync-request",
+    row, duplicate = mailbox.post_once("human:derrick", "answer", fsync_body, to="oracle",
+                                       in_reply_to=question["msg_id"], idempotency_key="fsync-request",
                                        require_open_question=True, path=path)
-    assert duplicate is True and row["body"] == body
+    assert duplicate is True and row["body"] == fsync_body
+
+
+def test_retry_repairs_only_a_verified_unterminated_torn_tail(tmp_path):
+    path = tmp_path / "mb.jsonl"
+    question = mailbox.post("oracle", "question", {"question": "Proceed?"}, to="owner", path=path)
+    prefix = path.read_bytes()
+    with path.open("ab", buffering=0) as handle:
+        handle.write(b'{"schema":"oracle-nara-mailbox/v1"')
+
+    # Public reads remain honest about the broken tail; the next writer holds
+    # the lock, verifies the completed prefix, repairs only the unterminated
+    # fragment, and makes the repair durable before it appends.
+    with pytest.raises(mailbox.MailboxError, match="not JSON"):
+        mailbox.read(path)
+    note = mailbox.post("oracle", "note", {"text": "after recovery"}, to="owner", path=path)
+    rows = mailbox.read(path)
+    assert rows == [question, note]
+    assert path.read_bytes().startswith(prefix)
 
 
 def test_cross_process_same_request_appends_once_and_returns_one_duplicate(tmp_path):

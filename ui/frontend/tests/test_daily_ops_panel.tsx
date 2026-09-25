@@ -285,29 +285,30 @@ describe("DailyOpsPanel", () => {
     expect(within(update).queryByRole("button")).toBeNull();
   });
 
-  it("sends an owner decision on a waiting item and shows it was sent", async () => {
+  it("sends a non-terminal owner reconciliation request on a waiting item", async () => {
     sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
     show();
     const planDecision = screen.getByTestId(`daily-waiting-${PLAN}:d5`);
-    fireEvent.click(within(planDecision).getByRole("button", { name: "Approve" }));
+    fireEvent.click(within(planDecision).getByRole("button", { name: "Reconcile with owner…" }));
     const editor = screen.getByTestId("daily-decision-editor");
-    fireEvent.click(within(editor).getByRole("button", { name: "Send approval" }));
+    fireEvent.change(within(editor).getByLabelText("Context for owner reconciliation"), { target: { value: "Name the exact ruling." } });
+    fireEvent.click(within(editor).getByRole("button", { name: "Request owner reconciliation" }));
     await waitFor(() => expect(D.postDecision).toHaveBeenCalledWith(expect.objectContaining({
-      accessKey: "owner-secret", targetKind: "question", targetId: "claude-81a020b8a67564fb", action: "approve",
-      expectedPlanRevision: PLAN,
+      accessKey: "owner-secret", targetKind: "question", targetId: "claude-81a020b8a67564fb", action: "reply",
+      expectedPlanRevision: PLAN, note: "Name the exact ruling.",
     })));
-    expect(await within(editor).findByText(/Sent to Oracle|Request queued/)).toBeInTheDocument();
+    expect(await within(editor).findByText(/Reconciliation request sent/)).toHaveTextContent("question remains open");
   });
 
   it("requires a note before it will send a reply to a question", async () => {
     sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
     show();
     const question = screen.getByTestId("daily-waiting-claude-18ae939243e70e7d");
-    fireEvent.click(within(question).getByRole("button", { name: "Reply…" }));
+    fireEvent.click(within(question).getByRole("button", { name: "Reconcile with owner…" }));
     const editor = screen.getByTestId("daily-decision-editor");
-    expect(within(editor).getByRole("button", { name: "Send reply" })).toBeDisabled();
-    fireEvent.change(within(editor).getByLabelText("Your reply"), { target: { value: "Proceed carefully." } });
-    fireEvent.click(within(editor).getByRole("button", { name: "Send reply" }));
+    expect(within(editor).getByRole("button", { name: "Request owner reconciliation" })).toBeDisabled();
+    fireEvent.change(within(editor).getByLabelText("Context for owner reconciliation"), { target: { value: "Proceed carefully." } });
+    fireEvent.click(within(editor).getByRole("button", { name: "Request owner reconciliation" }));
     await waitFor(() => expect(D.postDecision).toHaveBeenCalledWith(expect.objectContaining({
       targetKind: "question", targetId: "claude-18ae939243e70e7d", action: "reply", note: "Proceed carefully.",
     })));
@@ -343,6 +344,7 @@ describe("DailyOpsPanel", () => {
       note: "Wait for d1.",
     }));
     expect(await within(editor).findByText(/Sent to Oracle/)).toHaveTextContent("No execution is implied");
+    expect(editor).not.toHaveTextContent("question remains open");
   });
 
   it("retries a lost decision response with its original revision after a plan roll-over", async () => {

@@ -139,13 +139,24 @@ def _human_answer(question: dict, rows: list[dict]) -> dict | None:
 
 def _unverified_human_claim(question: dict, rows: list[dict]) -> dict | None:
     """Newest direct human answer/disposition claim, for non-terminal context."""
+    claims = _unverified_human_claims(question, rows)
+    return claims[-1] if claims else None
+
+
+def _unverified_human_claims(question: dict, rows: list[dict], *, after: dict | None = None) -> list[dict]:
+    """Ordered direct human claims, optionally only after an update row."""
     question_id = question.get("msg_id") if isinstance(question, dict) else None
     question_positions = [position for position, row in enumerate(rows)
                           if row.get("msg_id") == question_id]
     if (not isinstance(question_id, str) or len(question_positions) != 1
             or rows[question_positions[0]] is not question):
-        return None
+        return []
     question_position = question_positions[0]
+    if after is not None:
+        later = [position for position, row in enumerate(rows) if row is after]
+        if len(later) != 1:
+            return []
+        question_position = max(question_position, later[0])
     claims = []
     for position, row in enumerate(rows):
         if (position <= question_position or row.get("kind") not in {"answer", "question_resolution"}
@@ -157,21 +168,34 @@ def _unverified_human_claim(question: dict, rows: list[dict]) -> dict | None:
         # this guard keeps direct helper callers fail closed too.
         if sum(candidate.get("msg_id") == row.get("msg_id") for candidate in rows) == 1:
             claims.append(row)
-    return claims[-1] if claims else None
+    return claims
 
 
 def _owner_reconciliation_request(question: dict, rows: list[dict]) -> dict | None:
     """Newest protected-route reconciliation request; it remains non-terminal."""
+    requests = _owner_reconciliation_requests(question, rows)
+    return requests[-1] if requests else None
+
+
+def _owner_reconciliation_requests(question: dict, rows: list[dict], *, after: dict | None = None) -> list[dict]:
+    """Ordered protected-route context rows, without treating them as proof."""
     question_id = question.get("msg_id") if isinstance(question, dict) else None
     if not isinstance(question_id, str):
-        return None
-    for row in reversed(rows):
+        return []
+    start = -1
+    if after is not None:
+        later = [position for position, row in enumerate(rows) if row is after]
+        if len(later) != 1:
+            return []
+        start = later[0]
+    found = []
+    for position, row in enumerate(rows):
         body = _body(row)
-        if (row.get("kind") == "note" and row.get("in_reply_to") == question_id
+        if (position > start and row.get("kind") == "note" and row.get("in_reply_to") == question_id
                 and body.get("via") == "authorized-owner-ui"
                 and body.get("reconciliation") == "genuine_owner_confirmation_required"):
-            return row
-    return None
+            found.append(row)
+    return found
 
 
 def _question_resolution(question: dict, rows: list[dict]) -> dict | None:
@@ -251,6 +275,11 @@ def question_updates(rows: list[dict]) -> list[dict]:
     """Recent explicit non-answer dispositions, kept separate from actions."""
     rows = _relational_live_rows(rows)
     found = []
+
+    def add(question: dict, card: dict, update: dict) -> None:
+        found.append({**update, "question_id": question["msg_id"],
+                      "title": card["title"], "question": card["question"]})
+
     for question in rows:
         if question.get("kind") != "question" or question.get("to") != "owner":
             continue
@@ -264,7 +293,7 @@ def question_updates(rows: list[dict]) -> list[dict]:
         card = _question_card(question)
         if resolution is not None:
             body = _body(resolution)
-            update = {
+            add(question, card, {
                 "id": resolution["msg_id"], "disposition": body["disposition"],
                 "summary": _clip(body.get("summary"), 1200), "reason": _clip(body.get("reason"), 1200),
                 "blocking_artifact": _clip(body.get("blocking_artifact"), 240),
@@ -272,11 +301,11 @@ def question_updates(rows: list[dict]) -> list[dict]:
                 "resolved_at": _stamp(resolution.get("ts")),
                 "evidence_msg_ids": [value for value in body.get("evidence_msg_ids", [])
                                      if isinstance(value, str)][:8],
-            }
+            })
         elif contest is not None:
             body = _body(contest)
             provenance = body["provenance_contestation"]
-            update = {
+            add(question, card, {
                 "id": contest["msg_id"], "disposition": "contested",
                 "summary": _clip(body.get("title"), 1200)
                 or "A later evidence-bound provenance contest reopened this question.",
@@ -286,9 +315,36 @@ def question_updates(rows: list[dict]) -> list[dict]:
                 "resolved_by": _clip(str(contest.get("actor")), 60) or "?",
                 "resolved_at": _stamp(contest.get("ts")),
                 "evidence_msg_ids": provenance["basis_msg_ids"][:8],
-            }
+            })
+            # A later claim remains untrusted, but contest evidence must not
+            # hide its current text or a later protected-route context row.
+            for later_claim in _unverified_human_claims(question, rows, after=contest):
+                text = _first_clip(_body(later_claim).get("text"),
+                                   _body(later_claim).get("summary"), maximum=900)
+                add(question, card, {
+                    "id": later_claim["msg_id"], "disposition": "contested",
+                    "summary": _clip("Later unverified human claim remains non-terminal"
+                                     + (f": {text}" if text else "."), 1200),
+                    "reason": "The actor label is not proof of owner identity; this is current context only.",
+                    "blocking_artifact": None,
+                    "resolved_by": _clip(str(later_claim.get("actor")), 60) or "?",
+                    "resolved_at": _stamp(later_claim.get("ts")),
+                    "evidence_msg_ids": [later_claim["msg_id"]],
+                })
+            for request in _owner_reconciliation_requests(question, rows, after=contest):
+                text = _clip(_body(request).get("text"), 900)
+                add(question, card, {
+                    "id": request["msg_id"], "disposition": "contested",
+                    "summary": _clip("Later authorized-route reconciliation remains non-terminal"
+                                     + (f": {text}" if text else "."), 1200),
+                    "reason": "The route supplies current context but repository code cannot make it durable proof of a genuine owner ruling.",
+                    "blocking_artifact": None,
+                    "resolved_by": _clip(str(request.get("actor")), 60) or "?",
+                    "resolved_at": _stamp(request.get("ts")),
+                    "evidence_msg_ids": [request["msg_id"]],
+                })
         elif claim is not None:
-            update = {
+            add(question, card, {
                 "id": claim["msg_id"], "disposition": "contested",
                 "summary": "An unverified human answer claim did not close this question.",
                 "reason": "Mailbox human labels are not strong authentication; use the authorized owner UI route to reconcile the genuine owner response.",
@@ -296,9 +352,9 @@ def question_updates(rows: list[dict]) -> list[dict]:
                 "resolved_by": _clip(str(claim.get("actor")), 60) or "?",
                 "resolved_at": _stamp(claim.get("ts")),
                 "evidence_msg_ids": [claim["msg_id"]],
-            }
+            })
         else:
-            update = {
+            add(question, card, {
                 "id": reconciliation["msg_id"], "disposition": "contested",
                 "summary": "Owner reconciliation was requested; this question remains open.",
                 "reason": "The authorized UI route carries context but repository code cannot turn it into durable human authentication or a terminal ruling.",
@@ -306,11 +362,7 @@ def question_updates(rows: list[dict]) -> list[dict]:
                 "resolved_by": _clip(str(reconciliation.get("actor")), 60) or "?",
                 "resolved_at": _stamp(reconciliation.get("ts")),
                 "evidence_msg_ids": [reconciliation["msg_id"]],
-            }
-        found.append({
-            **update, "question_id": question["msg_id"],
-            "title": card["title"], "question": card["question"],
-        })
+            })
     found.sort(key=lambda row: row["resolved_at"] or "", reverse=True)
     return found[:10]
 

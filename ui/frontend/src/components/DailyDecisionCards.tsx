@@ -163,7 +163,7 @@ function WorkCard({ card, requestAvailable, openEditor }: {
   // Owner-decision plan rows get their one non-terminal reconciliation path
   // below under “Waiting on you”; never render plan-level approval controls
   // that could be mistaken for a ruling on a composite owner question.
-  const actions = card.lane === "owner_decision" ? [] : card.actions;
+  const actions = card.lane === "owner_decision" ? [] : card.actions.filter(action => action !== "reply");
   return <article data-testid={`daily-work-card-${card.id}`}
     className="rounded border border-[var(--border-1)] bg-[var(--surface-1)] p-3">
     <div className="flex flex-wrap items-start justify-between gap-2">
@@ -310,6 +310,7 @@ export function DailyDecisionCards({ cards, waiting, updates, planRevision, requ
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const editorGeneration = useRef(0);
   const inFlightGeneration = useRef<number | null>(null);
+  const isQuestionReconciliation = editor?.kind === "question" && editor.action === "reply";
 
   useEffect(() => {
     if (editor) editorRef.current?.focus();
@@ -410,7 +411,7 @@ export function DailyDecisionCards({ cards, waiting, updates, planRevision, requ
       aria-labelledby="daily-decision-editor-heading"
       className="mt-3 rounded border border-[var(--accent)] bg-[var(--surface-2)] p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <div><p className="text-xs font-semibold uppercase tracking-wide text-[var(--fg-muted)]">Owner reconciliation · {phrase(editor.kind)}</p>
+        <div><p className="text-xs font-semibold uppercase tracking-wide text-[var(--fg-muted)]">{isQuestionReconciliation ? "Owner reconciliation" : "Owner direction"} · {phrase(editor.kind)}</p>
           <h4 id="daily-decision-editor-heading" className="mt-1 font-semibold">{actionLabel[editor.action]} · {editor.title}</h4></div>
         <button type="button" onClick={closeEditor} className="rounded px-2 py-1 text-sm text-[var(--accent)]">Cancel</button>
       </div>
@@ -427,7 +428,9 @@ export function DailyDecisionCards({ cards, waiting, updates, planRevision, requ
           onChange={event => { setNote(event.target.value); setSubmit({ kind: "idle" }); }}
           placeholder={editor.action === "modify" ? "What should change?" : editor.action === "reply" ? "State the specific ruling and context that needs genuine owner confirmation…" : "Add context for Oracle…"}
           className="mt-1 w-full rounded border border-[var(--border-2)] bg-[var(--surface-1)] px-3 py-2 text-sm" />
-        <p className="mt-2 text-xs text-[var(--fg-muted)]">This sends contextual reconciliation through the authorized owner route. It remains non-terminal: repository code cannot prove a genuine owner identity or close this question.</p>
+        <p className="mt-2 text-xs text-[var(--fg-muted)]">{isQuestionReconciliation
+          ? "This sends contextual reconciliation through the authorized owner route. It remains non-terminal: repository code cannot prove a genuine owner identity or close this question."
+          : "This sends owner direction to Oracle. It does not execute work or create scientific credit."}</p>
         {!canRequest && <div className="mt-2 rounded border border-[var(--status-warn)] bg-[var(--status-warn-bg)] p-2 text-sm">
           <p>{blockedReason ?? "Owner decision controls are unavailable."}</p>
           <button type="button" onClick={onRequireAccess} className="mt-1 text-[var(--accent)]">Open owner access controls ↓</button>
@@ -448,7 +451,9 @@ export function DailyDecisionCards({ cards, waiting, updates, planRevision, requ
       <div aria-live="polite" className="mt-2 min-h-5 text-sm">
         {submit.kind === "failed" && <p className="text-[var(--status-bad)]">{submit.message}</p>}
         {submit.kind === "queued" && <p className="text-[var(--status-info)]">
-          {submit.receipt.duplicate ? "Reconciliation request already sent" : "Reconciliation request sent"}. The question remains open; no owner ruling or execution is implied.{" "}
+          {isQuestionReconciliation
+            ? <>{submit.receipt.duplicate ? "Reconciliation request already sent" : "Reconciliation request sent"}. The question remains open; no owner ruling or execution is implied.{" "}</>
+            : <>{submit.receipt.duplicate ? "Already sent to Oracle" : "Sent to Oracle"}. No execution is implied.{" "}</>}
           <details className="inline text-xs text-[var(--fg-muted)]">
             <summary className="inline cursor-pointer text-[var(--accent)]">Request id</summary>
             {" "}{submit.receipt.request_id}

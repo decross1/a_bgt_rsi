@@ -476,13 +476,14 @@ def _durably_sync(path: Path, handle=None) -> None:
         raise MailboxError("mailbox durability is unconfirmed; reconcile before retrying") from exc
 
 
-def read(path: Path = PATH) -> list[dict]:
-    """All rows, with the hash chain verified; a break raises. The chain detects edits in place;
-    it cannot detect a truncated tail or a chain re-hashed from the edit onward."""
-    if not path.exists():
-        return []
+def _read_serialized(data: bytes) -> list[dict]:
+    """Verify one complete serialized mailbox prefix without changing it."""
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise MailboxError("mailbox is not UTF-8") from exc
     rows, prev = [], None
-    for number, line in enumerate(path.read_text().splitlines(), 1):
+    for number, line in enumerate(text.splitlines(), 1):
         if not line.strip():
             continue
         try:
@@ -499,6 +500,47 @@ def read(path: Path = PATH) -> list[dict]:
         rows.append(row)
         prev = claimed
     return rows
+
+
+def read(path: Path = PATH) -> list[dict]:
+    """All rows, with the hash chain verified; a break raises. The chain detects edits in place;
+    it cannot detect a truncated tail or a chain re-hashed from the edit onward."""
+    if not path.exists():
+        return []
+    return _read_serialized(path.read_bytes())
+
+
+def _recover_torn_tail_locked(path: Path) -> None:
+    """Discard only a verified incomplete final write while holding the writer lock.
+
+    A crash or a real short write can leave bytes after the last newline.  The
+    complete prefix is first hash-verified; then only that unterminated suffix
+    is removed and the repair crosses the same file/directory durability
+    boundary.  A newline-terminated corrupt row is never silently repaired.
+    """
+    if not path.exists():
+        return
+    data = path.read_bytes()
+    if not data or data.endswith(b"\n"):
+        return
+    boundary = data.rfind(b"\n") + 1
+    prefix = data[:boundary]
+    _read_serialized(prefix)
+    try:
+        with path.open("r+b", buffering=0) as handle:
+            handle.truncate(boundary)
+            _durably_sync(path, handle)
+    except OSError as exc:
+        raise MailboxError("mailbox torn-tail recovery is unconfirmed; reconcile before retrying") from exc
+
+
+def _rollback_short_append_locked(path: Path, handle, offset: int) -> None:
+    """Undo a partial append under the writer lock and persist the known prefix."""
+    try:
+        handle.truncate(offset)
+        _durably_sync(path, handle)
+    except OSError as exc:
+        raise MailboxError("mailbox short-write rollback is unconfirmed; reconcile before retrying") from exc
 
 
 def _validate_post(actor: str, kind: str, body: dict, to: str, in_reply_to: str | None) -> None:
@@ -604,9 +646,15 @@ def _append_locked(actor: str, kind: str, body: dict, *, to: str, in_reply_to: s
     payload = line_bytes + b"\n"
     try:
         with path.open("ab", buffering=0) as handle:
-            written = handle.write(payload)
+            offset = handle.tell()
+            try:
+                written = handle.write(payload)
+            except OSError:
+                _rollback_short_append_locked(path, handle, offset)
+                raise
             if written != len(payload):
-                raise MailboxError("mailbox append was short; durability is unconfirmed; reconcile before retrying")
+                _rollback_short_append_locked(path, handle, offset)
+                raise MailboxError("mailbox append was short and rolled back; retry safely")
             _durably_sync(path, handle)
     except OSError as exc:
         raise MailboxError("mailbox durability is unconfirmed; reconcile before retrying") from exc
@@ -620,6 +668,7 @@ def post(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | None 
     path.parent.mkdir(parents=True, exist_ok=True)
     with (path.parent / ".oracle_nara_mailbox.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        _recover_torn_tail_locked(path)
         return _append_locked(actor, kind, body, to=to, in_reply_to=in_reply_to,
                               expires_hours=expires_hours, path=path, rows=read(path))
 
@@ -643,6 +692,7 @@ def post_once(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | 
     path.parent.mkdir(parents=True, exist_ok=True)
     with (path.parent / ".oracle_nara_mailbox.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        _recover_torn_tail_locked(path)
         rows = read(path)
         eligible = live_rows(rows)
         existing = [row for row in eligible if isinstance(row.get("body"), dict)
@@ -678,6 +728,7 @@ def find_idempotency_key(idempotency_key: str, *, path: Path = PATH) -> dict | N
     path.parent.mkdir(parents=True, exist_ok=True)
     with (path.parent / ".oracle_nara_mailbox.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        _recover_torn_tail_locked(path)
         existing = [row for row in live_rows(read(path)) if isinstance(row.get("body"), dict)
                     and row["body"].get("request_id") == idempotency_key]
         if not existing:

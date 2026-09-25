@@ -1031,6 +1031,44 @@ def test_live_seq604_prefix_contest_reopens_card_and_projects_non_action_update(
     assert updates[0]["evidence_msg_ids"] == [first["msg_id"], second["msg_id"]]
 
 
+def test_contested_question_keeps_later_claim_and_authorized_context_distinct():
+    question = {"seq": 604, "msg_id": "claude-q", "actor": "claude", "to": "owner",
+                "kind": "question", "body": {"title": "Name the ruling"},
+                "ts": "2026-09-25T03:13:18+00:00"}
+    resolution = {"seq": 672, "msg_id": "claude-r", "actor": "claude", "to": "owner",
+                  "kind": "question_resolution", "in_reply_to": question["msg_id"],
+                  "body": {"disposition": "superseded", "summary": "Claimed done.", "reason": "Claim."},
+                  "ts": "2026-09-25T05:14:48+00:00"}
+    first = {"seq": 673, "msg_id": "oracle-a", "actor": "oracle", "to": "all", "kind": "note",
+             "body": {"ref": {"posted_row": "claude-r", "command": "post --as claude"}},
+             "ts": "2026-09-25T05:15:17+00:00"}
+    second = {"seq": 675, "msg_id": "oracle-b", "actor": "oracle", "to": "all", "kind": "note",
+              "body": {"ref": {"self_reported_fault": "seq 672 posted with --as claude by this session"}},
+              "ts": "2026-09-25T05:19:29+00:00"}
+    contest = {"seq": 680, "msg_id": "codex-c", "actor": "codex", "to": "all", "kind": "note",
+               "in_reply_to": resolution["msg_id"], "ts": "2026-09-25T05:24:14+00:00",
+               "body": {"provenance_contestation": {
+                   "contested_msg_id": resolution["msg_id"], "claimed_actor": "claude",
+                   "reported_actual_actor": "oracle", "basis_msg_ids": [first["msg_id"], second["msg_id"]],
+                   "effect": "invalidate_for_projection"}}}
+    claim = {"seq": 681, "msg_id": "human-later", "actor": "human:derrick", "to": "claude",
+             "kind": "answer", "in_reply_to": question["msg_id"], "body": {"text": "Use the pinned base."},
+             "ts": "2026-09-25T05:25:00+00:00"}
+    reconciliation = {"seq": 682, "msg_id": "owner-route", "actor": "human:derrick", "to": "claude",
+                      "kind": "note", "in_reply_to": question["msg_id"],
+                      "body": {"via": "authorized-owner-ui",
+                               "reconciliation": "genuine_owner_confirmation_required",
+                               "text": "Confirm pinned base for the next run."},
+                      "ts": "2026-09-25T05:26:00+00:00"}
+    rows = [question, resolution, first, second, contest, claim, reconciliation]
+
+    updates = live.question_updates(rows)
+    assert {row["id"] for row in updates} == {contest["msg_id"], claim["msg_id"], reconciliation["msg_id"]}
+    assert any("pinned base" in row["summary"] for row in updates if row["id"] == claim["msg_id"])
+    assert any("next run" in row["summary"] for row in updates if row["id"] == reconciliation["msg_id"])
+    assert live._human_answer(question, rows) is None
+
+
 def test_contest_requires_structured_evidence_deduplicates_and_yields_to_fresh_terminal(repo):
     path = _plan(repo, "2026-09-23.json", [_item("d5", "owner_decision")])
     box = Box(repo)
