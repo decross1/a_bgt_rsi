@@ -1,4 +1,6 @@
 """HTTP admission tests for the separate, read-only daily-ops v3 route."""
+import asyncio
+
 import pytest
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.testclient import TestClient
@@ -51,6 +53,35 @@ def test_v3_summary_is_live_validated_and_private(tmp_path):
     assert response.headers["cache-control"] == "no-store"
     assert response.headers["vary"] == "Authorization, Origin"
     assert TestClient(app).post("/api/daily-ops/v3/summary", json={}).status_code == 405
+
+
+def test_v3_private_headers_cover_method_dispatch_and_preserve_vary(tmp_path):
+    app = FastAPI()
+    register(app, repo_root=tmp_path, summary=_valid_summary, owner_authorizer=_authorize)
+    dispatch = next(
+        middleware.kwargs["dispatch"]
+        for middleware in app.user_middleware
+        if middleware.kwargs.get("dispatch")
+        and middleware.kwargs["dispatch"].__name__ == "_daily_ops_v3_private_response_headers"
+    )
+
+    async def exercise(method):
+        request = Request({"type": "http", "method": method,
+                           "path": "/api/daily-ops/v3/summary", "query_string": b"",
+                           "headers": [], "server": ("test", 80),
+                           "client": ("10.0.0.4", 4000), "scheme": "http"})
+
+        async def call_next(_request):
+            response = Response(status_code=405 if method == "POST" else 200)
+            response.headers["Vary"] = "Accept-Encoding, origin"
+            return response
+
+        return await dispatch(request, call_next)
+
+    for method in ("GET", "POST", "OPTIONS"):
+        response = asyncio.run(exercise(method))
+        assert response.headers["Cache-Control"] == "no-store"
+        assert response.headers["Vary"] == "Accept-Encoding, origin, Authorization"
 
 
 def test_v3_summary_fails_closed_without_reading_a_legacy_cache(tmp_path):

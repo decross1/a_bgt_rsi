@@ -40,6 +40,7 @@ import re
 import subprocess
 import sys
 import threading
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -59,7 +60,7 @@ MAILBOX_ROW_FIELDS = {
     "schema", "seq", "ts", "actor", "to", "kind", "in_reply_to", "body",
     "expires_at", "prev_sha256", "msg_id", "row_sha256",
 }
-PLAN_NAME = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:-r(\d+))?\.json$")
+PLAN_NAME = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:-r([1-9]\d*))?\.json$")
 PLAN_READY = re.compile(r"^PLAN READY:\s*(\d{4}-\d{2}-\d{2})")
 GOAL = re.compile(r"\bG\d+(?:\.\d+)?\b")
 CLI = ".venv-chroma/bin/python -m orchestrator.oracle_mailbox post --as human:derrick"
@@ -482,18 +483,38 @@ def _orchestrator():
 
 # -- sources -----------------------------------------------------------------
 
-def plan_files(repo: Path) -> dict[str, list[tuple[int, str]]]:
-    """date -> [(revision number, file name)], ascending; other names are ignored."""
+def _plan_identity(name: str) -> tuple[str, int]:
+    """A legacy base and explicit r1 both claim revision one."""
+    match = PLAN_NAME.fullmatch(name)
+    if match is None:
+        raise ValueError(f"invalid daily plan name: {name}")
+    return match.group(1), int(match.group(2) or 1)
+
+
+def _scan_plan_files(repo: Path) -> tuple[dict[str, list[tuple[int, str]]], set[str]]:
+    """Exclude competing paths for one claimed revision; retain other revisions."""
     try:
         names = os.listdir(repo / "run_state" / "daily_plans")
     except OSError:
-        return {}
+        return {}, set()
     found: dict[str, list[tuple[int, str]]] = {}
     for name in names:
         match = PLAN_NAME.match(name)
         if match:
             found.setdefault(match.group(1), []).append((int(match.group(2) or 1), name))
-    return {date: sorted(revs) for date, revs in found.items()}
+    counts = Counter((date, revision) for date, revisions in found.items()
+                     for revision, _ in revisions)
+    collisions = {name for date, revisions in found.items() for revision, name in revisions
+                  if counts[(date, revision)] > 1}
+    safe = {date: sorted((revision, name) for revision, name in revisions
+                         if name not in collisions)
+            for date, revisions in found.items()}
+    return {date: revisions for date, revisions in safe.items() if revisions}, collisions
+
+
+def plan_files(repo: Path) -> dict[str, list[tuple[int, str]]]:
+    """Unambiguous date -> [(revision number, file name)], ascending."""
+    return _scan_plan_files(repo)[0]
 
 
 def _load_plan(repo: Path, name: str) -> tuple[dict, str, datetime]:
@@ -824,16 +845,17 @@ def _revision_window(rows: list[dict], windows: dict, date: str, name: str | Non
 
     path = f"run_state/daily_plans/{name}"
     catalog_known = catalog is not None
+    if catalog_known and path not in catalog:
+        # The scanner deliberately omitted a competing base/r1 identity.
+        # An exact receipt cannot re-admit that ambiguous file by itself.
+        return float("inf"), float("inf"), True
     catalog = catalog or {path: (date, sha256)}
     catalog = {**catalog, path: (date, sha256)}
     exact = [row for row in rows if _exact_plan_anchor(row, path, date, sha256)]
     legacy = _legacy_plan_anchors(rows, catalog) if catalog_known else {}
     anchors = [(row, _verified_plan_anchor(row, catalog, legacy)) for row in rows]
     anchors = [(row, anchored_path) for row, anchored_path in anchors if anchored_path]
-    def identity(anchored_path: str) -> tuple[str, int]:
-        match = PLAN_NAME.match(anchored_path.rsplit("/", 1)[-1])
-        return (match.group(1), int(match.group(2) or 1)) if match else ("", 0)
-    target_identity = identity(path)
+    target_identity = _plan_identity(name)
     if exact:
         anchor = min(exact, key=lambda row: row["seq"])
     else:
@@ -844,11 +866,12 @@ def _revision_window(rows: list[dict], windows: dict, date: str, name: str | Non
         anchor = min(fallback, key=lambda row: row["seq"])
     # Old/backdated receipts cannot truncate a newer plan or gain a fresh
     # window after that newer plan was already published.
-    if any(row["seq"] <= anchor["seq"] and identity(anchored_path) > target_identity
+    if any(row["seq"] <= anchor["seq"] and _plan_identity(anchored_path.rsplit("/", 1)[-1]) > target_identity
            for row, anchored_path in anchors):
         return float("inf"), float("inf"), True
     end = min((row["seq"] for row, anchored_path in anchors
-               if row["seq"] > anchor["seq"] and identity(anchored_path) > target_identity),
+               if row["seq"] > anchor["seq"]
+               and _plan_identity(anchored_path.rsplit("/", 1)[-1]) > target_identity),
               default=float("inf"))
     return anchor["seq"], end, True
 
@@ -1184,7 +1207,12 @@ def build(repo: Path, now: datetime, *, recorded_rows: list[dict] | None = None)
     git = _Git(repo)
     if not git.available:
         warnings.append("Read-only git on main is unavailable; merged status and improvements are not derived.")
-    plans = plan_files(repo)
+    plans, plan_collisions = _scan_plan_files(repo)
+    if plan_collisions:
+        warnings.append(_clip(
+            "Daily plan revision identity is ambiguous (" + ", ".join(sorted(plan_collisions)[:6])
+            + "); competing files are excluded from live work and accomplishments until an "
+            "unambiguous revision is published.", 512))
     lab_now = now.astimezone(LAB_TZ)
     today = lab_now.date().isoformat()
     oldest = (lab_now - timedelta(days=WINDOW_DAYS)).date().isoformat()

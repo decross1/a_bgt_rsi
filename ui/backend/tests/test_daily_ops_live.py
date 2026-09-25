@@ -151,6 +151,58 @@ def test_newest_plan_is_highest_date_then_revision_and_ignores_other_files(repo)
     assert live.build(repo, NOW + timedelta(days=2))["daily_plan"]["is_current"] is False
 
 
+@pytest.mark.parametrize("reverse_ready", [False, True])
+def test_legacy_base_and_explicit_r1_collision_fails_closed_until_r2(repo, reverse_ready):
+    base = _plan(repo, "2026-09-23.json", [_item("d1", "nara_dev", "Base task")])
+    r1 = _plan(repo, "2026-09-23-r1.json", [_item("d1", "nara_dev", "R1 task")])
+    box = Box(repo)
+
+    def ready(path):
+        return box.post("oracle", "note", {
+            "title": f"PLAN READY: {path.name[:10]}",
+            "ref": {"path": path.relative_to(repo).as_posix(),
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest()},
+        })
+
+    if reverse_ready:
+        ready(r1)
+    ready(base)
+    first_item = box.post("oracle", "plan_item", {**PLAN_ITEM, "title": "Base task"}, to="nara")
+    box.post("nara", "receipt", {"state": "validated", "head_sha": "a" * 40},
+             to="oracle", reply=first_item["msg_id"])
+    if not reverse_ready:
+        ready(r1)
+    box.post("oracle", "plan_item", {**PLAN_ITEM, "title": "Base task"}, to="nara")
+
+    rows = oracle_mailbox.read(box.path)
+    assert live.plan_files(repo) == {}
+    assert live.current_plan(repo, NOW) is None
+    catalog = live._plan_catalog(repo, live.plan_files(repo))
+    windows = live.plan_windows(rows, max_date="2026-09-23")
+    base_window = live._revision_window(
+        rows, windows, "2026-09-23", base.name,
+        hashlib.sha256(base.read_bytes()).hexdigest(), None, catalog)
+    r1_window = live._revision_window(
+        rows, windows, "2026-09-23", r1.name,
+        hashlib.sha256(r1.read_bytes()).hexdigest(), None, catalog)
+    assert base_window == (float("inf"), float("inf"), True)
+    assert r1_window == (float("inf"), float("inf"), True)
+
+    value = _summary(repo)
+    assert value["daily_plan"] is None and value["current_plan_revision"] is None
+    assert value["work_items"] == [] and value["accomplishments"] == []
+    assert any("revision identity is ambiguous" in warning for warning in value["warnings"])
+
+    r2 = _plan(repo, "2026-09-23-r2.json", [_item("d1", "nara_dev", "R2 task")])
+    ready(r2)
+    r2_item = box.post("oracle", "plan_item", {**PLAN_ITEM, "title": "R2 task"}, to="nara")
+    value = _summary(repo)
+    assert value["current_plan_revision"] == "2026-09-23-r2"
+    assert value["work_items"][0]["evidence_msg_id"] == r2_item["msg_id"]
+    assert value["accomplishments"] == []
+    assert any("revision identity is ambiguous" in warning for warning in value["warnings"])
+
+
 def test_no_plan_and_no_mailbox_is_an_honest_empty_state(repo):
     value = _summary(repo)
     assert value["daily_plan"] is None and value["current_plan_revision"] is None

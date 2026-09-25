@@ -17,7 +17,14 @@ from .daily_ops_live import live_summary, validate_agents, validate_live
 def _private_headers(response: Response) -> None:
     """Owner-directed card context must never enter a shared HTTP cache."""
     response.headers["Cache-Control"] = "no-store"
-    response.headers["Vary"] = "Authorization, Origin"
+    vary = [item.strip() for item in response.headers.get("Vary", "").split(",")
+            if item.strip()]
+    existing = {item.lower() for item in vary}
+    for item in ("Authorization", "Origin"):
+        if item.lower() not in existing:
+            vary.append(item)
+            existing.add(item.lower())
+    response.headers["Vary"] = ", ".join(vary)
 
 
 def register(
@@ -36,6 +43,13 @@ def register(
     """
     router = APIRouter(prefix="/api/daily-ops/v3", tags=["daily-ops-v3"])
     build = summary or (lambda: live_summary(Path(repo_root)))
+
+    @app.middleware("http")
+    async def _daily_ops_v3_private_response_headers(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.rstrip("/") == "/api/daily-ops/v3/summary":
+            _private_headers(response)
+        return response
 
     @router.get("/summary")
     def get_summary(request: Request, response: Response):
