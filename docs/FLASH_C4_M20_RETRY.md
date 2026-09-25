@@ -8,9 +8,9 @@ recorded cutover receipt make the current C4 guarded-profile identity an
 **inference**, not a fresh lifecycle inspection. The recorded attended result is
 `/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-18/flash-personal-recovery/c4-min224-cutover-20260924T0818Z/cutover-receipt.json` (SHA-256
 `4511cabeba2ca3e71a4f8c2c1c9965fea90006b1d030cb901643e683f3008315`).
-That receipt is **observed evidence for the September 24 cutover**, while the
-decision recorded in it is explicitly `proposed`; this document does not
-create live-operation authority.
+That receipt is a **synthesized receipt binding observed-classified evidence**
+for the September 24 cutover; its recorded decision is explicitly `proposed`.
+This document does not create live-operation authority.
 
 No new C4 cutover, restart, or traffic expansion is qualified by this status
 update. The current operating direction is to wait for an interactive Claude
@@ -129,49 +129,54 @@ A_BGT_RSI_SMOKE_REPO="$CANDIDATE" PYTHONDONTWRITEBYTECODE=1 \
 ```
 
 The smoke fixture had to bind the reviewed C4 candidate before the historical
-live merge, when the canonical checkout was deliberately still C1. For any
-future authorized restart, rerun it with `A_BGT_RSI_SMOKE_REPO` set to the
-exact checkout selected for that restart.
+live merge, when the canonical checkout was deliberately still C1. This is
+historical fixture-binding evidence, not a prescribed invocation for a future
+restart.
 
-## Historical cutover procedure and future restart guard
+## HISTORICAL ONLY: September 24 C1-to-C4 cutover record
 
-The following attended cutover steps were performed for the September 24
-receipt. They remain the mandatory guard for a **future authorized restart**;
-they are not instructions to stop the currently resident C4 service. Before a
-future live stop, record the candidate commit as `V12_PIN_COMMIT`; it must be
-the one reviewed combined forward pin directly on C1 rollback commit
-`08827e7`. Run `flash_resident selected`, the focused repository tests, and the
-artifact manifest check before the live stop.
+**This entire section is historical evidence, never a current action plan.** It
+describes the September 24 transition when C1 was resident and
+`V12_PIN_COMMIT` had not yet been applied. The current C4 forward commit
+`a958f91c3493814944df7b7ee061c6cc0e981595` is an ancestor of the current
+checkout `9fc48c9b66ac5ebc1da03635272f4cecebc64545`; therefore these historical
+instructions must not be used to stop C1, apply V12, or alter the resident C4
+service.
 
-### Preconditions and stop budget for a future restart
+Any future restart needs a fresh reviewed plan based on the current C4 state
+and a new interactive-Claude attended decision. That plan must independently
+select its candidate, preflight, qualification gates, and rollback path; it may
+cite this record as evidence but cannot execute this record as a runbook.
 
-The delegated live coordinator must remain available for the attended window.
-Confirm C1 is ready and idle, Nara/coordinator work is quiescent, and no planner
-phase is due. The two existing pause markers must be preserved, not removed.
-Archive C1 state, touched source files, and their hashes before mutation.
+### Historical preconditions and stop budget
 
-Stop C1 under v8 before applying `V12_PIN_COMMIT`. Require `phase=stopped`, an
-empty owned-container/port check, and successful cleanup. Move the stopped
-state's `artifact_dir` to `prior_artifact_dir` for the helper handoff.
+The September 24 delegated live coordinator was available for the attended
+window, confirmed C1 ready and idle with Nara/coordinator work quiescent, and
+preserved the two pause markers. It archived C1 state, touched source files,
+and their hashes before mutation.
 
-After stop and cache eviction, proceed only if both conditions hold
-immediately:
+The historical cutover stopped C1 under v8 before applying `V12_PIN_COMMIT`,
+required `phase=stopped`, an empty owned-container/port check, and successful
+cleanup, then moved the stopped state's `artifact_dir` to `prior_artifact_dir`
+for the helper handoff.
+
+After the historical stop and cache eviction, the procedure required both of
+the following immediately:
 
 - `MemAvailable >= 104 GiB`
 - `MemFree >= 100 GiB`
 
-Do not consume the supervisor's possible 35-minute prelaunch wait. The attended
-window must retain enough time for a second approximately 12.5-minute C1 cold
-boot if rollback is needed. Follow the coordinated launch-hygiene checklist;
-pool variation between boots is a known material risk.
+The historical attended window retained enough time for a second approximately
+12.5-minute C1 cold boot if rollback was needed. Pool variation between boots
+remains a material risk for any plan that is separately reviewed in the future.
 
-### Qualification requirements for a future restart
+### Historical qualification record
 
-Apply only `V12_PIN_COMMIT`, rerun `selected` and focused tests, start the
-resident, and monitor every 30 seconds. Stop immediately if a readiness
-diagnostic reports any mismatch. Do not run stream smoke before readiness.
+The historical procedure applied `V12_PIN_COMMIT`, reran `selected` and focused
+tests, started the resident, and monitored every 30 seconds. It did not run
+stream smoke before readiness.
 
-At readiness, `/get_server_info` must show all of:
+At historical readiness, `/get_server_info` showed all of:
 
 - `context_length == 262144`
 - requested `max_total_tokens == 262144`
@@ -184,14 +189,17 @@ At readiness, `/get_server_info` must show all of:
 - `mem_fraction_static == 0.83`
 - `cuda_graph_bs_decode == [1, 2, 4]`
 
-Do not use the pinned `source/scripts/runtime_context.py` capture helper as a
-C4 validator: it still admits only C1 and a full 262,144-token realized pool.
-This trial must inspect the full live server-info response directly. The
-ordinary resident/Pi/Nara path does not call this helper, but external
-promotion/comparison benchmarks that do remain paused until adapted and tested.
+The pinned `source/scripts/runtime_context.py` capture helper was not used as a
+C4 validator because it still admits only C1 and a full 262,144-token realized
+pool. The historical trial inspected the full live server-info response
+directly. The ordinary resident/Pi/Nara path does not call this helper, but
+external promotion/comparison benchmarks that do remain paused until adapted
+and tested.
 
-Then run the published hardened smoke, binding both its code loader and deployment
-argument explicitly to the live checkout:
+The following command records the historical hardened-smoke invocation. **Do
+not run it as a current C4 procedure**; any future plan must specify and review
+its own invocation, binding both code loader and deployment argument explicitly
+to its selected checkout:
 
 ```bash
 PREP=/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-18/flash-personal-recovery/sglang-fallback-prep
@@ -202,40 +210,35 @@ A_BGT_RSI_SMOKE_REPO="$REPO" \
   --deployment "$REPO/config/model_deployment.json"
 ```
 
-It must report four complete SSE streams, exact requested/effective R4, exact
-262,144 context and requested pool, realized pool at least 229,376, and real
-four-way decode overlap. Separately retain the `max_req_input_len`, M20, `.83`,
-and graph server-info checks because the smoke does not validate those fields.
-The smoke uses short prompts; it does not prove four near-200K requests fit or
-exclude a retraction between first and last token. Capture scheduler metrics
-before and after smoke and require no increase in retracted requests.
+The historical smoke required four complete SSE streams, exact requested and
+effective R4, exact 262,144 context and requested pool, a realized pool of at
+least 229,376, real four-way decode overlap, and no increase in retracted
+requests. It retained the `max_req_input_len`, M20, `.83`, and graph server-info
+checks because the smoke did not validate those fields. The smoke used short
+prompts and did not prove four near-200K requests fit or exclude a retraction
+between first and last token.
 
-For a future restart, keep C4 only if readiness and smoke pass, the post-smoke
-host-memory low-water is at least 12 GiB and no more than 3 GiB below the
-measured C1 reference, and there are no new kernel `NV_ERR`/`Xid` records or
-scheduler retractions during smoke. Archive full server info, before/after
-scheduler metrics, smoke JSON, host-memory window, kernel query, exact
-Git/artifact hashes, and the final decision in a new receipt.
+The historical keep decision required a post-smoke host-memory low-water of at
+least 12 GiB and no more than 3 GiB below the measured C1 reference, no new
+kernel `NV_ERR`/`Xid` records or scheduler retractions, and a full new receipt.
+Before historical lab resume, the pause-marker safeguards verified
+`reserveTokens=65536` in both Pi settings files, one long-context client at a
+time, and initially K=1 for overlapping Nara/other calls. Those recorded guards
+do not prove a representative mixed-load test.
 
-Before releasing the lab pause markers, verify `reserveTokens=65536` in both
-Pi settings files and restrict long-context operation to one such client at a
-time. Keep overlapping Nara/other calls short and bounded (initially K=1)
-until a representative mixed-load test passes. Queuing or retraction under
-shared-pool pressure is not contradicted by a passing four-short-stream smoke.
+## Historical rollback evidence and future fault boundary
 
-## Rollback and fault boundary for a future restart
-
-For a clean mismatch or failed keep gate: stop under v12, require clean cleanup,
-archive the stopped v12 state, move its `artifact_dir` to `prior_artifact_dir`,
-and revert only `V12_PIN_COMMIT`. This restores the reviewed v8/C1 source and
-deployment, not the rejected strict-v11 C4 pin. Verify `selected` binds v8
-helper SHA `606d05f201b84b01441e6e23b98ed0c66c6a92faa81300b9d796bf54a2a4466c`
-and C1 profile SHA `f0fbb6c09ff926dd17d8bb9787e1f52632e5fba9135431a3d01222be785a81bf`,
-then restart C1 once. Never reset or rewrite the historical v10/M24 or
-v11/M20 evidence. Verify restored requested/effective R1, exact 262,144-token
-pool, and graph `[1]`, then record the rollback receipt.
+For the historical C1-to-C4 procedure only, a clean mismatch or failed keep
+gate stopped v12, required clean cleanup, archived the stopped v12 state, moved
+its `artifact_dir` to `prior_artifact_dir`, and reverted only `V12_PIN_COMMIT`.
+That restored the reviewed v8/C1 source and deployment, not the rejected
+strict-v11 C4 pin. The historical rollback checks bound v8 helper SHA
+`606d05f201b84b01441e6e23b98ed0c66c6a92faa81300b9d796bf54a2a4466c` and C1
+profile SHA `f0fbb6c09ff926dd17d8bb9787e1f52632e5fba9135431a3d01222be785a81bf`.
+Never reset or rewrite the historical v10/M24 or v11/M20 evidence.
 
 If the service enters `phase=fault` or the boot latch arms, do not retry, clear
-state, or improvise a restart. Capture the specific fault and ask the delegated
-live coordinator for a new decision. The attended-retry authorization does not
-predetermine recovery from an as-yet-unseen fault.
+state, or improvise a restart. Capture the specific fault and obtain an
+interactive-Claude decision plus a fresh reviewed current-C4 plan. The
+attended-retry authorization does not predetermine recovery from an as-yet-unseen
+fault.
