@@ -939,13 +939,20 @@ def _policy() -> dict:
 
 
 def meta_verdict(rows: list[dict], item: dict) -> str:
-    """'accept', 'awaiting', or the latest non-accepting meta-oracle verdict on this item."""
+    """Return the latest live review verdict for an item, or ``awaiting``.
+
+    Internal callers pass the raw, hash-verified mailbox prefix.  Project it
+    through ``live_rows`` exactly once here so a structurally quarantined row
+    cannot authorize a claim; callers must not pass an already-filtered list,
+    whose sequence gaps would be reinterpreted by a second projection.
+    """
     policy = _policy()
     exempt = policy.get("review_optional_task_classes")
     if policy.get("require_meta_review") is False or (
             isinstance(exempt, list) and item["body"].get("task_class") in exempt):
         return "accept"
-    verdicts = [r["body"]["verdict"] for r in rows if r.get("kind") == "review"  # rows are not schema-checked on read
+    live = mailbox.live_rows(rows)
+    verdicts = [r["body"]["verdict"] for r in live if r.get("kind") == "review"
                 and r.get("actor") in mailbox.REVIEWERS and r.get("in_reply_to") == item["msg_id"]
                 and isinstance(r.get("body"), dict) and r["body"].get("verdict") in mailbox.VERDICTS]
     return verdicts[-1] if verdicts else "awaiting"

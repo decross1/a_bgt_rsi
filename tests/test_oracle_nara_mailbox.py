@@ -742,6 +742,47 @@ def test_lane_waits_for_the_meta_oracle_and_honors_its_verdict(repo):
     assert lane.meta_verdict(forged, {"msg_id": "x", "body": _plan()}) == "awaiting"
 
 
+def test_quarantined_accept_cannot_override_latest_live_review_at_claim_boundary(repo, monkeypatch):
+    """A hash-valid row is still non-authoritative when mailbox quarantine rejects it.
+
+    The dispatcher sees an initial valid accept.  At the locked claim boundary a
+    valid amend lands, followed by a newer forged accept whose recipient is not
+    in the mailbox schema.  The latest *live* review remains amend, so the atomic
+    predicate must refuse ``claimed`` and the lane records only a hold.
+    """
+    path = repo / "run_state/mb.jsonl"
+    (repo / "config/nara_lane.json").write_text('{"require_meta_review": true}')
+    item = mailbox.post("oracle", "plan_item", _plan(), to="nara", path=path)
+    mailbox.post("codex", "review", {"verdict": "accept"}, to="nara",
+                 in_reply_to=item["msg_id"], path=path)
+    real_post_if, injected = mailbox.post_if, threading.Event()
+
+    def poison_before_claim(actor, kind, body, **kwargs):
+        if body.get("state") == "claimed" and not injected.is_set():
+            injected.set()
+            mailbox.post("codex", "review", {"verdict": "amend"}, to="nara",
+                         in_reply_to=item["msg_id"], path=path)
+            rows = mailbox.read(path)
+            _append_unchecked_mailbox_row(path, {
+                "schema": mailbox.SCHEMA, "seq": len(rows) + 1,
+                "ts": "2026-09-25T12:00:00+00:00", "actor": "codex",
+                "to": "not-a-recipient", "kind": "review", "in_reply_to": item["msg_id"],
+                "body": {"verdict": "accept"}, "expires_at": None,
+            })
+        return real_post_if(actor, kind, body, **kwargs)
+
+    monkeypatch.setattr(mailbox, "post_if", poison_before_claim)
+    posted = lane.run_queue(path, build=lambda *a, **k: pytest.fail("quarantined review authorized a build"),
+                            sandbox=_fake_sandbox, ready=lambda: True)
+
+    assert injected.is_set()
+    rows = mailbox.read(path)
+    assert any(entry["reason"] == "recipient" for entry in mailbox.quarantine(rows))
+    assert lane.meta_verdict(rows, item) == "amend"
+    assert [row["body"]["state"] for row in posted] == ["held"]
+    assert not [row for row in rows if row["kind"] == "receipt" and row["body"]["state"] == "claimed"]
+
+
 def test_lane_fails_scope_escape_and_test_tampering(repo):
     path = repo / "run_state/mb.jsonl"
     mailbox.post("oracle", "plan_item", _plan(), to="nara", path=path)
