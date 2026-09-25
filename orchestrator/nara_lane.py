@@ -482,7 +482,8 @@ def precheck(test_path: str, test_content: str, test_argv: list[str], *,
     not write the acceptance test - it would overwrite the test whose sha the
     receipt names, so the passing run would not be the posted test - and every
     stub runs on a worktree reset to main including tracked modifications, so a
-    stub never passes on a previous stub's leftover edit.
+    stub never passes on a previous stub's leftover edit.  The reset returns to
+    the fixture's captured checkout base, not a symbolic branch.
 
     Raises PrecheckError on an inadmissible test (checked by admission(), not
     reimplemented here), a stub that writes the acceptance test, or a test that is
@@ -575,7 +576,7 @@ def _precheck_root() -> Path:
 
 
 def _reset_fixture(worktree: Path) -> None:
-    """Put the fixture back to exactly `main`, so each stub is checked alone.
+    """Put the fixture back to its captured checkout HEAD, so each stub is checked alone.
 
     Both halves are needed: `reset --hard` reverts edits to tracked files (clean
     does not, so a later stub would otherwise pass on an earlier stub's leftover),

@@ -307,6 +307,27 @@ def test_implement_refuses_root_move_immediately_after_worktree_add(tmp_path, mo
     assert builds == []
 
 
+def test_implement_refuses_worktree_move_immediately_after_worktree_add(tmp_path, monkeypatch):
+    """Advance only the newly-created worktree branch after add. Mutation proof:
+    removing the worktree-base guard calls the builder below despite that drift."""
+    root, entry = _real_receipted_entry(tmp_path, monkeypatch, "worktree-moved-after-add")
+    real_git, builds = lane._git, []
+    worktree = lane.WORKTREES / entry["item"]["msg_id"]
+
+    def move_worktree_after_add(*args, cwd=None):
+        result = real_git(*args, cwd=cwd)
+        if args[:2] == ("worktree", "add"):
+            _advance_head(worktree)
+        return result
+
+    monkeypatch.setattr(lane, "_git", move_worktree_after_add)
+    result = lane.implement(entry, build=lambda *a, **k: builds.append(a) or dict(STUB), sandbox=_host_sandbox)
+
+    assert result["state"] == "failed" and result["reason"] == "worktree does not match captured checkout base"
+    assert builds == []
+    assert lane._build_base() != lane._build_base(cwd=worktree), "only the worktree branch advanced"
+
+
 def test_implement_refuses_root_move_before_first_builder_dispatch(tmp_path, monkeypatch):
     """Mutation proof: without the per-dispatch check the builder below is called."""
     root, entry = _real_receipted_entry(tmp_path, monkeypatch, "moved-before-builder")
