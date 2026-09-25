@@ -583,6 +583,30 @@ def _validate_prepared_append(receipt: dict, append: bytes) -> None:
         _validate_d087_row(receipt, ref, raw)
 
 
+def _pending_conviction_append(prefix: bytes, rows: dict) -> bytes:
+    """Return the all-or-none three-row append for one reviewed selection."""
+    if prefix and not prefix.endswith(b"\n"):
+        raise FocusError("incomplete conviction ledger tail")
+    existing_hashes = {
+        hashlib.sha256(line).hexdigest() for line in prefix.splitlines() if line
+    }
+    found = [
+        name for name in ("nara", "oracle", "claude")
+        if rows[name][2] in existing_hashes
+    ]
+    if found and len(found) != 3:
+        raise FocusError("partial initial conviction rows require prepared recovery")
+    return b"" if found else b"".join(
+        rows[name][1] for name in ("nara", "oracle", "claude")
+    )
+
+
+def _require_conviction_capacity(prefix_bytes: int, append: bytes) -> None:
+    """Bound the completed ledger, not merely the prefix already on disk."""
+    if prefix_bytes + len(append) > MAX_CONVICTION_LEDGER_BYTES:
+        raise FocusError("initial convictions would exceed conviction ledger bound")
+
+
 def _prepared_value(value: object) -> dict:
     if not isinstance(value, dict) or set(value) != {
         "schema_version", "receipt_sha256", "receipt", "expected_previous_sha256",
@@ -614,6 +638,7 @@ def _prepared_value(value: object) -> dict:
     if hashlib.sha256(append).hexdigest() != value["ledger_append_sha256"] or len(append) > 64 * 1024:
         raise FocusError("prepared ledger append differs")
     _validate_prepared_append(receipt, append)
+    _require_conviction_capacity(value["ledger_prefix_bytes"], append)
     return value
 
 
@@ -708,13 +733,41 @@ def prepare_thesis_focus(
     if not isinstance(initial_convictions, dict) or set(initial_convictions) != {"nara", "oracle", "claude"}:
         raise FocusError("thesis focus install needs initial convictions")
     root = Path(repo_root).resolve()
+    receipt_raw = canonical(receipt) + b"\n"
+    receipt_sha = hashlib.sha256(receipt_raw).hexdigest()
+    rows = _initial_conviction_rows(receipt["focus_id"], receipt["selected_at"], initial_convictions)
+    refs = [{"forecaster": name, "row_sha256": rows[name][2]} for name in ("nara", "oracle", "claude")]
+    if receipt["initial_conviction_rows"] != refs:
+        raise FocusError("initial conviction receipt references differ from forecasts")
+
+    # A retry may arrive after the journal was made durable and the ledger
+    # append started.  The journal is the recovery authority in that case;
+    # return it before a read-only preflight mistakes its partial suffix for a
+    # fresh, unjournaled mutation.
+    existing_preflight = find_prepared_thesis_focus(
+        root, meta_accept_sha256=receipt["meta_accept_sha256"],
+    )
+    if existing_preflight is not None:
+        if existing_preflight["receipt_sha256"] != receipt_sha:
+            raise FocusError("meta review already has a different prepared focus")
+        return existing_preflight
+
+    # A deterministic over-capacity request is rejected before creating the
+    # focus directory, lock files, prepared journal, receipt, or pointer.  The
+    # same calculation is repeated under both transaction locks below so a
+    # concurrent ledger append cannot turn this preflight into authority.
+    try:
+        preflight_prefix = _read(root, CONVICTION_LEDGER, MAX_CONVICTION_LEDGER_BYTES)
+    except FileNotFoundError:
+        preflight_prefix = b""
+    preflight_append = _pending_conviction_append(preflight_prefix, rows)
+    _require_conviction_capacity(len(preflight_prefix), preflight_append)
+
     directory = root / DIRECTORY
     directory.mkdir(parents=True, exist_ok=True)
     if directory.resolve() != directory or not directory.is_dir():
         raise FocusError("redirected focus directory")
     _fsync_directory_chain(root, directory)
-    receipt_raw = canonical(receipt) + b"\n"
-    receipt_sha = hashlib.sha256(receipt_raw).hexdigest()
     lock_fd = os.open(directory / ".selection.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     with os.fdopen(lock_fd, "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -742,17 +795,8 @@ def prepare_thesis_focus(
                 prefix = _read(root, CONVICTION_LEDGER, MAX_CONVICTION_LEDGER_BYTES)
             except FileNotFoundError:
                 prefix = b""
-            if prefix and not prefix.endswith(b"\n"):
-                raise FocusError("incomplete conviction ledger tail")
-            rows = _initial_conviction_rows(receipt["focus_id"], receipt["selected_at"], initial_convictions)
-            refs = [{"forecaster": name, "row_sha256": rows[name][2]} for name in ("nara", "oracle", "claude")]
-            if receipt["initial_conviction_rows"] != refs:
-                raise FocusError("initial conviction receipt references differ from forecasts")
-            existing_hashes = {hashlib.sha256(line).hexdigest() for line in prefix.splitlines() if line}
-            found = [name for name in ("nara", "oracle", "claude") if rows[name][2] in existing_hashes]
-            if found and len(found) != 3:
-                raise FocusError("partial initial conviction rows require prepared recovery")
-            append = b"" if found else b"".join(rows[name][1] for name in ("nara", "oracle", "claude"))
+            append = _pending_conviction_append(prefix, rows)
+            _require_conviction_capacity(len(prefix), append)
             prepared = {
                 "schema_version": PREPARED_SCHEMA, "receipt_sha256": receipt_sha,
                 "receipt": receipt, "expected_previous_sha256": expected_previous_sha256,
@@ -867,6 +911,7 @@ def commit_prepared_thesis_focus(repo_root: Path, prepared: dict) -> dict:
             suffix = ledger[prefix_bytes:]
             if not append.startswith(suffix):
                 raise FocusError("conviction ledger tail differs from prepared transaction")
+            _require_conviction_capacity(len(ledger), append[len(suffix):])
             append_fd = os.open(root / CONVICTION_LEDGER, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
             try:
                 if len(suffix) < len(append):

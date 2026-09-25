@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from orchestrator import research_focus
+from orchestrator import oracle_mailbox, research_focus
 
 
 SCHEMA_SET = "thesis-candidate-set/v1"
@@ -606,14 +606,26 @@ def _verify_candidate_provenance(root: Path, candidate_set: dict, candidate_set_
             path = prior["source_path"]
             if path == source["path"]:
                 raise ThesisSelectionError("prior work cannot self-attest in the candidate source")
-            _git_regular_blob(root, source["head_sha"], path)
-            size = _git(root, "cat-file", "-s", f"{source['head_sha']}:{path}").strip()
+            # Nara may assemble and rank candidate cards, but it cannot mint the
+            # prior work used to justify them in the same candidate commit.  The
+            # exact evidence bytes must already exist at the plan-declared base
+            # and survive unchanged at the receipted head.  This proves source
+            # provenance only; Oracle's explicit prior_work screen below remains
+            # the independent relevance judgment.
+            try:
+                base_blob = _git_regular_blob(root, source["base_sha"], path)
+            except ThesisSelectionError as exc:
+                raise ThesisSelectionError("prior work source is absent from the plan base") from exc
+            head_blob = _git_regular_blob(root, source["head_sha"], path)
+            if head_blob != base_blob:
+                raise ThesisSelectionError("prior work source differs from the plan base")
+            size = _git(root, "cat-file", "-s", f"{source['base_sha']}:{path}").strip()
             if not size.isascii() or not size.isdigit() or int(size) > MAX_PRIMARY_SOURCE_BYTES:
                 raise ThesisSelectionError("primary source exceeds read bound")
             source_total += int(size)
             if source_total > MAX_PRIMARY_SOURCE_TOTAL_BYTES:
                 raise ThesisSelectionError("primary source set exceeds read bound")
-            primary_raw = _git(root, "show", f"{source['head_sha']}:{path}").encode()
+            primary_raw = _git(root, "show", f"{source['base_sha']}:{path}").encode()
             if (len(primary_raw) < 64 or hashlib.sha256(primary_raw).hexdigest() != prior["source_sha256"]
                     or prior["locator"].encode() not in primary_raw):
                 raise ThesisSelectionError("prior work lacks substantive primary-source provenance")
@@ -712,11 +724,14 @@ def _head(root: Path) -> str:
 
 
 def _mailbox_rows(path: Path) -> list[dict]:
-    """Return a hash-verified, lock-captured mailbox prefix.
+    """Return the canonical live rows from a lock-captured mailbox prefix.
 
     The final row hash is the decision cutoff: admission checks inspect every
     review through that tail. Rows appended after the shared lock is released
     belong to a later admission attempt (and are therefore seen by ``select``).
+    Hash-valid evidence which fails the mailbox writer-derived identity or
+    structural/relational predicates is retained in the file but quarantined
+    from selection exactly as it is from every other live mailbox projection.
     """
     lock_path = path.parent / ".oracle_nara_mailbox.lock"
     try:
@@ -728,7 +743,7 @@ def _mailbox_rows(path: Path) -> list[dict]:
         raise ThesisSelectionError("mailbox receipt is unavailable") from exc
     if len(raw) > 16 * 1024 * 1024 or (raw and not raw.endswith(b"\n")):
         raise ThesisSelectionError("mailbox exceeds bound or has incomplete tail")
-    rows, previous, seen_ids = [], None, set()
+    rows, previous = [], None
     for number, line in enumerate(raw.splitlines(), 1):
         if not line.strip():
             continue
@@ -738,27 +753,14 @@ def _mailbox_rows(path: Path) -> list[dict]:
         check.pop("row_sha256", None)
         if not isinstance(claimed, str) or not SHA.fullmatch(claimed) or row.get("prev_sha256") != previous or hashlib.sha256(_canonical(check)).hexdigest() != claimed:
             raise ThesisSelectionError(f"mailbox chain broken at line {number}")
-        if (row.get("schema") != "oracle-nara-mailbox/v1"
-                or row.get("seq") != len(rows) + 1
-                or not isinstance(row.get("msg_id"), str)
-                or not row["msg_id"] or row["msg_id"] in seen_ids):
-            raise ThesisSelectionError(f"mailbox typed identity invalid at line {number}")
-        if row.get("in_reply_to") is not None and row.get("in_reply_to") not in seen_ids:
-            raise ThesisSelectionError(f"mailbox back-reference invalid at line {number}")
-        if not isinstance(row.get("body"), dict) or row.get("kind") not in {"plan_item", "withdraw", "receipt", "review", "question", "answer", "note", "question_resolution"}:
-            raise ThesisSelectionError(f"mailbox typed row invalid at line {number}")
-        _mailbox_time(row.get("ts"), "mailbox ts")
-        expires_at = row.get("expires_at")
-        if expires_at is not None:
-            _mailbox_time(expires_at, "mailbox expires_at", allow_future=True)
-        if row.get("to") not in {"oracle", "nara", "claude", "codex", "owner", "all"}:
-            raise ThesisSelectionError(f"mailbox recipient invalid at line {number}")
         rows.append(row)
         if len(rows) > MAX_MAILBOX_ROWS:
             raise ThesisSelectionError("mailbox row scan exceeds bound")
-        seen_ids.add(row["msg_id"])
         previous = claimed
-    return rows
+    # Do not maintain a second, weaker mailbox schema here.  In particular,
+    # oracle_mailbox.row_issue derives msg_id from the writer payload, which a
+    # merely re-hashed forged row cannot satisfy.
+    return oracle_mailbox.live_rows(rows)
 
 
 def _selection_binding(value: object) -> dict:
