@@ -1,5 +1,6 @@
 """HTTP admission tests for the separate, read-only daily-ops v3 route."""
-from fastapi import FastAPI
+import pytest
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.testclient import TestClient
 
 from backend.daily_ops_live_api import register
@@ -43,6 +44,24 @@ def test_v3_summary_fails_closed_without_reading_a_legacy_cache(tmp_path):
     response = TestClient(app).get("/api/daily-ops/v3/summary")
     assert response.status_code == 503
     assert response.headers["cache-control"] == "no-store"
+
+
+def test_v3_summary_fails_closed_for_an_actual_broken_mailbox_source(tmp_path):
+    mailbox = tmp_path / "run_state" / "oracle_nara_mailbox.jsonl"
+    mailbox.parent.mkdir(parents=True)
+    # This is deliberately neither a valid row nor a valid chain: the route
+    # must return 503 rather than convert it into a healthy empty projection.
+    mailbox.write_text('{"schema":"oracle-nara-mailbox/v1","seq":1}\n')
+    app = FastAPI()
+    router = register(app, repo_root=tmp_path)
+    endpoint = next(route.endpoint for route in router.routes
+                    if route.path == "/api/daily-ops/v3/summary")
+    # The installed TestClient/ASGI transport is known to hang in this lab.
+    # The route's admission decision itself is deterministic and transport-free.
+    with pytest.raises(HTTPException) as error:
+        endpoint(Response())
+    assert error.value.status_code == 503
+    assert error.value.headers["Cache-Control"] == "no-store"
 
 
 def test_v3_route_does_not_shadow_legacy_daily_ops_paths(tmp_path):

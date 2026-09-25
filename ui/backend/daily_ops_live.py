@@ -214,7 +214,13 @@ def _question_resolution(question: dict, rows: list[dict]) -> dict | None:
 
 
 def _historical_presentation_archive(question: dict, rows: list[dict]) -> dict | None:
-    """Exact legacy presentation exception, invalidated by a later valid contest."""
+    """Exact legacy presentation exception, invalidated by later owner context.
+
+    The exception is deliberately narrower than a mailbox closure.  A later
+    human-labelled answer or protected owner-route reconciliation is still not
+    authenticated, but it is current evidence which must be visible rather
+    than hidden behind an older presentation archive.
+    """
     candidate = historical_archive(question, rows)
     if candidate is None:
         return None
@@ -222,7 +228,13 @@ def _historical_presentation_archive(question: dict, rows: list[dict]) -> dict |
     # This remains presentation only.  The validation adds the important
     # fail-open condition: evidence that is later provenance-contested cannot
     # hide an owner card, even when its older bytes are on the allowlist.
-    return candidate if oracle_mailbox.is_valid_question_resolution(question, candidate, rows) else None
+    if not oracle_mailbox.is_valid_question_resolution(question, candidate, rows):
+        return None
+    if _unverified_human_claims(question, rows, after=candidate):
+        return None
+    if _owner_reconciliation_requests(question, rows, after=candidate):
+        return None
+    return candidate
 
 
 def _unverified_resolution_claims(question: dict, rows: list[dict], *, after: dict | None = None) -> list[dict]:
@@ -310,7 +322,7 @@ def _question_card(row: dict) -> dict:
     }
 
 
-def question_updates(rows: list[dict]) -> list[dict]:
+def _all_question_updates(rows: list[dict]) -> list[dict]:
     """Recent explicit non-answer dispositions, kept separate from actions."""
     rows = _relational_live_rows(rows)
     found = []
@@ -416,6 +428,21 @@ def question_updates(rows: list[dict]) -> list[dict]:
                 "evidence_msg_ids": [value for value in body.get("evidence_msg_ids", [])
                                      if isinstance(value, str)][:8] + [claim["msg_id"]],
             })
+            # Do not let a newer protected-route reconciliation disappear
+            # merely because the same thread also has an unauthenticated
+            # answer claim.  Both remain non-terminal context.
+            for request in _owner_reconciliation_requests(question, rows, after=claim):
+                text = _clip(_body(request).get("text"), 900)
+                add(question, card, {
+                    "id": request["msg_id"], "disposition": "contested",
+                    "summary": _clip("Later authorized-route reconciliation remains non-terminal"
+                                     + (f": {text}" if text else "."), 1200),
+                    "reason": "The route supplies current context but repository code cannot make it durable proof of a genuine owner ruling.",
+                    "blocking_artifact": None,
+                    "resolved_by": _clip(str(request.get("actor")), 60) or "?",
+                    "resolved_at": _stamp(request.get("ts")),
+                    "evidence_msg_ids": [request["msg_id"]],
+                })
         else:
             add(question, card, {
                 "id": reconciliation["msg_id"], "disposition": "contested",
@@ -427,7 +454,17 @@ def question_updates(rows: list[dict]) -> list[dict]:
                 "evidence_msg_ids": [reconciliation["msg_id"]],
             })
     found.sort(key=lambda row: row["resolved_at"] or "", reverse=True)
-    return found[:10]
+    return found
+
+
+def question_updates(rows: list[dict]) -> list[dict]:
+    """Recent explicit non-answer dispositions, bounded for the v3 payload."""
+    return _all_question_updates(rows)[:10]
+
+
+def question_updates_overflow(rows: list[dict]) -> int:
+    """Count update evidence omitted by the v3 payload's fixed display bound."""
+    return max(0, len(_all_question_updates(rows)) - 10)
 
 
 def _word(value: str, text: str) -> bool:
@@ -665,10 +702,14 @@ def current_plan(repo: Path, now: datetime | None = None) -> tuple[str, dict] | 
     plans = plan_files(Path(repo))
     if not plans:
         return None
-    name = plans[max(plans)][-1][1]
-    plan = _load_plan(Path(repo), name)[0]
     now = now or datetime.now(timezone.utc)
-    if plan["date"] != now.astimezone(LAB_TZ).date().isoformat():
+    date = now.astimezone(LAB_TZ).date().isoformat()
+    revisions = plans.get(date)
+    if not revisions:
+        return None
+    name = revisions[-1][1]
+    plan = _load_plan(Path(repo), name)[0]
+    if plan["date"] != date:
         return None
     return name[:-5], plan
 
@@ -845,7 +886,7 @@ def _nara_item(item, ids, rows, window, folded):
     if isinstance(body.get("reasons"), list) and body["reasons"]:
         detail += f" ({_clip(str(body['reasons'][0]), 160)})"
     if reviews:
-        detail += f"; meta review {_body(reviews[-1]).get('verdict')} ({reviews[-1]['msg_id']})"
+        detail += f"; claimed review {_body(reviews[-1]).get('verdict')} ({reviews[-1]['msg_id']})"
     sha = body.get("head_sha") if isinstance(body.get("head_sha"), str) else None
     return status, detail + ".", last["msg_id"], (sha or "")[:12] or None, _stamp(last.get("ts"))
 
@@ -874,7 +915,7 @@ def _oracle_item(item, date, rows, git, window, revision_scoped):
         return "awaiting_review", _clip(_title(note), 200), note["msg_id"], None, _stamp(note.get("ts"))
     verdict = _body(review).get("verdict")
     return (VERDICT_STATUS.get(verdict, "awaiting_review"),
-            f"Meta-oracle {verdict}: {_clip(_body(review).get('summary'), 200) or _title(note)}",
+            f"Claimed review {verdict}: {_clip(_body(review).get('summary'), 200) or _title(note)}",
             review["msg_id"], None, _stamp(review.get("ts")))
 
 
@@ -1114,12 +1155,12 @@ def improvements(git: _Git, now: datetime) -> list[dict]:
     return rows[:MAX_IMPROVEMENTS]
 
 
-def build(repo: Path, now: datetime) -> dict:
+def build(repo: Path, now: datetime, *, recorded_rows: list[dict] | None = None) -> dict:
     """Every v3 summary field except ``agents``; failures become warnings, never old content."""
     repo = Path(repo)
     warnings: list[str] = []
     try:
-        recorded_rows = _mailbox(repo)
+        recorded_rows = _mailbox(repo) if recorded_rows is None else recorded_rows
         rows = _projection_rows(recorded_rows)
         mailbox_error = None
         omitted = len(recorded_rows) - len(rows)
@@ -1142,7 +1183,10 @@ def build(repo: Path, now: datetime) -> dict:
     windows = plan_windows(rows)
     daily_plan, items, claimed, plan_id = None, [], {}, None
     if plans:
-        date = max(plans)
+        today = now.astimezone(LAB_TZ).date().isoformat()
+        # A queued future plan is useful history, but must never shadow a
+        # valid plan for the lab's present day.
+        date = today if today in plans else max(plans)
         revision, name = plans[date][-1]
         try:
             plan, sha, written = _load_plan(repo, name)
@@ -1170,18 +1214,28 @@ def build(repo: Path, now: datetime) -> dict:
             warnings.append(_clip(f"Newest daily plan {name} is unreadable: {exc}", 480))
     newest_row = _stamp(rows[-1].get("ts")) if rows else None
     focus = research_focus(repo, now)
-    waiting = waiting_on_you(plan_id, items, claimed, rows,
+    active_plan_id = plan_id if daily_plan and daily_plan["is_current"] else None
+    waiting = waiting_on_you(active_plan_id, items, claimed, rows,
                              daily_plan["written_at"] if daily_plan else None)
-    overflow = waiting_overflow(plan_id, items, claimed, rows,
+    overflow = waiting_overflow(active_plan_id, items, claimed, rows,
                                 daily_plan["written_at"] if daily_plan else None)
     if overflow:
         warnings.append(
             f"{overflow} additional open owner card(s) are not displayed in this bounded view; actionable owner cards were prioritized over routed cards."
         )
+    update_overflow = question_updates_overflow(rows)
+    if update_overflow:
+        warnings.append(
+            f"{update_overflow} additional non-terminal or historical update(s) are not displayed in this bounded view."
+        )
+    if any(row.get("kind") == "review" for row in rows):
+        warnings.append(
+            "Mailbox review actor labels are unauthenticated claims, not authenticated Meta-oracle verdicts."
+        )
     return {
         "schema_version": LIVE_SCHEMA,
         "generated_at": _iso(now),
-        "current_plan_revision": plan_id if daily_plan else None,
+        "current_plan_revision": active_plan_id,
         "daily_plan": daily_plan,
         "research_focus": focus,
         "work_items": items,
@@ -1203,7 +1257,11 @@ def live_summary(repo: Path, now: datetime | None = None) -> dict:
     """The full v3 summary with agent cards, for a backend that has no relay configured."""
     from .daily_ops_agents import observe, observe_nara_service
     now = now or datetime.now(timezone.utc)
-    value = build(repo, now)
+    # The HTTP v3 boundary is fail-closed for the required mailbox source.  A
+    # direct read-model caller may still inspect an unreadable source as a
+    # warning, but a 200 response must never silently substitute an empty view.
+    recorded_rows = _mailbox(Path(repo))
+    value = build(repo, now, recorded_rows=recorded_rows)
     value["agents"] = observe(Path(repo), now=now, nara_service=observe_nara_service(now))
     return value
 
@@ -1270,7 +1328,9 @@ def validate_live(value: dict, agents_ok) -> None:
         if not (isinstance(plan, dict) and set(plan) == {
                 "id", "date", "revision", "path", "sha256", "written_at", "is_current", "week_alignment",
                 "bottlenecks", "review"}
-                and plan["id"] == value["current_plan_revision"] and _text(plan["id"], 64)
+                and ((plan["is_current"] and plan["id"] == value["current_plan_revision"])
+                     or (not plan["is_current"] and value["current_plan_revision"] is None))
+                and _text(plan["id"], 64)
                 and re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(plan["date"])) and _text(plan["revision"], 12)
                 and _text(plan["path"], 200) and re.fullmatch(r"[0-9a-f]{64}", str(plan["sha256"]))
                 and _time(plan["written_at"]) and isinstance(plan["is_current"], bool)

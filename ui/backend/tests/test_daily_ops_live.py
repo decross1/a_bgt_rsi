@@ -1010,6 +1010,28 @@ def test_historical_presentation_archive_reopens_after_later_valid_contest(repo,
     assert question["msg_id"] in {card["msg_id"] for card in live.waiting_on_you(None, [], {}, contested, None)}
 
 
+def test_historical_presentation_archive_reopens_for_later_owner_context(repo, monkeypatch):
+    box = Box(repo)
+    question = box.post("claude", "question", {"title": "An older card"}, to="owner")
+    resolution = box.post("claude", "question_resolution", {
+        "disposition": "superseded", "summary": "Historical only.", "reason": "Reviewed archive.",
+    }, to="owner", reply=question["msg_id"])
+    monkeypatch.setattr(card_policy, "HISTORICAL_ARCHIVES", ((
+        question["msg_id"], question["row_sha256"], resolution["msg_id"], resolution["row_sha256"],
+    ),))
+    box.post("human:derrick", "answer", {"text": "Use the new evidence."}, to="claude",
+             reply=question["msg_id"])
+    box.post("human:derrick", "note", {
+        "via": "authorized-owner-ui", "reconciliation": "genuine_owner_confirmation_required",
+        "text": "Reconcile before proceeding.",
+    }, to="claude", reply=question["msg_id"])
+    rows = oracle_mailbox.read(box.path)
+    assert live._historical_presentation_archive(question, rows) is None
+    assert question["msg_id"] in {card["msg_id"] for card in live.waiting_on_you(None, [], {}, rows, None)}
+    updates = live.question_updates(rows)
+    assert {row["id"] for row in updates} >= {rows[-2]["msg_id"], rows[-1]["msg_id"]}
+
+
 def test_primary_mailbox_replay_anchors_only_the_reviewed_cards():
     """Replay the deployed primary mailbox when this lab fixture is available.
 
@@ -1040,6 +1062,7 @@ def test_primary_mailbox_replay_anchors_only_the_reviewed_cards():
     assert by_id["claude-dcc5a13d09fea05b"]["awaiting_asker"] is False
     handoff_ids = {question_id for question_id, _ in card_policy.CLAUDE_HANDOFF[2]}
     assert all(by_id[question_id]["awaiting_asker"] is True for question_id in handoff_ids)
+    assert live.question_updates_overflow(rows) >= 2
 
 
 def test_waiting_cards_prioritize_actions_and_report_bounded_overflow():
@@ -1051,6 +1074,24 @@ def test_waiting_cards_prioritize_actions_and_report_bounded_overflow():
     cards = live.waiting_on_you(None, [], {}, rows, None)
     assert len(cards) == live.MAX_ROWS and cards[-1]["msg_id"] == "q-15"
     assert live.waiting_overflow(None, [], {}, rows, None) == 1
+
+
+def test_question_update_overflow_is_visible_to_the_summary(repo, monkeypatch):
+    box = Box(repo)
+    archives = []
+    for index in range(11):
+        question = box.post("claude", "question", {"title": f"Archived {index}"}, to="owner")
+        resolution = box.post("claude", "question_resolution", {
+            "disposition": "informational", "summary": "Archived.", "reason": "History.",
+        }, to="owner", reply=question["msg_id"])
+        archives.append((question["msg_id"], question["row_sha256"],
+                         resolution["msg_id"], resolution["row_sha256"]))
+    monkeypatch.setattr(card_policy, "HISTORICAL_ARCHIVES", tuple(archives))
+    rows = oracle_mailbox.read(box.path)
+    assert len(live.question_updates(rows)) == 10
+    assert live.question_updates_overflow(rows) == 1
+    value = _summary(repo)
+    assert any("1 additional non-terminal or historical update" in warning for warning in value["warnings"])
 
 
 def test_stale_plan_is_history_not_an_actionable_plan(repo):
@@ -1068,6 +1109,16 @@ def test_future_plan_is_not_actionable_early(repo):
     value = _summary(repo)
     assert value["daily_plan"]["is_current"] is False
     assert value["work_items"] == []
+
+
+def test_future_plan_does_not_shadow_today_plan(repo):
+    _plan(repo, "2026-09-23.json", [_item("today", "oracle_dev")])
+    _plan(repo, "2026-09-24.json", [_item("future", "oracle_dev")])
+    assert live.current_plan(repo, NOW)[0] == "2026-09-23"
+    value = _summary(repo)
+    assert value["daily_plan"]["id"] == "2026-09-23"
+    assert value["daily_plan"]["is_current"] is True
+    assert value["current_plan_revision"] == "2026-09-23"
 
 
 def test_unverified_human_claim_and_authorized_route_are_nonterminal_updates():

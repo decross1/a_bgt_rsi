@@ -136,7 +136,7 @@ function v3Summary(overrides: Record<string, unknown> = {}) {
       { kind: "question", id: "claude-1", title: "Claude handoff", question: "Awaiting Claude", context: null, choices: [], recommendation: null, consequence: null, asked_by: "claude", asked_at: now, msg_id: "claude-1", cli: "read only", awaiting_asker: true, handoff_msg_id: "codex-handoff-1" },
     ],
     question_updates: [], accomplishments: [], improvements: [], warnings: [], sources: { plan: now, mailbox: now, focus: null, git: now },
-    agents: { oracle: { label: "Oracle", role: "steward", status: "idle", detail: "Idle.", observed_at: now, source: "mailbox", activity: null, activity_at: null, since: null }, pi_client: { label: "Pi", role: "client", status: "offline", detail: "Offline.", observed_at: now, source: "service", activity: null, activity_at: null, since: null }, nara: { label: "Nara", role: "runner", status: "offline", detail: "Offline.", observed_at: now, source: "service", activity: null, activity_at: null, since: null }, meta_oracle: null },
+    agents: { oracle: { label: "Oracle", role: "steward", status: "idle", detail: "Idle.", observed_at: now, source: "mailbox", activity: null, activity_at: null, since: null }, pi_client: { label: "Pi client", role: "client", status: "offline", detail: "Offline.", observed_at: now, source: "service", activity: null, activity_at: null, since: null }, nara: { label: "Nara", role: "runner", status: "offline", detail: "Offline.", observed_at: now, source: "service", activity: null, activity_at: null, since: null } },
     ...overrides,
   };
 }
@@ -176,10 +176,29 @@ describe("DailyOpsPanel", () => {
     expect(screen.queryByRole("button", { name: /ask to|approve|decline|defer|reconcile/i })).toBeNull();
   });
 
-  it("rejects a routed card without its exact handoff reference", () => {
+  it("rejects a handoff reference on a card the producer did not route", () => {
     expect(admitDailyOpsV3Summary(v3Summary({ waiting_on_you: [{
-      ...v3Summary().waiting_on_you[1], handoff_msg_id: null,
+      ...v3Summary().waiting_on_you[0], handoff_msg_id: "codex-handoff-1",
     }] }))).toBeNull();
+  });
+
+  it("fails closed on every widened or incomplete v3 boundary and retains v2", () => {
+    const base = v3Summary();
+    const invalid = [
+      { ...base, unexpected: true },
+      { ...base, sources: {} },
+      { ...base, research_focus: { status: "none" } },
+      { ...base, agents: { ...base.agents, oracle: { ...base.agents.oracle, status: "invented" } } },
+      { ...base, work_items: [{ ...base.work_items[0], unexpected: true }] },
+    ];
+    for (const value of invalid) expect(admitDailyOpsV3Summary(value)).toBeNull();
+
+    D.v3 = invalid[0];
+    D.summary = v2Summary();
+    show();
+    expect(screen.queryByTestId("daily-ops-v3-panel")).toBeNull();
+    expect(screen.getByTestId("daily-ops-v3-fallback")).toBeInTheDocument();
+    expect(screen.getByTestId("daily-decision-cards")).toBeInTheDocument();
   });
 
   it("replaces verbose goals with three concise source-bound work cards", () => {
