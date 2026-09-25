@@ -4,6 +4,7 @@ import {
   DailyOpsError,
   getDailyOpsMessages,
   getDailyOpsSummary,
+  getDailyOpsV3Summary,
   postDailyOpsDecision,
   postDailyOpsMessage,
   type DailyOpsIntent,
@@ -16,9 +17,11 @@ import DailyDecisionCards, {
   type DailyWorkCard,
   type EvidenceKind,
 } from "./DailyDecisionCards";
+import { admitDailyOpsV3Summary, DailyOpsV3Panel } from "./DailyOpsV3Panel";
 import { ResearchOpsCard } from "./ResearchOpsCard";
 
 const SUMMARY_KEY = "daily_ops_summary";
+const V3_SUMMARY_KEY = "daily_ops_v3_summary";
 const MESSAGES_KEY = "daily_ops_messages";
 const OWNER_KEY = "oracle-lab-owner-access-key";
 const STATUS = new Set(["planned", "in_progress", "blocked", "done", "awaiting_owner"]);
@@ -431,13 +434,34 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
 }) {
   const [accessKey, setAccessKey] = useState(() =>
     typeof sessionStorage === "undefined" ? "" : sessionStorage.getItem(OWNER_KEY) ?? "");
+  // Never put the credential in a poll key: pollhub is a process-local cache.
+  // An epoch gives every owner-key change an isolated, evictable private view.
+  const [privateEpoch, setPrivateEpoch] = useState(0);
+  const [readyPrivateEpoch, setReadyPrivateEpoch] = useState<number | null>(null);
   const summaryPoll = usePolled(SUMMARY_KEY, getDailyOpsSummary, { intervalMs: 60_000 });
-  const messagesPoll = usePolled(MESSAGES_KEY, () => getDailyOpsMessages(accessKey), {
+  const v3PollKey = `${V3_SUMMARY_KEY}:${accessKey ? privateEpoch : "locked"}`;
+  const messagesPollKey = `${MESSAGES_KEY}:${accessKey ? privateEpoch : "locked"}`;
+  const v3SummaryPoll = usePolled(v3PollKey, () => getDailyOpsV3Summary(accessKey), {
+    intervalMs: 60_000,
+    enabled: accessKey.length > 0,
+    evictOnZero: true,
+  });
+  const messagesPoll = usePolled(messagesPollKey, () => getDailyOpsMessages(accessKey), {
     intervalMs: 15_000,
     enabled: accessKey.length > 0,
+    evictOnZero: true,
   });
+  // Both private poll subscriptions settle before this effect marks an epoch
+  // ready. Old cards, message rows and auth failures cannot bridge key changes.
+  useEffect(() => setReadyPrivateEpoch(accessKey ? privateEpoch : null), [accessKey, privateEpoch]);
+  const privateReady = Boolean(accessKey) && readyPrivateEpoch === privateEpoch;
   const summary = admitDailyOpsSummary(summaryPoll.data);
-  const messages = admitMessages(messagesPoll.data);
+  const v3Summary = privateReady
+    ? admitDailyOpsV3Summary(v3SummaryPoll.data)
+    : null;
+  const messages = privateReady ? admitMessages(messagesPoll.data) : null;
+  const messagesError = privateReady ? messagesPoll.error : null;
+  const v3SummaryError = privateReady ? v3SummaryPoll.error : null;
   const [intent, setIntent] = useState<DailyOpsIntent>("question");
   const [text, setText] = useState("");
   const [keyDraft, setKeyDraft] = useState(accessKey);
@@ -452,15 +476,17 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
     "Oracle bounded UI responder mailbox heartbeat";
 
   useEffect(() => {
-    if (accessKey && messagesPoll.error instanceof DailyOpsError &&
-        [401, 403].includes(messagesPoll.error.status)) {
+    const rejected = [messagesError, v3SummaryError].some(error =>
+      error instanceof DailyOpsError && [401, 403].includes(error.status));
+    if (accessKey && rejected) {
       sessionStorage.removeItem(OWNER_KEY);
       setAccessKey("");
       setKeyDraft("");
+      setPrivateEpoch(epoch => epoch + 1);
       setRetryableRequest(null);
-      setSubmit({ kind: "failed", message: "Owner access key rejected. Message history remains locked and no request was queued." });
+      setSubmit({ kind: "failed", message: "Owner access key rejected. Private v3 cards and message history are locked; no request was queued." });
     }
-  }, [accessKey, messagesPoll.error]);
+  }, [accessKey, messagesError, v3SummaryError]);
 
   const sortedRows = useMemo(() => messages?.rows
     .slice()
@@ -495,8 +521,8 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
       else sessionStorage.removeItem(OWNER_KEY);
     }
     setAccessKey(next);
+    setPrivateEpoch(epoch => epoch + 1);
     setSubmit({ kind: "idle" });
-    if (next) refreshPoll(MESSAGES_KEY);
   }
 
   function askAboutNara() {
@@ -525,7 +551,7 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
       ...(request.priority ? { priority: request.priority } : {}),
     });
     refreshPoll(SUMMARY_KEY);
-    refreshPoll(MESSAGES_KEY);
+    refreshPoll(messagesPollKey);
     return receipt;
   }
 
@@ -553,7 +579,7 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
       setSubmit({ kind: "queued", requestId: receipt.request_id,
         revision: receipt.expected_plan_revision, duplicate: receipt.duplicate });
       setText("");
-      refreshPoll(MESSAGES_KEY);
+      refreshPoll(messagesPollKey);
       refreshPoll(SUMMARY_KEY);
     } catch (error) {
       const detail = error instanceof DailyOpsError ? error.detail : String(error);
@@ -568,6 +594,11 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
     }
   }
 
+  if (v3Summary) {
+    return <DailyOpsV3Panel summary={v3Summary} legacyResearchOps={legacyResearchOps}
+      legacyFailing={legacyFailing} />;
+  }
+
   if (!summary || !summary.available) {
     return <div className="mb-4" data-testid="daily-ops-fallback">
       <div className="mb-3 rounded-lg border border-[var(--border-1)] bg-[var(--surface-1)] p-4">
@@ -576,6 +607,9 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
         <p className="mt-2 text-sm text-[var(--fg-muted)]">
           {summaryPoll.error ? "The current brief could not be read. Existing research operations remain visible below." : "Waiting for the first source-bound daily snapshot. Existing research operations remain visible below."}
         </p>
+        <p className="mt-2 text-xs text-[var(--fg-muted)]" data-testid="daily-ops-v3-fallback">{accessKey
+          ? "The richer v3 mailbox view is unavailable; showing the compatible view when available."
+          : "Unlock owner access to view the private v3 mailbox cards; no private v3 data is loaded while locked."}</p>
       </div>
       <ResearchOpsCard data={legacyResearchOps} failing={legacyFailing} />
     </div>;
@@ -600,6 +634,12 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
       <span className="font-semibold">Authored daily notes are from {notesDay} UTC.</span>{" "}
       Their statuses reflect that update. The current sealed agenda, thesis, and agent observations update separately.
     </div>}
+
+    <p role="status" data-testid="daily-ops-v3-fallback" className="mt-4 rounded border border-[var(--border-2)] p-3 text-sm text-[var(--fg-muted)]">
+      {accessKey
+        ? `The richer v3 mailbox view is unavailable; this compatible v${summary.workCards === null ? "1" : "2"} brief remains in use.`
+        : "Unlock owner access below to view private v3 mailbox cards. This compatible brief contains no private v3 data."}
+    </p>
 
     {summary.warnings.length > 0 && <div role="status" className="mt-4 rounded border border-[var(--status-warn)] bg-[var(--status-warn-bg)] p-3 text-sm">
       {summary.warnings.map(warning => <p key={warning}>{warning}</p>)}
@@ -700,7 +740,7 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
       {routerConfigured && !accessKey && <p className="mt-3 rounded border border-[var(--border-2)] p-3 text-sm text-[var(--fg-muted)]" data-testid="daily-ops-locked">
         Owner message history and the composer remain locked until this tab has a valid key.
       </p>}
-      {routerConfigured && accessKey && messages === null && messagesPoll.error == null && <p className="mt-3 text-sm text-[var(--fg-muted)]">Checking owner access and loading the bounded message history…</p>}
+      {routerConfigured && accessKey && messages === null && messagesError == null && <p className="mt-3 text-sm text-[var(--fg-muted)]">Checking owner access and loading the bounded message history…</p>}
 
       {accessKey && recentRows.length > 0 && <ol className="mt-4 space-y-2" aria-label="Recent Oracle requests and replies"><MessageRows rows={recentRows} defaultResponderLabel={responderLabel} /></ol>}
       {accessKey && earlierRows.length > 0 && <details className="mt-3 rounded border border-[var(--border-1)] bg-[var(--surface-1)] p-3">
@@ -708,7 +748,7 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
         <ol className="mt-3 space-y-2" aria-label="Earlier Oracle requests and replies"><MessageRows rows={earlierRows} defaultResponderLabel={responderLabel} /></ol>
       </details>}
       {accessKey && messages?.available === true && recentRows.length === 0 && <p className="mt-3 text-sm text-[var(--fg-muted)]">No owner-to-Oracle requests are recorded yet.</p>}
-      {accessKey && messagesPoll.error != null && !(messagesPoll.error instanceof DailyOpsError && [401, 403].includes(messagesPoll.error.status)) &&
+      {accessKey && messagesError != null && !(messagesError instanceof DailyOpsError && [401, 403].includes(messagesError.status)) &&
         <p role="status" className="mt-3 text-sm text-[var(--status-warn)]">Recent request status could not be refreshed; no delivery state was inferred.</p>}
 
       {!routerConfigured ? <div className="mt-4 rounded border border-[var(--border-2)] p-3 text-sm text-[var(--fg-muted)]" data-testid="daily-ops-readonly">

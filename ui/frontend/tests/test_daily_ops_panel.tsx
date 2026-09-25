@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const D = vi.hoisted(() => ({
   summary: {} as unknown,
+  v3: undefined as unknown,
   messages: {} as unknown,
   messageError: null as unknown,
   post: vi.fn(),
@@ -13,6 +14,7 @@ const D = vi.hoisted(() => ({
 vi.mock("../src/api/dailyOps", async importOriginal => ({
   ...await importOriginal<typeof import("../src/api/dailyOps")>(),
   getDailyOpsSummary: vi.fn(),
+  getDailyOpsV3Summary: vi.fn(),
   getDailyOpsMessages: vi.fn(),
   postDailyOpsMessage: D.post,
   postDailyOpsDecision: D.postDecision,
@@ -20,8 +22,8 @@ vi.mock("../src/api/dailyOps", async importOriginal => ({
 
 vi.mock("../src/api/pollhub", () => ({
   usePolled: (key: string) => ({
-    data: key === "daily_ops_summary" ? D.summary : D.messages,
-    error: key === "daily_ops_summary" ? null : D.messageError,
+    data: key === "daily_ops_summary" ? D.summary : key.startsWith("daily_ops_v3_summary:") ? D.v3 : D.messages,
+    error: key.startsWith("daily_ops_messages:") ? D.messageError : null,
     failing: false,
     asOf: Date.now(),
   }),
@@ -29,6 +31,7 @@ vi.mock("../src/api/pollhub", () => ({
 }));
 
 import DailyOpsPanel, { makeRequestId } from "../src/components/DailyOpsPanel";
+import { admitDailyOpsV3Summary } from "../src/components/DailyOpsV3Panel";
 
 const now = "2026-09-20T08:00:00Z";
 
@@ -122,6 +125,22 @@ function v2Summary(overrides: Record<string, unknown> = {}) {
   });
 }
 
+function v3Summary(overrides: Record<string, unknown> = {}) {
+  return {
+    schema_version: "daily-ops-summary/v3", generated_at: now, current_plan_revision: "2026-09-25",
+    daily_plan: { id: "2026-09-25", date: "2026-09-25", revision: "r1", path: "run_state/daily_plans/2026-09-25.json", sha256: "a".repeat(64), written_at: now, is_current: true, week_alignment: null, bottlenecks: [], review: null },
+    research_focus: { status: "none", observed_at: now },
+    work_items: [{ id: "d1", goal: "G1", owner: "oracle", lane: "oracle_dev", repo: "a_bgt_rsi", title: "Reconcile the card", summary: null, why_today: null, acceptance: null, depends_on: [], status: "held", detail: "Waiting for source-bound review.", evidence_msg_id: null, evidence_sha: null, evidence_at: null }],
+    waiting_on_you: [
+      { kind: "question", id: "owner-1", title: "Two exceptions", question: "Which evidence resolves these exceptions?", context: null, choices: [], recommendation: null, consequence: null, asked_by: "oracle", asked_at: now, msg_id: "oracle-owner-1", cli: "read only", awaiting_asker: false, handoff_msg_id: null },
+      { kind: "question", id: "claude-1", title: "Claude handoff", question: "Awaiting Claude", context: null, choices: [], recommendation: null, consequence: null, asked_by: "claude", asked_at: now, msg_id: "claude-1", cli: "read only", awaiting_asker: true, handoff_msg_id: "codex-handoff-1" },
+    ],
+    question_updates: [], accomplishments: [], improvements: [], warnings: [], sources: { plan: now, mailbox: now, focus: null, git: now },
+    agents: { oracle: { label: "Oracle", role: "steward", status: "idle", detail: "Idle.", observed_at: now, source: "mailbox", activity: null, activity_at: null, since: null }, pi_client: { label: "Pi client", role: "client", status: "offline", detail: "Offline.", observed_at: now, source: "service", activity: null, activity_at: null, since: null }, nara: { label: "Nara", role: "runner", status: "offline", detail: "Offline.", observed_at: now, source: "service", activity: null, activity_at: null, since: null } },
+    ...overrides,
+  };
+}
+
 function show() {
   return render(<MemoryRouter><DailyOpsPanel legacyResearchOps={null} /></MemoryRouter>);
 }
@@ -129,6 +148,7 @@ function show() {
 beforeEach(() => {
   sessionStorage.clear();
   D.summary = summary();
+  D.v3 = undefined;
   D.messages = messages();
   D.messageError = null;
   D.post.mockReset().mockResolvedValue({ request_id: "request-2", status: "queued", accepted_at: now, duplicate: false, expected_plan_revision: "plan-revision-20260920-0800" });
@@ -146,6 +166,79 @@ afterEach(() => {
 });
 
 describe("DailyOpsPanel", () => {
+  it("prefers the read-only v3 mailbox cards and splits exact handoffs from reconciliation", () => {
+    D.v3 = v3Summary();
+    sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
+    show();
+
+    expect(screen.getByTestId("daily-ops-v3-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("daily-v3-reconciliation")).toHaveTextContent("Needs agent reconciliation");
+    expect(screen.getByTestId("daily-v3-awaiting-claude")).toHaveTextContent("Awaiting Claude");
+    expect(screen.queryByRole("button", { name: /ask to|approve|decline|defer|reconcile/i })).toBeNull();
+  });
+
+  it("rejects a handoff reference on a card the producer did not route", () => {
+    expect(admitDailyOpsV3Summary(v3Summary({ waiting_on_you: [{
+      ...v3Summary().waiting_on_you[0], handoff_msg_id: "codex-handoff-1",
+    }] }))).toBeNull();
+  });
+
+  it("rejects an awaiting-asker card without its handoff identity", () => {
+    expect(admitDailyOpsV3Summary(v3Summary({ waiting_on_you: [{
+      ...v3Summary().waiting_on_you[1], handoff_msg_id: null,
+    }] }))).toBeNull();
+  });
+
+  it("admits a historical plan only as read-only context without a current revision", () => {
+    const base = v3Summary();
+    D.v3 = v3Summary({
+      current_plan_revision: null,
+      daily_plan: { ...base.daily_plan, is_current: false },
+    });
+    sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
+    show();
+
+    expect(screen.getByTestId("daily-ops-v3-panel")).toBeInTheDocument();
+    expect(screen.getByText(/historical only/)).toBeInTheDocument();
+    expect(screen.queryByTestId("daily-ops-v3-fallback")).toBeNull();
+  });
+
+  it("rejects inconsistent current versus historical plan revision combinations", () => {
+    const base = v3Summary();
+    expect(admitDailyOpsV3Summary({ ...base, current_plan_revision: null })).toBeNull();
+    expect(admitDailyOpsV3Summary({
+      ...base,
+      daily_plan: { ...base.daily_plan, is_current: false },
+    })).toBeNull();
+  });
+
+  it("fails closed on every widened or incomplete v3 boundary and retains v2", () => {
+    const base = v3Summary();
+    const invalid = [
+      { ...base, unexpected: true },
+      { ...base, sources: {} },
+      { ...base, research_focus: { status: "none" } },
+      { ...base, agents: { ...base.agents, oracle: { ...base.agents.oracle, status: "invented" } } },
+      { ...base, work_items: [{ ...base.work_items[0], unexpected: true }] },
+    ];
+    for (const value of invalid) expect(admitDailyOpsV3Summary(value)).toBeNull();
+
+    D.v3 = invalid[0];
+    D.summary = v2Summary();
+    show();
+    expect(screen.queryByTestId("daily-ops-v3-panel")).toBeNull();
+    expect(screen.getByTestId("daily-ops-v3-fallback")).toBeInTheDocument();
+    expect(screen.getByTestId("daily-decision-cards")).toBeInTheDocument();
+  });
+
+  it("keeps v3 private until the owner key is unlocked", () => {
+    D.v3 = v3Summary();
+    show();
+
+    expect(screen.queryByTestId("daily-ops-v3-panel")).toBeNull();
+    expect(screen.getByTestId("daily-ops-v3-fallback")).toHaveTextContent("Unlock owner access");
+  });
+
   it("replaces verbose goals with three concise source-bound work cards", () => {
     D.summary = v2Summary();
     show();
