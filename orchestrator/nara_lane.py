@@ -389,7 +389,7 @@ def admission(item: dict, *, repo_root: Path | None = None) -> list[str]:
         sha = test_sha256(acceptance["test_content"])
         reasons.append(f"no green precheck receipt for sha256(test_content) {sha} at this exact checkout HEAD: run "
                        "`python -m orchestrator.nara_lane precheck --test-path P --test-file F --stub S`; "
-                       f"the receipt would be {receipt_path(sha)}")
+                       "the receipt is keyed by test content, argv, and the exact checkout base")
     return reasons
 
 
@@ -441,8 +441,11 @@ def _prechecked(item: dict, *, base: tuple[str, str] | None = None) -> bool:
         return False
     if not isinstance(body, dict):
         return False
+    receipt_base = body.get("base_sha")
+    if not isinstance(receipt_base, str):
+        return False
     try:
-        if subprocess.run(["git", "merge-base", "--is-ancestor", body.get("base_sha", ""), base_sha],
+        if subprocess.run(["git", "merge-base", "--is-ancestor", receipt_base, base_sha],
                           cwd=ROOT, timeout=30).returncode != 0:
             return False
     except (OSError, subprocess.SubprocessError):

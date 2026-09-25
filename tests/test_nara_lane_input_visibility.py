@@ -81,11 +81,8 @@ def _item(**body_over) -> dict:
 def test_item_declaring_no_inputs_is_admitted_as_before(repo, monkeypatch, tmp_path) -> None:
     """No regression: today's posting style (readable content inline in the objective)
     still passes admission, so the new rule only bites items that name a file."""
-    monkeypatch.setattr(lane, "ROOT", tmp_path)  # receipts resolve under the redirected ROOT
-    sha = lane.test_sha256(_item()["body"]["acceptance"]["test_content"])
-    receipt = lane.receipt_path(sha)
-    receipt.parent.mkdir(parents=True, exist_ok=True)
-    receipt.write_text(json.dumps({"state": "green", "test_sha256": sha}))
+    monkeypatch.setattr(lane, "ROOT", tmp_path)  # non-repo test root: isolate input behavior from precheck
+    monkeypatch.setattr(lane, "_prechecked", lambda _item, **_kw: True)
     assert lane.admission(_item()) == []
 
 

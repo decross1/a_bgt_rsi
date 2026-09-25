@@ -265,6 +265,17 @@ def test_forged_nonancestor_base_receipt_is_not_prechecked(tmp_path, monkeypatch
     assert lane._prechecked({"body": _plan()}, base=(base, tree)) is False
 
 
+def test_malformed_receipt_base_type_fails_closed(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    base, tree = lane._build_base()
+    sha = lane.test_sha256(REPO_TEST)
+    key = lane._receipt_sha(sha, TEST_PATH, ARGV, base, tree)
+    path = lane.receipt_path(key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"base_sha": ["not-a-commit"]}))
+    assert lane._prechecked({"body": _plan()}, base=(base, tree)) is False
+
+
 def test_precheck_is_not_green_against_a_broken_stub(tmp_path, monkeypatch):
     """(c5) A stub that does not satisfy the test leaves the item not-green: only
     a passing stub run writes a receipt."""
@@ -399,7 +410,7 @@ def test_precheck_runs_in_the_real_sandbox(tmp_path, monkeypatch):
                    cwd=root, check=True)
     report = lane.precheck(TEST_PATH, REPO_TEST, ARGV, stubs=[STUB])
     assert report["red_run"]["passed"] is False and report["green_run"]["passed"] is True
-    written = json.loads(lane.receipt_path(report["test_sha256"], root=root).read_text())
+    written = json.loads(lane.receipt_path(report["receipt_sha256"], root=root).read_text())
     assert written["state"] == "green"
 
 
