@@ -134,6 +134,27 @@ def test_plan_retry_survives_a_later_plan_revision_and_rejects_changed_payload(r
         router.route_decision({**payload, "note": "Actually hold."})
 
 
+def test_reprioritize_persists_priority_and_rejects_changed_priority_retry(repo, config):
+    router = LabMailboxRouter(config, repo_root=repo)
+    payload = {
+        "request_id": "23232323-2323-2323-2323-232323232323",
+        "target_kind": "work_card", "target_id": "d1", "action": "reprioritize",
+        "expected_plan_revision": REVISION, "note": "Move this up.", "priority": "now",
+    }
+
+    assert router.route_decision(payload)["duplicate"] is False
+    mailbox = repo / "run_state" / "oracle_nara_mailbox.jsonl"
+    rows = oracle_mailbox.read(mailbox)
+    assert len(rows) == 1
+    assert rows[0]["body"]["priority"] == "now"
+    assert router.route_decision(payload)["duplicate"] is True
+
+    with pytest.raises(HTTPException, match="idempotency_key") as caught:
+        router.route_decision({**payload, "priority": "later"})
+    assert caught.value.status_code == 409
+    assert len(oracle_mailbox.read(mailbox)) == 1
+
+
 def test_reply_to_a_question_posts_an_answer_in_reply_to_it(repo, config):
     mailbox = repo / "run_state" / "oracle_nara_mailbox.jsonl"
     question = oracle_mailbox.post("oracle", "question", {"title": "What next?"}, to="owner", path=mailbox)
@@ -225,7 +246,8 @@ def test_end_to_end_via_the_http_decision_route(repo, config, monkeypatch):
             "schema_version": "daily-ops-summary/v3", "generated_at": "2026-09-23T00:00:00Z",
             "current_plan_revision": None, "daily_plan": None,
             "research_focus": {"status": "none", "observed_at": "2026-09-23T00:00:00Z"},
-            "work_items": [], "waiting_on_you": [], "accomplishments": [], "improvements": [],
+            "work_items": [], "waiting_on_you": [], "question_updates": [],
+            "accomplishments": [], "improvements": [],
             "agents": {}, "warnings": [], "sources": {"plan": None, "mailbox": None, "focus": None, "git": None},
         },
     )

@@ -201,23 +201,33 @@ def test_oracle_dev_item_follows_ready_notes_reviews_and_merges_on_main(repo):
     assert {a["kind"] for a in value["accomplishments"]} == {"merged"}
 
 
-def test_owner_decision_and_open_questions_are_waiting_on_you_until_answered(repo):
+def test_owner_cards_require_a_real_question_and_direct_human_answer_or_explicit_resolution(repo):
     _plan(repo, "2026-09-23.json", [_item("d5", "owner_decision"), _item("d6", "owner_decision")])
     box = Box(repo)
     box.post("oracle", "note", {"title": "PLAN READY: 2026-09-23", "text": "x"})
-    asked = box.post("claude", "question", {"title": "Three items (d5 never reached you)", "text": "?"},
-                     to="owner")
+    asked = box.post("claude", "question", {
+        "question": "Use the reviewed worktree or main?", "why": "The runner needs one stable base.",
+        "options": ["A — reviewed worktree", "B — current main"], "recommendation": "A",
+        "if_deferred": "The runner remains unpinned for the next test window.",
+        "ref": {"item": "d5"},
+    }, to="owner")
     other = box.post("oracle", "question", {"title": "An unrelated ruling", "text": "?"}, to="owner")
     box.post("oracle", "question", {"title": "Not for the owner", "text": "?"}, to="claude")
 
     value = _summary(repo)
     items = {i["id"]: i for i in value["work_items"]}
-    assert items["d5"]["status"] == items["d6"]["status"] == "waiting_on_you"
+    assert items["d5"]["status"] == "waiting_on_you"
+    assert items["d6"]["status"] == "held"
+    assert "Oracle or Nara must" in items["d6"]["detail"]
     waiting = {w["id"]: w for w in value["waiting_on_you"]}
-    assert set(waiting) == {"2026-09-23:d5", "2026-09-23:d6", other["msg_id"]}
+    assert set(waiting) == {"2026-09-23:d5", other["msg_id"]}
     assert waiting["2026-09-23:d5"]["msg_id"] == asked["msg_id"]
     assert f"--to claude --in-reply-to {asked['msg_id']}" in waiting["2026-09-23:d5"]["cli"]
-    assert "--kind note" in waiting["2026-09-23:d6"]["cli"] and waiting["2026-09-23:d6"]["msg_id"] is None
+    assert waiting["2026-09-23:d5"]["question"] == "Use the reviewed worktree or main?"
+    assert waiting["2026-09-23:d5"]["context"] == "The runner needs one stable base."
+    assert waiting["2026-09-23:d5"]["choices"] == ["A — reviewed worktree", "B — current main"]
+    assert waiting["2026-09-23:d5"]["recommendation"] == "A"
+    assert waiting["2026-09-23:d5"]["consequence"] == "The runner remains unpinned for the next test window."
     assert f"--kind answer --to oracle --in-reply-to {other['msg_id']}" in waiting[other["msg_id"]]["cli"]
     assert waiting[other["msg_id"]]["cli"].startswith(
         ".venv-chroma/bin/python -m orchestrator.oracle_mailbox post --as human:derrick")
@@ -225,18 +235,22 @@ def test_owner_decision_and_open_questions_are_waiting_on_you_until_answered(rep
     box.post("claude", "answer", {"text": "relayed owner preference"}, to="oracle", reply=asked["msg_id"])
     value = _summary(repo)
     assert value["work_items"][0]["status"] == "waiting_on_you"
+    assert value["work_items"][1]["status"] == "held"
 
     box.post("human:derrick", "answer", {"text": "Install on main."}, to="claude", reply=asked["msg_id"])
     box.post("claude", "answer", {"text": "relayed"}, to="oracle", reply=other["msg_id"])
     value = _summary(repo)
     assert value["work_items"][0]["status"] == "answered"
     # A model relay supplies context; it cannot impersonate the owner's answer.
-    assert [w["id"] for w in value["waiting_on_you"]] == ["2026-09-23:d6", other["msg_id"]]
-    box.post("oracle", "question_resolution", {
+    assert [w["id"] for w in value["waiting_on_you"]] == [other["msg_id"]]
+    other_resolution = box.post("oracle", "question_resolution", {
         "disposition": "superseded", "summary": "The later plan replaced this ruling.",
         "reason": "No owner action remains.",
     }, to="owner", reply=other["msg_id"])
-    assert [w["id"] for w in _summary(repo)["waiting_on_you"]] == ["2026-09-23:d6"]
+    value = _summary(repo)
+    assert value["waiting_on_you"] == []
+    assert value["question_updates"][0]["id"] == other_resolution["msg_id"]
+    assert value["question_updates"][0]["disposition"] == "superseded"
 
     d6_question = box.post("oracle", "question", {"title": "Item d6", "ref": {"item": "d6"}}, to="owner")
     resolution = box.post("oracle", "question_resolution", {
@@ -247,6 +261,9 @@ def test_owner_decision_and_open_questions_are_waiting_on_you_until_answered(rep
     assert value["work_items"][1]["status"] == "resolved"
     assert value["work_items"][1]["evidence_msg_id"] == resolution["msg_id"]
     assert value["waiting_on_you"] == []
+    assert {row["id"] for row in value["question_updates"]} == {
+        other_resolution["msg_id"], resolution["msg_id"],
+    }
 
 
 def test_owner_question_card_keeps_structured_title_and_legacy_free_text_actionable():

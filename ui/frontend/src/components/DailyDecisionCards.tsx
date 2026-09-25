@@ -50,8 +50,24 @@ export type DailyWaitingItem = {
   msgId: string | null;
 };
 
+export type DailyQuestionUpdate = {
+  id: string;
+  questionId: string;
+  title: string;
+  question: string;
+  disposition: "withdrawn" | "superseded" | "prerequisite" | "informational";
+  summary: string;
+  reason: string;
+  blockingArtifact: string | null;
+  resolvedBy: string;
+  resolvedAt: string;
+  evidenceMsgIds: string[];
+};
+
 export type DailyDecisionRequest = {
   requestId: string;
+  /** Bound when the request id is first made; retries must preserve it. */
+  expectedPlanRevision: string;
   targetKind: DailyOpsDecisionTarget;
   targetId: string;
   action: DailyOpsDecisionAction;
@@ -114,7 +130,7 @@ const statusLabel: Record<WorkStatus, string> = {
 function badgeStyle(value: string): React.CSSProperties {
   if (["merged", "validated", "accepted", "answered", "resolved"].includes(value))
     return { color: "var(--status-ok)", background: "var(--status-ok-bg)" };
-  if (["held", "failed", "rejected", "amend_requested", "waiting_on_you", "expired"].includes(value))
+  if (["held", "failed", "rejected", "amend_requested", "waiting_on_you", "expired", "prerequisite"].includes(value))
     return { color: "var(--status-warn)", background: "var(--status-warn-bg)" };
   if (["building", "awaiting_review"].includes(value))
     return { color: "var(--status-info)", background: "var(--status-info-bg)" };
@@ -241,9 +257,31 @@ function WaitingOnYou({ items, requestAvailable, openEditor }: {
   </section>;
 }
 
-export function DailyDecisionCards({ cards, waiting, requestAvailable, readonlyReason, canRequest, blockedReason, onRequireAccess, onRequest }: {
+function QuestionUpdates({ updates }: { updates: DailyQuestionUpdate[] }) {
+  if (updates.length === 0) return null;
+  return <section aria-labelledby="daily-question-updates-heading" data-testid="daily-question-updates"
+    className="mt-4 rounded border border-[var(--border-1)] bg-[var(--surface-1)] p-3">
+    <h3 id="daily-question-updates-heading" className="text-base font-semibold">Updated / prerequisites</h3>
+    <ul className="mt-2 space-y-3">{updates.map(update => <li key={update.id}
+      data-testid={`daily-question-update-${update.id}`} className="text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium">{update.title}</span>
+        <Badge value={update.disposition}>{phrase(update.disposition)}</Badge>
+      </div>
+      <p className="mt-1">{update.summary}</p>
+      <p className="mt-1 text-xs text-[var(--fg-muted)]">Why: {update.reason}</p>
+      {update.blockingArtifact && <p className="mt-1 text-xs text-[var(--fg-muted)]">Blocking artifact: {update.blockingArtifact}</p>}
+      <p className="mt-1 text-xs text-[var(--fg-muted)]">Updated by {ownerWord(update.resolvedBy)} · {timeLabel(update.resolvedAt)} · source {update.id}
+        {update.evidenceMsgIds.length > 0 ? ` · evidence ${update.evidenceMsgIds.join(", ")}` : ""}</p>
+    </li>)}</ul>
+  </section>;
+}
+
+export function DailyDecisionCards({ cards, waiting, updates, planRevision, requestAvailable, readonlyReason, canRequest, blockedReason, onRequireAccess, onRequest }: {
   cards: DailyWorkCard[];
   waiting: DailyWaitingItem[];
+  updates: DailyQuestionUpdate[];
+  planRevision: string | null;
   requestAvailable: boolean;
   readonlyReason: string;
   canRequest: boolean;
@@ -255,7 +293,11 @@ export function DailyDecisionCards({ cards, waiting, requestAvailable, readonlyR
   const [note, setNote] = useState("");
   const [priority, setPriority] = useState<DailyOpsDecisionPriority>("next");
   const [submit, setSubmit] = useState<SubmitState>({ kind: "idle" });
-  const [retry, setRetry] = useState<{ fingerprint: string; requestId: string } | null>(null);
+  const [retry, setRetry] = useState<{
+    fingerprint: string;
+    requestId: string;
+    expectedPlanRevision: string;
+  } | null>(null);
   const editorRef = useRef<HTMLElement>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const editorGeneration = useRef(0);
@@ -291,7 +333,7 @@ export function DailyDecisionCards({ cards, waiting, requestAvailable, readonlyR
   async function send(event: React.FormEvent) {
     event.preventDefault();
     const generation = editorGeneration.current;
-    if (!editor || !canRequest || ["submitting", "queued"].includes(submit.kind) ||
+    if (!editor || !planRevision || !canRequest || ["submitting", "queued"].includes(submit.kind) ||
         inFlightGeneration.current === generation ||
         (["modify", "reply"].includes(editor.action) && !note.trim())) return;
     const normalizedNote = note.trim();
@@ -299,12 +341,15 @@ export function DailyDecisionCards({ cards, waiting, requestAvailable, readonlyR
       editor.kind, editor.id, editor.action, normalizedNote,
       editor.action === "reprioritize" ? priority : null,
     ]);
-    const ident = retry?.fingerprint === fingerprint ? retry.requestId : requestId();
+    const prior = retry?.fingerprint === fingerprint ? retry : null;
+    const ident = prior?.requestId ?? requestId();
+    const expectedPlanRevision = prior?.expectedPlanRevision ?? planRevision;
     inFlightGeneration.current = generation;
     setSubmit({ kind: "submitting" });
     try {
       const receipt = await onRequest({
         requestId: ident,
+        expectedPlanRevision,
         targetKind: editor.kind,
         targetId: editor.id,
         action: editor.action,
@@ -318,7 +363,7 @@ export function DailyDecisionCards({ cards, waiting, requestAvailable, readonlyR
       if (editorGeneration.current !== generation) return;
       const detail = error instanceof DailyOpsError ? error.detail : String(error);
       const uncertain = !(error instanceof DailyOpsError) || error.status >= 500;
-      setRetry(uncertain ? { fingerprint, requestId: ident } : null);
+      setRetry(uncertain ? { fingerprint, requestId: ident, expectedPlanRevision } : null);
       setSubmit({ kind: "failed", message: uncertain
         ? `Delivery unconfirmed; retry safely with the same request ID. ${detail}`
         : error instanceof DailyOpsError && error.status === 409
@@ -347,6 +392,7 @@ export function DailyDecisionCards({ cards, waiting, requestAvailable, readonlyR
     </p>}
 
     <WaitingOnYou items={waiting} requestAvailable={requestAvailable} openEditor={openEditor} />
+    <QuestionUpdates updates={updates} />
 
     {editor && <section ref={editorRef} tabIndex={-1} data-testid="daily-decision-editor"
       aria-labelledby="daily-decision-editor-heading"

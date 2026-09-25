@@ -13,6 +13,7 @@ import {
 import { refreshPoll, usePolled } from "../api/pollhub";
 import DailyDecisionCards, {
   type DailyDecisionRequest,
+  type DailyQuestionUpdate,
   type DailyWaitingItem,
   type DailyWorkCard,
   type WorkStatus,
@@ -120,6 +121,7 @@ type Summary = {
   focus: Focus;
   workCards: DailyWorkCard[];
   waiting: DailyWaitingItem[];
+  updates: DailyQuestionUpdate[];
   accomplishments: WorkItem[];
   improvements: WorkItem[];
   agents: { oracle: AgentState; piClient: AgentState; nara: AgentState; metaOracle: AgentState | null } | null;
@@ -226,6 +228,25 @@ function waiting(value: unknown): DailyWaitingItem[] {
   });
 }
 
+function questionUpdates(value: unknown): DailyQuestionUpdate[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 10).flatMap((item): DailyQuestionUpdate[] => {
+    if (!record(item) || !bounded(item.id, 80) || !bounded(item.question_id, 80) || !bounded(item.title, 300) ||
+        !bounded(item.question, 300) ||
+        !["withdrawn", "superseded", "prerequisite", "informational"].includes(String(item.disposition)) ||
+        !bounded(item.summary, 1200) || !bounded(item.reason, 1200) || !bounded(item.resolved_by, 60) ||
+        !timestamp(item.resolved_at)) return [];
+    const blockingArtifact = nullableText(item.blocking_artifact, 240);
+    const evidenceMsgIds = strings(item.evidence_msg_ids, 8, 80);
+    if (blockingArtifact === undefined || evidenceMsgIds === null) return [];
+    return [{ id: item.id, questionId: item.question_id, title: item.title, question: item.question,
+      disposition: item.disposition as DailyQuestionUpdate["disposition"], summary: item.summary,
+      reason: item.reason, blockingArtifact, resolvedBy: item.resolved_by, resolvedAt: item.resolved_at,
+      evidenceMsgIds }];
+  });
+}
+
 const ACCOMPLISHMENT_LABEL: Record<string, string> = {
   merged: "merged", validated: "validated", focus_closed: "focus closed", day_closed: "day closed",
 };
@@ -301,6 +322,7 @@ export function admitDailyOpsSummary(value: unknown): Summary | null {
     focus: researchFocus,
     workCards: cards,
     waiting: waiting(value.waiting_on_you),
+    updates: questionUpdates(value.question_updates),
     accomplishments: accomplishments(value.accomplishments),
     improvements: improvements(value.improvements),
     agents: agents && agents.oracle && agents.piClient && agents.nara
@@ -580,15 +602,13 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
   }
 
   async function requestDecision(request: DailyDecisionRequest) {
-    if (!summary?.currentPlanRevision)
-      throw new DailyOpsError(409, "no current plan revision is available");
     const receipt = await postDailyOpsDecision({
       accessKey,
       requestId: request.requestId,
       targetKind: request.targetKind,
       targetId: request.targetId,
       action: request.action,
-      expectedPlanRevision: summary.currentPlanRevision,
+      expectedPlanRevision: request.expectedPlanRevision,
       ...(request.note ? { note: request.note } : {}),
       ...(request.priority ? { priority: request.priority } : {}),
     });
@@ -691,7 +711,8 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
 
     <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
       <div className="rounded border border-[var(--border-1)] p-4">
-        <DailyDecisionCards cards={summary.workCards} waiting={summary.waiting}
+        <DailyDecisionCards cards={summary.workCards} waiting={summary.waiting} updates={summary.updates}
+          planRevision={summary.currentPlanRevision}
           requestAvailable={decisionRouteAvailable} readonlyReason={readonlyReason}
           canRequest={decisionCanRequest} blockedReason={decisionBlockedReason}
           onRequireAccess={requireOwnerAccess} onRequest={requestDecision} />

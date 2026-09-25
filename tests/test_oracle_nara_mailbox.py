@@ -1,5 +1,6 @@
 """Oracle <-> Nara mailbox and Nara's implementor lane (D-082); no model calls."""
 import json
+import multiprocessing
 import subprocess
 import sys
 from pathlib import Path
@@ -8,6 +9,40 @@ import pytest
 
 from orchestrator import nara_lane as lane
 from orchestrator import oracle_mailbox as mailbox
+
+
+def _post_once_process(path_text, question_id, request_id, decision, gate, results):
+    """Independent writer process used to exercise the real fcntl boundary."""
+    try:
+        if not gate.wait(10):
+            results.put(("error", "Timeout", "start gate did not open"))
+            return
+        row, duplicate = mailbox.post_once(
+            "human:derrick", "answer",
+            {"text": decision, "decision": decision, "request_id": request_id},
+            to="oracle", in_reply_to=question_id, idempotency_key=request_id,
+            require_open_question=True, path=Path(path_text),
+        )
+        results.put(("ok", duplicate, row["msg_id"]))
+    except Exception as exc:  # result is asserted in the parent process
+        results.put(("error", type(exc).__name__, str(exc)))
+
+
+def _race_post_once(path, question_id, requests):
+    context = multiprocessing.get_context("spawn")
+    gate, results = context.Event(), context.Queue()
+    processes = [context.Process(
+        target=_post_once_process,
+        args=(str(path), question_id, request_id, decision, gate, results),
+    ) for request_id, decision in requests]
+    for process in processes:
+        process.start()
+    gate.set()
+    for process in processes:
+        process.join(15)
+        assert not process.is_alive(), "concurrent mailbox writer did not finish"
+        assert process.exitcode == 0
+    return [results.get(timeout=5) for _ in processes]
 
 
 def _plan(**over):
@@ -120,6 +155,45 @@ def test_post_once_is_idempotent_and_an_owner_question_closes_only_for_human_ans
             "human:derrick", "answer", {"text": "again", "request_id": "req-2"}, to="oracle",
             in_reply_to=question["msg_id"], idempotency_key="req-2",
             require_open_question=True, path=path)
+
+
+def test_post_once_requires_body_request_id_to_match_idempotency_key(tmp_path):
+    path = tmp_path / "mb.jsonl"
+    question = mailbox.post("oracle", "question", {"question": "Proceed?"}, to="owner", path=path)
+    with pytest.raises(mailbox.MailboxError, match="body.request_id"):
+        mailbox.post_once(
+            "human:derrick", "answer", {"text": "approve", "request_id": "different"},
+            to="oracle", in_reply_to=question["msg_id"], idempotency_key="expected",
+            require_open_question=True, path=path)
+    assert mailbox.read(path) == [question]
+
+
+def test_cross_process_same_request_appends_once_and_returns_one_duplicate(tmp_path):
+    path = tmp_path / "mb.jsonl"
+    question = mailbox.post("oracle", "question", {"question": "Proceed?"}, to="owner", path=path)
+    outcomes = _race_post_once(path, question["msg_id"], [
+        ("same-request", "approve"), ("same-request", "approve"),
+    ])
+
+    assert sorted((result[0], result[1]) for result in outcomes) == [("ok", False), ("ok", True)]
+    assert len({result[2] for result in outcomes}) == 1
+    rows = mailbox.read(path)  # also verifies the complete hash chain
+    assert len(rows) == 2 and rows[-1]["body"]["request_id"] == "same-request"
+
+
+def test_cross_process_distinct_answers_allow_one_winner_and_keep_chain_valid(tmp_path):
+    path = tmp_path / "mb.jsonl"
+    question = mailbox.post("oracle", "question", {"question": "Proceed?"}, to="owner", path=path)
+    outcomes = _race_post_once(path, question["msg_id"], [
+        ("request-approve", "approve"), ("request-decline", "decline"),
+    ])
+
+    assert len([result for result in outcomes if result[:2] == ("ok", False)]) == 1
+    errors = [result for result in outcomes if result[0] == "error"]
+    assert len(errors) == 1 and errors[0][1] == "MailboxError" and "no longer open" in errors[0][2]
+    rows = mailbox.read(path)  # the losing process must not leave a partial row
+    assert len(rows) == 2
+    assert rows[-1]["body"]["request_id"] in {"request-approve", "request-decline"}
 
 
 def test_post_once_does_not_close_on_a_forged_question_resolution(tmp_path, monkeypatch):

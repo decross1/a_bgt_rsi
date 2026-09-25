@@ -233,6 +233,8 @@ def post_once(actor: str, kind: str, body: dict, *, to: str, in_reply_to: str | 
     _validate_post(actor, kind, body, to, in_reply_to)
     if not isinstance(idempotency_key, str) or not idempotency_key:
         raise MailboxError("idempotency_key must be a non-empty string")
+    if body.get("request_id") != idempotency_key:
+        raise MailboxError("body.request_id must equal idempotency_key")
     path.parent.mkdir(parents=True, exist_ok=True)
     with (path.parent / ".oracle_nara_mailbox.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)

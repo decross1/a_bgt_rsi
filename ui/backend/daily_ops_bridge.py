@@ -959,6 +959,8 @@ class LabMailboxRouter:
                 "text": note, "via": "owner-ui", "authority": "owner, D-084",
                 "request_id": payload["request_id"], "target_kind": target_kind,
             }
+            if action == "reprioritize":
+                body["priority"] = payload["priority"]
             exact = (row.get("actor") == self.owner_actor and row.get("kind") == "note"
                      and row.get("body") == body)
         if not exact:
@@ -1030,6 +1032,8 @@ class LabMailboxRouter:
                 "text": note, "via": "owner-ui", "authority": "owner, D-084",
                 "request_id": payload["request_id"], "target_kind": target_kind,
             }
+            if action == "reprioritize":
+                body["priority"] = payload["priority"]
             try:
                 row, duplicate = oracle_mailbox.post_once(
                     self.owner_actor, "note", body, to=to,
