@@ -18,19 +18,32 @@ It adds no new sources, no retrieval, no model calls, and no gate boolean.
 
 ## Pinned objects and how to replay every hash below
 
+Every command below pins a full immutable commit SHA — no `main`, no branch
+name — and fails closed: `set -euo pipefail` aborts on any git or pipeline
+failure rather than hashing empty input (seq 745 defect: a failed `git show`
+piped into `sha256sum` yields `e3b0c442…`, not the claimed digest).
+
+```bash
+set -euo pipefail
+R=/home/decross1/projects/a_bgt_rsi
+MAIN=1ea9eef56b2c3af48f840e6922df4c151a5b340b   # pinned base, not the mutable branch
+MATRIX=b17eba55d87634c0ad81202a0640b333ffb2df6b # accepted matrix head (already pinned)
+
+# Line count first (a fail-closed proxy for "the object exists"), then hash.
+git -C "$R" cat-file -p "$MAIN^{}:notes/research/2026-09-25-c1-bounded-source-screen/SOURCE_SCREEN.md" | wc -l
+git -C "$R" cat-file -p "$MAIN^{}:notes/research/2026-09-25-c1-bounded-source-screen/SOURCE_SCREEN.md" | sha256sum
+  # expect 5b1c301fabe163834e5a40171ac08970efbfd5579aa1492d21dc5c0bdc454aee
+git -C "$R" cat-file -p "$MAIN^{}:notes/research/2026-09-24-t-gate-choice/T_GATE_CHOICE.md" | wc -l
+git -C "$R" cat-file -p "$MAIN^{}:notes/research/2026-09-24-t-gate-choice/T_GATE_CHOICE.md" | sha256sum
+  # expect 1766b07ac41d6d4141817ebdf84e9be9254562a6a86450e456ec296d85a30708
+git -C "$R" cat-file -p "$MATRIX:notes/research/2026-09-25-c1-neighbor-prior-art/C1_EXACT_CLAIM_MATRIX.md" | wc -l
+git -C "$R" cat-file -p "$MATRIX:notes/research/2026-09-25-c1-neighbor-prior-art/C1_EXACT_CLAIM_MATRIX.md" | sha256sum
+  # expect 0e5c86e6277b613b689b2ac83352771d4c3868288ff0e83444630c279b6db3f0
 ```
-git -C /home/decross1/projects/a_bgt_rsi rev-parse main
-  # 1ea9eef56b2c3af48f840e6922df4c151a5b340b
-git -C /home/decross1/projects/a_bgt_rsi cat-file -p \
-  b17eba55d87634c0ad81202a0640b333ffb2df6b:notes/research/2026-09-25-c1-neighbor-prior-art/C1_EXACT_CLAIM_MATRIX.md | sha256sum
-  # 0e5c86e6277b613b689b2ac83352771d4c3868288ff0e83444630c279b6db3f0  (accepted matrix bytes)
-git -C /home/decross1/projects/a_bgt_rsi show \
-  main:notes/research/2026-09-25-c1-bounded-source-screen/SOURCE_SCREEN.md | sha256sum
-  # 5b1c301fabe163834e5a40171ac08970efbfd5579aa1492d21dc5c0bdc454aee
-git -C /home/decross1/projects/a_bgt_rsi show \
-  main:notes/research/2026-09-24-t-gate-choice/T_GATE_CHOICE.md | sha256sum
-  # 1766b07ac41d6d4141817ebdf84e9be9254562a6a86450e456ec296d85a30708
-```
+
+`$MAIN^{}` is the commit itself; the `^{}` suffix keeps git from resolving a
+tag or tree ambiguously. None of these follow the mutable `main` branch, so a
+later advance of `main` cannot change what a reviewer replays.
 
 Mutable host observations are labeled as-of and are not replayable from Git:
 mailbox seq 729/735/736/742/745 were read from the lab mailbox at
@@ -93,8 +106,12 @@ conditions. My disposition per condition:
 4. **A named C1 A dataset with as-of and revision fields, or an explicit
    decision to keep A blocked — still UNMET either way.** The screen's machine
    state is `c1_a_data: absent`, and nothing since then names a dataset
-   (no committed C1 A-data artifact exists at main@1ea9eef or on any local
-   branch). The two exits are named: bind a dataset, or record the explicit
+   bound to the two pinned files in scope: neither
+   `SOURCE_SCREEN.md` nor `T_GATE_CHOICE.md` at $MAIN names or links a C1 A
+   dataset, and the screen's machine state is `c1_a_data: absent`. I make no
+   claim about other branches or paths — a repo-wide branch inventory was not
+   taken this phase, so absence "on any local branch" would be unprovable
+   (seq 756 amendment 3). The two exits are named: bind a dataset, or record the explicit
    decision to keep A blocked. **Inferred:** conditions 1 and 4 are the real
    gates now; 2 is a route decision and 3 is closed by this file.
 
@@ -124,7 +141,8 @@ conditions. My disposition per condition:
 
 ```json
 {
-  "artifact": "c1-source-disposition/v1",
+  "artifact": "c1-source-disposition/v2",
+  "reviewed_amend": "codex-0692a76068bd7374",
   "date": "2026-09-25",
   "author": "oracle",
   "matrix_branch": "codex/c1-neighbor-prior-art-20260925-29f4",

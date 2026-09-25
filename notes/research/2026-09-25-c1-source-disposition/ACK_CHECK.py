@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
-"""Self-check for the C1 source disposition (bounded, stdlib only, no network).
+"""Source-only self-check for the C1 source disposition (bounded, stdlib, offline).
 
 Run from the repo root of a clean checkout of this branch:
 
     python3 notes/research/2026-09-25-c1-source-disposition/ACK_CHECK.py
 
-It is the acceptance check for plan item d1 (goal G1.1). It asserts only
-claims the disposition file itself makes, so a stub cannot pass by asserting
-less: the six disposition rows carry exactly one verdict each, the counts
-match the machine summary, the two Garcia rows are abstract-only-Unknown and
-never retained-negative, and the recorded matrix hash equals the pinned
-matrix bytes present in this same checkout.
+This is NOT a plan-item acceptance check: seq 745 REJECTed the r9 plan that
+contained b3, so no plan item is admitted (seq 756 amendment 2). It asserts
+only claims the disposition file itself makes, and it is written so that a
+stub cannot pass by shuffling or duplicating rows:
+
+  * the six disposition rows carry exactly one verdict each;
+  * the source IDs form an exact, unique, once-only set matched against the
+    pinned matrix — duplicating a retained-negative row while omitting another
+    fails, because the set must be equal, not merely the same size;
+  * each ID is checked against the verdict the matrix supports, not just a
+    total;
+  * the four machine reopening statuses are asserted by key and value;
+  * hashes recorded in the file equal the bytes present in this checkout.
 
 Exit 0 and print ACK-CHECK PASS on success; raise (non-zero exit) otherwise.
 """
@@ -75,6 +82,49 @@ check(len(au_rows) == 2, f"two abstract-only-Unknown rows (got {len(au_rows)})")
 check(all("Garcia" in ln for ln in au_rows), "both Unknown rows are Garcia rows")
 check(not any(("Garcia" in ln) and (RN in ln) for ln in rows), "no Garcia row is retained-negative")
 
+# 2b. Exact six-source identity: IDs must match the pinned matrix as a set,
+#     each appearing exactly once, and each carrying the verdict that source
+#     supports. A row duplicated while another is omitted fails here even
+#     though the row count and verdict totals would still pass (seq 756 AM2).
+SOURCE_IDS = {
+    "2607.05545": RN,   # Hu & Qu
+    "2608.07920": RN,   # Shu
+    "2505.13488": RN,   # Germani & Spitale
+    "2608.25869": RN,   # Kapetanovic et al.
+    "7411618": AU,      # Garcia, which number is sticky
+    "6366838": AU,      # Garcia, algorithmic anchoring
+}
+def source_ids(line):
+    """Return bare source ids (arXiv id without version, or SSRN id).
+
+    `arXiv:2607.05545v1` -> `2607.05545`; the version suffix and any trailing
+    text are excluded so one row yields exactly one token.
+    """
+    out = set()
+    for m in re.finditer(r"(?:arXiv:|SSRN )([0-9]+\.[0-9]+|[0-9]+)", line):
+        out.add(m.group(1))
+    return out
+
+
+row_ids = [source_ids(ln) for ln in rows]
+dup_rows = [i for i, s in enumerate(row_ids) if len(s) != 1]
+check(not dup_rows, f"each row names exactly one source id (violations: {dup_rows})")
+flat = [next(iter(s)) for s in row_ids if len(s) == 1]
+check(len(flat) == len(set(flat)) == 6, f"six unique source ids, once each (got {flat})")
+check(set(flat) == set(SOURCE_IDS), "row ids equal the pinned matrix source-id set")
+for rid, expected in SOURCE_IDS.items():
+    owning = [ln for ln, s in zip(rows, row_ids) if s == {rid}]
+    check(len(owning) == 1, f"{rid} appears in exactly one disposition row")
+    if len(owning) == 1:
+        got = RN if RN in owning[0] else AU if AU in owning[0] else None
+        check(got == expected, f"{rid} verdict is {expected} (got {got})")
+
+# 2c. Row-to-matrix alignment: each disposition source id must also occur in
+#     the pinned accepted matrix bytes, so rows cannot be invented.
+matrix_text = MATRIX.read_text() if MATRIX.is_file() else ""
+for rid in SOURCE_IDS:
+    check(rid in matrix_text, f"{rid} is present in the pinned matrix bytes")
+
 # 3. Counts agree with the machine summary, and the summary claims no authority.
 check(
     data.get("retained_negative", -1) + data.get("abstract_only_unknown", -1) == data.get("rows", -2) == 6,
@@ -105,10 +155,21 @@ check(
     "T_GATE_CHOICE bytes are the committed seq407 design",
 )
 
-# 5. The disposition addresses all four reopening conditions by name.
-for needle in ("still UNMET", "DELIVERED", "absent_no_named_dataset"):
-    check(needle in text, f"disposition mentions {needle}")
-check(text.count("UNMET") >= 3, "at least three reopening conditions recorded unmet")
+# 5. All four reopening conditions are asserted by key AND value, and the
+#    disposition names them in prose (seq 756 AM2: text/UNMET counts alone
+#    would let a row be missing or inverted).
+EXPECTED_REOPENING = {
+    "garcia_full_text": "unmet",
+    "git_reachable_corpus_binding": "unmet_route_decision_open",
+    "exact_claim_matrix": "delivered_and_dispositioned",
+    "c1_a_data": "absent_no_named_dataset",
+}
+reopening = data.get("reopening_conditions", {})
+check(set(reopening) == set(EXPECTED_REOPENING), "four reopening keys, no more/no fewer")
+for key, value in EXPECTED_REOPENING.items():
+    check(reopening.get(key) == value, f"reopening.{key} == {value} (got {reopening.get(key)})")
+check(text.count("still UNMET") >= 2, "at least two reopening conditions recorded still-unmet")
+check("DELIVERED" in text, "condition 3 recorded delivered")
 
 # 6. It does not rely on the withdrawn probe as evidence.
 check("cannot ever surface" in text, "probe wording is quoted as withdrawn")
