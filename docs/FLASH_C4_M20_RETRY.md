@@ -228,11 +228,12 @@ do not prove a representative mixed-load test.
 
 ## Historical rollback evidence and future fault boundary
 
-For the historical C1-to-C4 procedure only, a clean mismatch or failed keep
-gate stopped v12, required clean cleanup, archived the stopped v12 state, moved
-its `artifact_dir` to `prior_artifact_dir`, and reverted only `V12_PIN_COMMIT`.
-That restored the reviewed v8/C1 source and deployment, not the rejected
-strict-v11 C4 pin. The historical rollback checks bound v8 helper SHA
+For the historical C1-to-C4 procedure only, the runbook prescribed that a
+clean mismatch or failed keep gate would stop v12, require clean cleanup,
+archive the stopped v12 state, move its `artifact_dir` to `prior_artifact_dir`,
+and revert only `V12_PIN_COMMIT`. That prescribed contingency would restore the
+reviewed v8/C1 source and deployment, not the rejected strict-v11 C4 pin. The
+prescribed rollback verification bound v8 helper SHA
 `606d05f201b84b01441e6e23b98ed0c66c6a92faa81300b9d796bf54a2a4466c` and C1
 profile SHA `f0fbb6c09ff926dd17d8bb9787e1f52632e5fba9135431a3d01222be785a81bf`.
 Never reset or rewrite the historical v10/M24 or v11/M20 evidence.
