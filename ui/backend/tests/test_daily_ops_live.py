@@ -298,6 +298,18 @@ def test_owner_question_card_keeps_structured_title_and_legacy_free_text_actiona
         "title": lane_context[:299].rstrip() + "…", "question": lane_context[:299].rstrip() + "…",
         "context": lane_context, "choices": [], "recommendation": None, "consequence": None,
     }
+    text_only_long = {"msg_id": "oracle-text", "body": {"text": lane_context}}
+    assert live._question_card(text_only_long) == {
+        "title": lane_context[:299].rstrip() + "…", "question": lane_context[:299].rstrip() + "…",
+        "context": lane_context, "choices": [], "recommendation": None, "consequence": None,
+    }
+    distinct_question = {"msg_id": "oracle-distinct", "body": {
+        "title": "Lane base", "question": "Reconcile or pin?", "context": "Why it matters.",
+    }}
+    assert live._question_card(distinct_question) == {
+        "title": "Lane base", "question": "Reconcile or pin?", "context": "Why it matters.",
+        "choices": [], "recommendation": None, "consequence": None,
+    }
     malformed_title = {"msg_id": "oracle-malformed", "body": {"title": {"not": "text"}, "question": "Valid question"}}
     assert live._question_card(malformed_title)["title"] == "Valid question"
 

@@ -159,13 +159,15 @@ def _question_card(row: dict) -> dict:
     full_question = _clip(body.get("question"), 1200)
     short_question = _clip(body.get("question"), 300)
     context = _first_clip(body.get("context"), body.get("decision_context"), body.get("why"), maximum=1200)
+    if context is not None and title_from_body is not None and short_question is not None and short_question != title:
+        question = short_question
     if context is None and full_question is not None and (
             (title_from_body is not None and short_question != title)
             or (title_from_body is None and full_question != short_question)):
         context = full_question
     if context is None:
         text = _clip(body.get("text"), 1200)
-        if text is not None and _clip(body.get("text"), 300) != title:
+        if text is not None and text != title:
             context = text
     choices = body.get("options")
     if not isinstance(choices, list):

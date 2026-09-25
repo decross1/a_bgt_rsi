@@ -221,6 +221,8 @@ describe("DailyOpsPanel", () => {
     show();
     const card = screen.getByTestId("daily-waiting-claude-18ae939243e70e7d");
     expect(card).toHaveTextContent("Should the lane change be split into three reviewed branches?");
+    expect(within(card).getByTestId("daily-waiting-claude-18ae939243e70e7d-question"))
+      .toHaveTextContent("Should the lane change be split into three reviewed branches?");
     expect(card).toHaveTextContent("The unsplit branch also loses five newer protections.");
     expect(card).toHaveTextContent("A — split it (recommended)");
     expect(card).toHaveTextContent("Recommendation: A — split it");
