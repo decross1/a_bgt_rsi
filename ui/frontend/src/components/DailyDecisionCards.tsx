@@ -6,13 +6,13 @@ import {
   type DailyOpsDecisionReceipt,
   type DailyOpsDecisionTarget,
 } from "../api/dailyOps";
-import { cardHeadline, deriveSummary, ownerWord, statusSentence } from "./dailyOpsCopy";
+import { cardHeadline, ownerWord, statusSentence } from "./dailyOpsCopy";
 
 /** Live status of one plan item, derived from the lab mailbox and git (daily_ops_live.py). */
 export type WorkStatus =
   | "not_started" | "awaiting_review" | "held" | "building" | "validated" | "failed"
   | "withdrawn" | "expired" | "amend_requested" | "accepted" | "rejected" | "merged"
-  | "waiting_on_you" | "answered";
+  | "waiting_on_you" | "answered" | "resolved";
 
 export type DailyWorkCard = {
   id: string;
@@ -39,13 +39,36 @@ export type DailyWaitingItem = {
   /** For a plan item, the plan item's own id (without the "<plan>:" prefix). */
   itemId: string;
   title: string;
+  /** Exact prompt, separate from a short card label. */
+  question: string;
+  context: string | null;
+  choices: string[];
+  recommendation: string | null;
+  consequence: string | null;
   askedBy: string;
   askedAt: string | null;
   msgId: string | null;
 };
 
+/** A non-action owner-question disposition, derived from an append-only mailbox row. */
+export type DailyQuestionUpdate = {
+  id: string;
+  questionId: string;
+  title: string;
+  question: string;
+  disposition: "withdrawn" | "superseded" | "prerequisite" | "informational";
+  summary: string;
+  reason: string;
+  blockingArtifact: string | null;
+  resolvedBy: string;
+  resolvedAt: string;
+  evidenceMsgIds: string[];
+};
+
 export type DailyDecisionRequest = {
   requestId: string;
+  /** Bound when the request id is first made; retries must preserve it. */
+  expectedPlanRevision: string;
   targetKind: DailyOpsDecisionTarget;
   targetId: string;
   action: DailyOpsDecisionAction;
@@ -102,13 +125,13 @@ const statusLabel: Record<WorkStatus, string> = {
   not_started: "not started", awaiting_review: "awaiting review", held: "held", building: "building",
   validated: "validated", failed: "failed", withdrawn: "withdrawn", expired: "expired",
   amend_requested: "amend requested", accepted: "accepted", rejected: "rejected", merged: "merged",
-  waiting_on_you: "waiting on you", answered: "answered",
+  waiting_on_you: "waiting on you", answered: "answered", resolved: "resolved",
 };
 
 function badgeStyle(value: string): React.CSSProperties {
-  if (["merged", "validated", "accepted", "answered"].includes(value))
+  if (["merged", "validated", "accepted", "answered", "resolved"].includes(value))
     return { color: "var(--status-ok)", background: "var(--status-ok-bg)" };
-  if (["held", "failed", "rejected", "amend_requested", "waiting_on_you", "expired"].includes(value))
+  if (["held", "failed", "rejected", "amend_requested", "waiting_on_you", "expired", "prerequisite"].includes(value))
     return { color: "var(--status-warn)", background: "var(--status-warn-bg)" };
   if (["building", "awaiting_review"].includes(value))
     return { color: "var(--status-info)", background: "var(--status-info-bg)" };
@@ -186,10 +209,14 @@ function WaitingOnYou({ items, requestAvailable, openEditor }: {
     {items.length === 0 ? <p className="mt-1 text-sm text-[var(--fg-muted)]">
       No open owner question in the lab mailbox and no owner decision in today&apos;s plan.</p> :
       <ul className="mt-2 space-y-3">{items.map(item => {
-        const headline = deriveSummary(item.title);
-        const targetKind: DailyOpsDecisionTarget = item.kind === "question" ? "question" : "work_card";
-        const targetId = item.kind === "question" ? (item.msgId ?? item.id) : item.itemId;
-        const canAct = item.kind !== "question" || item.msgId != null;
+        const headline = item.title;
+        // A plan-linked card is still a reply to its concrete mailbox question.
+        // Routing it as a work card creates an unrelated note and cannot close
+        // the question that made the card actionable.
+        const targetKind: DailyOpsDecisionTarget = "question";
+        const targetId = item.msgId ?? item.id;
+        const canAct = item.msgId != null;
+        const actions = item.choices.length > 0 ? ["reply" as const] : WAITING_ACTIONS;
         return <li key={item.id} data-testid={`daily-waiting-${item.id}`}>
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <span className="font-medium">{headline}</span>
@@ -197,19 +224,29 @@ function WaitingOnYou({ items, requestAvailable, openEditor }: {
           </div>
           <p className="mt-1 text-xs text-[var(--fg-muted)]">Asked by {ownerWord(item.askedBy)}
             {item.askedAt ? ` · ${timeLabel(item.askedAt)}` : ""}</p>
+          <p className="mt-2 text-sm" data-testid={`daily-waiting-${item.id}-question`}>{item.question}</p>
+          {item.context && <p className="mt-2 text-sm text-[var(--fg-muted)]">{item.context}</p>}
+          {item.choices.length > 0 && <div className="mt-2 text-sm">
+            <p className="font-medium">Choices</p>
+            <ul className="mt-1 list-disc space-y-1 pl-5 text-[var(--fg-muted)]">
+              {item.choices.map((choice, index) => <li key={`${item.id}-${index}`}>{choice}</li>)}
+            </ul>
+          </div>}
+          {item.recommendation && <p className="mt-2 text-sm"><span className="font-medium">Recommendation: </span>{item.recommendation}</p>}
+          {item.consequence && <p className="mt-2 text-sm text-[var(--fg-muted)]"><span className="font-medium">If deferred: </span>{item.consequence}</p>}
           <details className="mt-1 text-xs text-[var(--fg-muted)]">
             <summary className="cursor-pointer text-[var(--accent)]">Details</summary>
             <dl className="mt-2 grid gap-1">
-              <div><dt className="inline font-semibold">Full text: </dt><dd className="inline">{item.title}</dd></div>
+              <div><dt className="inline font-semibold">Card label: </dt><dd className="inline">{item.title}</dd></div>
               {item.msgId && <div><dt className="inline font-semibold">Message: </dt><dd className="inline">{item.msgId}</dd></div>}
             </dl>
           </details>
           {canAct ? <div className="mt-2 flex flex-wrap gap-2" aria-label={`Actions for ${headline}`}>
-            {WAITING_ACTIONS.map(action => <button key={action} type="button" disabled={!requestAvailable}
+            {actions.map(action => <button key={action} type="button" disabled={!requestAvailable}
               aria-describedby={!requestAvailable ? "daily-decisions-readonly" : undefined}
               onClick={event => openEditor({ kind: targetKind, id: targetId, title: headline, action }, event.currentTarget)}
               className="rounded border border-[var(--border-2)] px-3 py-1.5 text-sm text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50">
-              {actionLabel[action]}
+              {action === "reply" && item.choices.length > 0 ? "Choose / reply" : actionLabel[action]}
             </button>)}
           </div> : <p className="mt-2 text-xs text-[var(--fg-muted)]">No open mailbox question exists yet for this plan item; use the plan item&apos;s buttons above once one is asked, or send Oracle a note.</p>}
         </li>;
@@ -217,9 +254,31 @@ function WaitingOnYou({ items, requestAvailable, openEditor }: {
   </section>;
 }
 
-export function DailyDecisionCards({ cards, waiting, requestAvailable, readonlyReason, canRequest, blockedReason, onRequireAccess, onRequest }: {
+function QuestionUpdates({ updates }: { updates: DailyQuestionUpdate[] }) {
+  if (updates.length === 0) return null;
+  return <section aria-labelledby="daily-question-updates-heading" data-testid="daily-question-updates"
+    className="mt-4 rounded border border-[var(--border-1)] bg-[var(--surface-1)] p-3">
+    <h3 id="daily-question-updates-heading" className="text-base font-semibold">Updated / prerequisites</h3>
+    <ul className="mt-2 space-y-3">{updates.map(update => <li key={update.id}
+      data-testid={`daily-question-update-${update.id}`} className="text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium">{update.title}</span>
+        <Badge value={update.disposition}>{phrase(update.disposition)}</Badge>
+      </div>
+      <p className="mt-1">{update.summary}</p>
+      <p className="mt-1 text-xs text-[var(--fg-muted)]">Why: {update.reason}</p>
+      {update.blockingArtifact && <p className="mt-1 text-xs text-[var(--fg-muted)]">Blocking artifact: {update.blockingArtifact}</p>}
+      <p className="mt-1 text-xs text-[var(--fg-muted)]">Updated by {ownerWord(update.resolvedBy)} · {timeLabel(update.resolvedAt)} · source {update.id}
+        {update.evidenceMsgIds.length > 0 ? ` · evidence ${update.evidenceMsgIds.join(", ")}` : ""}</p>
+    </li>)}</ul>
+  </section>;
+}
+
+export function DailyDecisionCards({ cards, waiting, updates, planRevision, requestAvailable, readonlyReason, canRequest, blockedReason, onRequireAccess, onRequest }: {
   cards: DailyWorkCard[];
   waiting: DailyWaitingItem[];
+  updates: DailyQuestionUpdate[];
+  planRevision: string | null;
   requestAvailable: boolean;
   readonlyReason: string;
   canRequest: boolean;
@@ -231,7 +290,11 @@ export function DailyDecisionCards({ cards, waiting, requestAvailable, readonlyR
   const [note, setNote] = useState("");
   const [priority, setPriority] = useState<DailyOpsDecisionPriority>("next");
   const [submit, setSubmit] = useState<SubmitState>({ kind: "idle" });
-  const [retry, setRetry] = useState<{ fingerprint: string; requestId: string } | null>(null);
+  const [retry, setRetry] = useState<{
+    fingerprint: string;
+    requestId: string;
+    expectedPlanRevision: string;
+  } | null>(null);
   const editorRef = useRef<HTMLElement>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const editorGeneration = useRef(0);
@@ -267,7 +330,7 @@ export function DailyDecisionCards({ cards, waiting, requestAvailable, readonlyR
   async function send(event: React.FormEvent) {
     event.preventDefault();
     const generation = editorGeneration.current;
-    if (!editor || !canRequest || ["submitting", "queued"].includes(submit.kind) ||
+    if (!editor || !planRevision || !canRequest || ["submitting", "queued"].includes(submit.kind) ||
         inFlightGeneration.current === generation ||
         (["modify", "reply"].includes(editor.action) && !note.trim())) return;
     const normalizedNote = note.trim();
@@ -275,12 +338,18 @@ export function DailyDecisionCards({ cards, waiting, requestAvailable, readonlyR
       editor.kind, editor.id, editor.action, normalizedNote,
       editor.action === "reprioritize" ? priority : null,
     ]);
-    const ident = retry?.fingerprint === fingerprint ? retry.requestId : requestId();
+    const prior = retry?.fingerprint === fingerprint ? retry : null;
+    // Keep the revision paired with its request id. A summary poll may observe
+    // a newer plan after a lost response, but this click is still a retry of
+    // the original durable request, not a new decision on the newer plan.
+    const ident = prior?.requestId ?? requestId();
+    const expectedPlanRevision = prior?.expectedPlanRevision ?? planRevision;
     inFlightGeneration.current = generation;
     setSubmit({ kind: "submitting" });
     try {
       const receipt = await onRequest({
         requestId: ident,
+        expectedPlanRevision,
         targetKind: editor.kind,
         targetId: editor.id,
         action: editor.action,
@@ -294,7 +363,7 @@ export function DailyDecisionCards({ cards, waiting, requestAvailable, readonlyR
       if (editorGeneration.current !== generation) return;
       const detail = error instanceof DailyOpsError ? error.detail : String(error);
       const uncertain = !(error instanceof DailyOpsError) || error.status >= 500;
-      setRetry(uncertain ? { fingerprint, requestId: ident } : null);
+      setRetry(uncertain ? { fingerprint, requestId: ident, expectedPlanRevision } : null);
       setSubmit({ kind: "failed", message: uncertain
         ? `Delivery unconfirmed; retry safely with the same request ID. ${detail}`
         : error instanceof DailyOpsError && error.status === 409
@@ -322,7 +391,8 @@ export function DailyDecisionCards({ cards, waiting, requestAvailable, readonlyR
       {readonlyReason}
     </p>}
 
-    <WaitingOnYou items={waiting} requestAvailable={requestAvailable} openEditor={openEditor} />
+      <WaitingOnYou items={waiting} requestAvailable={requestAvailable} openEditor={openEditor} />
+      <QuestionUpdates updates={updates} />
 
     {editor && <section ref={editorRef} tabIndex={-1} data-testid="daily-decision-editor"
       aria-labelledby="daily-decision-editor-heading"

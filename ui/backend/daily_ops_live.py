@@ -14,18 +14,22 @@ Nothing here writes, and a quiet producer shows its age rather than old content.
 Match rules (each is tested):
 
 * ``nara_dev`` item -> the newest ``plan_item`` Oracle posted inside the plan's
-  mailbox window whose title equals the item title, or names this item's id as a
-  whole word and no other id of the same plan.  The window runs from the first
-  ``PLAN READY: <date>`` note to the first ``PLAN READY`` note of a later date;
-  without a note it starts at the plan file's first revision time.
-* ``oracle_dev`` item -> ``READY FOR REVIEW`` notes whose ``ref.branch`` (or, with
-  no ref, the title) names ``oracle/<date>-<id>`` (optionally ``-rN``).  The
-  newest of those notes and their ``review`` replies decides the verdict;
-  "merged" when a local branch head of that name is an ancestor of ``main`` or a
-  first-parent ``main`` commit is titled ``Merge oracle/<date>-<id>...``.
-* ``owner_decision`` item -> "waiting on you" unless a ``question`` to the owner
-  inside the window names the item id (``ref.item`` or a whole-word title
-  match) and that question has an ``answer``.
+  revision window whose title equals the item title, or names this item's id as
+  a whole word and no other id of the same plan.  A current plan's window is
+  anchored to the exact ``PLAN READY`` receipt whose ``ref.path`` and
+  ``ref.sha256`` identify that immutable plan.  Older receipts without those
+  references retain a fallback only when one receipt maps to one plan revision.
+* ``oracle_dev`` item -> Oracle's newest in-window ``READY FOR REVIEW`` note
+  naming ``oracle/<date>-<id>`` (optionally ``-rN``).  Only an authorized review
+  replying to that exact note decides the verdict.  Current Git ancestry,
+  branch refs, commit timestamps and model-authored ``main_before`` fields do
+  not prove when a merge happened, so this view never upgrades an Oracle item
+  to "merged" without a separately trusted append-only integration receipt.
+* ``owner_decision`` item -> actionable only when a real ``question`` to the
+  owner inside the window names the item id (``ref.item`` or a whole-word title
+  match).  Only a direct ``human:*`` answer closes it; an explicit
+  ``question_resolution`` can instead withdraw, supersede or mark a
+  prerequisite without impersonating the owner.
 """
 from __future__ import annotations
 
@@ -57,7 +61,7 @@ CLI = ".venv-chroma/bin/python -m orchestrator.oracle_mailbox post --as human:de
 WORK_STATUSES = {
     "not_started", "awaiting_review", "held", "building", "validated", "failed",
     "withdrawn", "expired", "amend_requested", "accepted", "rejected", "merged",
-    "waiting_on_you", "answered",
+    "waiting_on_you", "answered", "resolved",
 }
 FOLD_STATUS = {"open": "awaiting_review", "held": "held", "claimed": "building",
                "validated": "validated", "failed": "failed", "withdrawn": "withdrawn",
@@ -105,7 +109,87 @@ def _ref(row: dict) -> dict:
 
 
 def _title(row: dict) -> str:
-    return str(_body(row).get("title") or "")
+    body = _body(row)
+    # Questions written by the live loop increasingly use ``question`` rather
+    # than a redundant title.  Keep a real decision visible instead of falling
+    # back to its opaque mailbox id.
+    return str(body.get("title") or body.get("question") or "")
+
+
+QUESTION_RESOLUTIONS = {"withdrawn", "superseded", "prerequisite", "informational"}
+
+
+def _human_answer(question: dict, rows: list[dict]) -> dict | None:
+    """An owner question is answered only by a directly replying human row.
+
+    A relay, reviewer or original asker can add context, but cannot make an
+    owner-facing card look decided.  The mailbox's actor label remains honest
+    attribution rather than authentication.
+    """
+    answers = [row for row in rows if row.get("kind") == "answer"
+               and row.get("in_reply_to") == question.get("msg_id")
+               and isinstance(row.get("actor"), str) and row["actor"].startswith("human:")]
+    return answers[-1] if answers else None
+
+
+def _question_resolution(question: dict, rows: list[dict]) -> dict | None:
+    """Return the latest valid non-owner resolution, never an implied answer."""
+    oracle_mailbox, _ = _orchestrator()
+    for row in reversed(rows):
+        if row.get("kind") != "question_resolution" or row.get("in_reply_to") != question.get("msg_id"):
+            continue
+        if oracle_mailbox.is_valid_question_resolution(question, row, rows):
+            return row
+    return None
+
+
+def _question_card(row: dict) -> dict:
+    """Bounded, typed display fields for a genuine owner question."""
+    body = _body(row)
+    question = _clip(body.get("question") or body.get("title") or body.get("text"), 300) or row["msg_id"]
+    context = _clip(body.get("context") or body.get("decision_context") or body.get("why") or body.get("text"), 1200)
+    choices = body.get("options")
+    if not isinstance(choices, list):
+        choices = []
+    return {
+        "title": question,
+        "question": question,
+        "context": context,
+        "choices": [_clip(choice, 300) for choice in choices[:8] if _clip(choice, 300)],
+        "recommendation": _clip(body.get("recommendation"), 600),
+        "consequence": _clip(body.get("consequence") or body.get("impact") or body.get("if_deferred"), 600),
+    }
+
+
+def question_updates(rows: list[dict]) -> list[dict]:
+    """Recent non-action resolutions of owner questions, newest first.
+
+    These are deliberately separate from ``waiting_on_you``.  A prerequisite
+    explains why work cannot proceed, and a withdrawal explains why the owner
+    need not reply; neither should retain Approve/Decline controls.
+    """
+    found = []
+    for question in rows:
+        if question.get("kind") != "question" or question.get("to") != "owner":
+            continue
+        resolution = _question_resolution(question, rows)
+        if resolution is None:
+            continue
+        body = _body(resolution)
+        card = _question_card(question)
+        found.append({
+            "id": resolution["msg_id"], "question_id": question["msg_id"],
+            "title": card["title"], "question": card["question"],
+            "disposition": body["disposition"], "summary": _clip(body.get("summary"), 1200),
+            "reason": _clip(body.get("reason"), 1200),
+            "blocking_artifact": _clip(body.get("blocking_artifact"), 240),
+            "resolved_by": _clip(str(resolution.get("actor")), 60) or "?",
+            "resolved_at": _stamp(resolution.get("ts")),
+            "evidence_msg_ids": [value for value in body.get("evidence_msg_ids", [])
+                                 if isinstance(value, str)][:8],
+        })
+    found.sort(key=lambda row: row["resolved_at"] or "", reverse=True)
+    return found[:10]
 
 
 def _word(value: str, text: str) -> bool:
@@ -162,7 +246,7 @@ def _project_focus(repo: Path) -> dict:
 
 
 class _Git:
-    """Read-only git facts about ``main``, cached per (main head, oracle branch heads)."""
+    """Read-only git facts pinned to one ``main`` head; branch heads are read each refresh."""
 
     def __init__(self, repo: Path):
         self.repo = repo
@@ -176,15 +260,16 @@ class _Git:
         with _git_lock:
             cached = _git_cache.get(key)
             if cached is None:
-                log = self._run("log", "--first-parent", "main", "--since=8.days", "-n", "400",
-                                "--format=%H%x1f%cI%x1f%s") if self.available else None
-                cached = {"log": [line.split("\x1f", 2) for line in (log or "").splitlines()
-                                  if line.count("\x1f") == 2],
-                          "ancestor": {}}
+                log = self._run("log", "--first-parent", self.main, "--since=8.days", "-n", "400",
+                                "--format=%H%x1f%P%x1f%cI%x1f%s") if self.available else None
+                history = [line.split("\x1f", 3) for line in (log or "").splitlines()
+                           if line.count("\x1f") == 3]
+                cached = {"history": history,
+                          "log": [[sha, when, subject] for sha, _, when, subject in history]}
                 _git_cache.clear()  # one repo, one main head: keep the cache bounded
                 _git_cache[key] = cached
+        self.history = cached["history"]
         self.log = cached["log"]
-        self._ancestor = cached["ancestor"]
 
     def _run(self, *args: str) -> str | None:
         try:
@@ -193,21 +278,6 @@ class _Git:
         except (OSError, subprocess.SubprocessError):
             return None
         return result.stdout.strip() if result.returncode == 0 else None
-
-    def is_ancestor(self, sha: str) -> bool:
-        if not self.available:
-            return False
-        with _git_lock:
-            if sha not in self._ancestor:
-                try:
-                    code = subprocess.run(["git", "-C", str(self.repo), "merge-base", "--is-ancestor",
-                                           sha, self.main], capture_output=True, timeout=5,
-                                          check=False).returncode
-                except (OSError, subprocess.SubprocessError):
-                    code = 1
-                self._ancestor[sha] = code == 0
-            return self._ancestor[sha]
-
 
 # -- derivations ---------------------------------------------------------------
 
@@ -224,7 +294,8 @@ def plan_windows(rows: list[dict]) -> dict[str, tuple[int, float]]:
     """date -> [first PLAN READY seq for that date, first PLAN READY seq of a later date)."""
     firsts: dict[str, int] = {}
     for row in rows:
-        match = PLAN_READY.match(_title(row)) if row.get("kind") == "note" else None
+        match = (PLAN_READY.match(_title(row))
+                 if row.get("kind") == "note" and row.get("actor") == "oracle" else None)
         if match:
             firsts.setdefault(match.group(1), row["seq"])
     ordered = sorted(firsts.items(), key=lambda pair: pair[0])
@@ -236,6 +307,7 @@ def plan_windows(rows: list[dict]) -> dict[str, tuple[int, float]]:
 
 
 def _window(rows: list[dict], windows: dict, date: str, first_written: datetime | None):
+    """Legacy date-scoped fallback for plans published before hash references."""
     if date in windows:
         return windows[date]
     start = next((row["seq"] for row in rows if first_written and _when(row.get("ts"))
@@ -243,20 +315,132 @@ def _window(rows: list[dict], windows: dict, date: str, first_written: datetime 
     return (start, float("inf"))
 
 
+def _plan_catalog(repo: Path, plans: dict[str, list[tuple[int, str]]]) \
+        -> dict[str, tuple[str, str | None]]:
+    """Known plan paths, dates and content hashes; unreadable files stay ambiguous."""
+    found = {}
+    for date, revisions in plans.items():
+        for _, name in revisions:
+            try:
+                _, sha256, _ = _load_plan(repo, name)
+            except (OSError, ValueError):
+                sha256 = None
+            found[f"run_state/daily_plans/{name}"] = (date, sha256)
+    return found
+
+
+def _plan_ready_date(row: dict) -> str | None:
+    if row.get("actor") != "oracle" or row.get("kind") != "note":
+        return None
+    match = PLAN_READY.match(_title(row))
+    return match.group(1) if match else None
+
+
+def _exact_plan_anchor(row: dict, path: str, date: str, sha256: str | None) -> bool:
+    """A PLAN READY authority boundary names one immutable on-disk plan."""
+    ref = _ref(row)
+    return (_plan_ready_date(row) == date and sha256 is not None
+            and ref.get("path") == path and ref.get("sha256") == sha256)
+
+
+def _legacy_plan_anchors(rows: list[dict], catalog: dict[str, tuple[str, str | None]]) -> dict[str, str]:
+    """msg_id -> sole plan path for an unambiguous pre-reference receipt.
+
+    A structured receipt with a missing or wrong field is evidence of a failed
+    publication, not permission to fall back to date matching.
+    """
+    paths_by_date: dict[str, list[str]] = {}
+    for path, (date, _) in catalog.items():
+        paths_by_date.setdefault(date, []).append(path)
+    receipts_by_date: dict[str, list[dict]] = {}
+    for row in rows:
+        title_date = _plan_ready_date(row)
+        if title_date is None:
+            continue
+        dates = {title_date}
+        path = _ref(row).get("path")
+        if isinstance(path, str) and path in catalog:
+            dates.add(catalog[path][0])
+        for receipt_date in dates:
+            receipts_by_date.setdefault(receipt_date, []).append(row)
+    found = {}
+    for date, paths in paths_by_date.items():
+        receipts = receipts_by_date.get(date, [])
+        legacy = [row for row in receipts
+                  if "path" not in _ref(row) and "sha256" not in _ref(row)]
+        if len(paths) == 1 and len(receipts) == 1 and len(legacy) == 1:
+            found[legacy[0]["msg_id"]] = paths[0]
+    return found
+
+
+def _verified_plan_anchor(row: dict, catalog: dict[str, tuple[str, str | None]],
+                          legacy: dict[str, str]) -> str | None:
+    path = _ref(row).get("path")
+    if isinstance(path, str) and path in catalog:
+        date, sha256 = catalog[path]
+        if _exact_plan_anchor(row, path, date, sha256):
+            return path
+    return legacy.get(row.get("msg_id"))
+
+
+def _revision_window(rows: list[dict], windows: dict, date: str, name: str | None,
+                     sha256: str | None, first_written: datetime | None,
+                     catalog: dict[str, tuple[str, str | None]] | None = None) \
+        -> tuple[int, float, bool]:
+    """Return the evidence interval for one immutable plan revision.
+
+    The exact plan-ready receipt is the authority boundary.  Reusing ``d1`` on
+    a later revision cannot pull in an earlier item, ready note, review, branch
+    or owner question.  The date window remains only for historical plans whose
+    publication did not carry a path-and-hash reference.
+    """
+    if name is None or sha256 is None:
+        start, end = _window(rows, windows, date, first_written)
+        return start, end, False
+
+    path = f"run_state/daily_plans/{name}"
+    catalog_known = catalog is not None
+    catalog = catalog or {path: (date, sha256)}
+    # Keep the caller's exact content identity authoritative even if a partial
+    # catalog was supplied.
+    catalog = {**catalog, path: (date, sha256)}
+    exact = [row for row in rows if _exact_plan_anchor(row, path, date, sha256)]
+    legacy = _legacy_plan_anchors(rows, catalog) if catalog_known else {}
+    anchors = [(row, _verified_plan_anchor(row, catalog, legacy)) for row in rows]
+    anchors = [(row, anchored_path) for row, anchored_path in anchors if anchored_path]
+    if exact:
+        anchor = min(exact, key=lambda row: row["seq"])
+    else:
+        fallback = [row for row, anchored_path in anchors if anchored_path == path
+                    and row.get("msg_id") in legacy]
+        if not fallback:
+            # A missing or malformed publication receipt is not a date-wide
+            # grant to consume old plan items, reviews, questions or branches.
+            return float("inf"), float("inf"), True
+        anchor = min(fallback, key=lambda row: row["seq"])
+    end = min((row["seq"] for row, anchored_path in anchors
+               if row["seq"] > anchor["seq"] and anchored_path != path), default=float("inf"))
+    return anchor["seq"], end, True
+
+
 def plan_review(rows: list[dict], name: str, sha256: str) -> dict | None:
     path = f"run_state/daily_plans/{name}"
-    notes = [row for row in rows if row.get("kind") == "note" and PLAN_READY.match(_title(row))
-             and _ref(row).get("path") == path]
+    notes = [row for row in rows if _exact_plan_anchor(row, path, name[:10], sha256)]
     if not notes:
         return None
-    note = notes[-1]
-    reviews = [row for row in rows if row.get("kind") == "review" and row.get("in_reply_to") == note["msg_id"]]
-    review = reviews[-1] if reviews else None
+    # Reposting the same receipt cannot discard evidence already attached to
+    # the first immutable publication boundary.
+    note = min(notes, key=lambda row: row["seq"])
+    oracle_mailbox, _ = _orchestrator()
+    reviews = [row for row in rows if row.get("kind") == "review"
+               and row.get("actor") in oracle_mailbox.REVIEWERS
+               and row.get("in_reply_to") == note["msg_id"] and row["seq"] > note["seq"]]
+    review = max(reviews, key=lambda row: row["seq"], default=None)
     body = _body(review) if review else {}
     accepted = body.get("accepted_items") if isinstance(body.get("accepted_items"), list) else []
     return {
         "note_msg_id": note["msg_id"],
-        "sha_matches": _ref(note).get("sha256") == sha256,
+        "sha_matches": True,
         "verdict": body.get("verdict") if body.get("verdict") in VERDICT_STATUS else None,
         "review_msg_id": review["msg_id"] if review else None,
         "reviewed_at": _stamp(review.get("ts")) if review else None,
@@ -287,27 +471,27 @@ def _nara_item(item, ids, rows, window, folded):
     return status, detail + ".", last["msg_id"], (sha or "")[:12] or None, _stamp(last.get("ts"))
 
 
-def _oracle_item(item, date, rows, git):
+def _oracle_item(item, date, rows, git, window, revision_scoped):
     branch = re.compile(rf"oracle/{re.escape(date)}-{re.escape(item['id'])}(?:-r\d+)?(?![\w-])")
-    ready = [row for row in rows if row.get("kind") == "note" and _title(row).startswith("READY FOR REVIEW")
+    ready = [row for row in rows if row.get("actor") == "oracle" and row.get("kind") == "note"
+             and _title(row).startswith("READY FOR REVIEW")
+             and window[0] <= row["seq"] < window[1]
              and (branch.fullmatch(str(_ref(row).get("branch"))) if _ref(row).get("branch")
                   else branch.search(_title(row)))]
-    ready_ids = {row["msg_id"] for row in ready}
-    reviews = [row for row in rows if row.get("kind") == "review" and row.get("in_reply_to") in ready_ids]
-    if item.get("repo", "a_bgt_rsi") == "a_bgt_rsi":
-        for sha, when, subject in git.log:
-            if re.match(r"Merge (?:branch ')?" + branch.pattern, subject):
-                return "merged", _clip(subject, 200), None, sha[:12], _stamp(when)
-        for name, sha in sorted(git.heads.items()):
-            if branch.fullmatch(name) and git.is_ancestor(sha):
-                return "merged", f"Branch {name} is on main.", None, sha[:12], None
     if not ready:
+        if revision_scoped:
+            return "not_started", "No revision-scoped READY FOR REVIEW note yet.", None, None, None
         heads = [name for name in git.heads if branch.fullmatch(name)]
         if heads:
             return "building", f"Branch {heads[-1]} exists; no READY FOR REVIEW note yet.", None, None, None
         return "not_started", "No branch or READY FOR REVIEW note yet.", None, None, None
-    note, review = ready[-1], (reviews[-1] if reviews else None)
-    if review is None or review["seq"] < note["seq"]:
+    note = max(ready, key=lambda row: row["seq"])
+    oracle_mailbox, _ = _orchestrator()
+    reviews = [row for row in rows if row.get("kind") == "review"
+               and row.get("actor") in oracle_mailbox.REVIEWERS
+               and row.get("in_reply_to") == note["msg_id"] and row["seq"] > note["seq"]]
+    review = max(reviews, key=lambda row: row["seq"], default=None)
+    if review is None:
         return "awaiting_review", _clip(_title(note), 200), note["msg_id"], None, _stamp(note.get("ts"))
     verdict = _body(review).get("verdict")
     return (VERDICT_STATUS.get(verdict, "awaiting_review"),
@@ -324,32 +508,51 @@ def _owner_question(item, ids, rows, window):
 
 
 def work_items(plan: dict, rows: list[dict], windows: dict, git: _Git, now: datetime,
-               first_written: datetime | None) -> tuple[list[dict], dict]:
+               first_written: datetime | None, name: str | None = None,
+               sha256: str | None = None,
+               catalog: dict[str, tuple[str, str | None]] | None = None) -> tuple[list[dict], dict]:
     """One row per plan item, and the owner questions those items already claim."""
     oracle_mailbox, _ = _orchestrator()
     folded = oracle_mailbox.fold(rows, now)
-    answered = {row.get("in_reply_to") for row in rows if row.get("kind") == "answer"}
     date = plan["date"]
     ids = [item["id"] for item in plan["items"]]
-    window = _window(rows, windows, date, first_written)
+    start, end, revision_scoped = _revision_window(
+        rows, windows, date, name, sha256, first_written, catalog)
+    window = (start, end)
     result, claimed = [], {}
     for item in plan["items"][:MAX_WORK_ITEMS]:
         lane = item.get("lane")
         if lane == "nara_dev":
             status, detail, msg, sha, at = _nara_item(item, ids, rows, window, folded)
         elif lane == "oracle_dev":
-            status, detail, msg, sha, at = _oracle_item(item, date, rows, git)
+            status, detail, msg, sha, at = _oracle_item(item, date, rows, git, window, revision_scoped)
         elif lane == "owner_decision":
             question = _owner_question(item, ids, rows, window)
             if question is not None:
                 claimed[question["msg_id"]] = item["id"]
-            done = question is not None and question["msg_id"] in answered
-            status = "answered" if done else "waiting_on_you"
-            detail = (f"Owner question {question['msg_id']} from {question.get('actor')} "
-                      f"{'answered' if done else 'is open'}."
-                      if question else "No owner question posted for this item; reply with a note.")
-            msg, sha = (question["msg_id"] if question else None), None
-            at = _stamp(question.get("ts")) if question else None
+            answer = _human_answer(question, rows) if question is not None else None
+            resolution = _question_resolution(question, rows) if question is not None else None
+            if answer is not None:
+                status = "answered"
+                detail = f"Owner question {question['msg_id']} has a direct human answer {answer['msg_id']}."
+                msg, at = answer["msg_id"], _stamp(answer.get("ts"))
+            elif resolution is not None:
+                body = _body(resolution)
+                disposition = body["disposition"]
+                status = "held" if disposition == "prerequisite" else "resolved"
+                detail = (f"Question {disposition}: {_clip(body.get('summary'), 240)} "
+                          f"({resolution['msg_id']} from {resolution.get('actor')}).")
+                msg, at = resolution["msg_id"], _stamp(resolution.get("ts"))
+            elif question is not None:
+                status = "waiting_on_you"
+                detail = f"Owner question {question['msg_id']} from {question.get('actor')} is open."
+                msg, at = question["msg_id"], _stamp(question.get("ts"))
+            else:
+                # A plan field alone is not an owner question.  Making it a
+                # card used to create synthetic decisions with no answer path.
+                status = "not_started"
+                detail, msg, at = "No matching owner question has been posted.", None, None
+            sha = None
         else:
             status, detail, msg, sha, at = "not_started", f"No live producer for lane {lane}.", None, None, None
         result.append({
@@ -380,7 +583,6 @@ def _reply_to(row: dict | None) -> str:
 
 def waiting_on_you(plan_id: str | None, items: list[dict], claimed: dict, rows: list[dict],
                    plan_written: str | None) -> list[dict]:
-    answered = {row.get("in_reply_to") for row in rows if row.get("kind") == "answer"}
     by_id = {row["msg_id"]: row for row in rows}
     waiting = []
     for item in items:
@@ -388,20 +590,22 @@ def waiting_on_you(plan_id: str | None, items: list[dict], claimed: dict, rows: 
             continue
         msg = item["evidence_msg_id"]
         question = by_id.get(msg) if msg else None
-        cli = (f"{CLI} --kind answer --to {_reply_to(question)} --in-reply-to {msg} "
-               f"--body '{{\"text\": \"...\"}}'" if msg
-               else f"{CLI} --kind note --to oracle --body '{{\"text\": \"{plan_id} {item['id']}: ...\"}}'")
-        waiting.append({"kind": "owner_decision", "id": f"{plan_id}:{item['id']}", "title": item["title"],
-                        "asked_by": _reply_to(question) if question else "oracle",
-                        "asked_at": item["evidence_at"] or plan_written, "msg_id": msg, "cli": cli})
+        if question is None:  # defensive: a corrupt derived work item is not actionable
+            continue
+        card = _question_card(question)
+        waiting.append({"kind": "owner_decision", "id": f"{plan_id}:{item['id']}", **card,
+                        "asked_by": _reply_to(question), "asked_at": item["evidence_at"] or plan_written,
+                        "msg_id": msg,
+                        "cli": f"{CLI} --kind answer --to {_reply_to(question)} --in-reply-to {msg} "
+                               f"--body '{{\"text\": \"...\"}}'"})
     for row in rows:
-        if (row.get("kind") != "question" or row.get("to") != "owner" or row["msg_id"] in answered
-                or row["msg_id"] in claimed):
+        if (row.get("kind") != "question" or row.get("to") != "owner" or row["msg_id"] in claimed
+                or _human_answer(row, rows) is not None or _question_resolution(row, rows) is not None):
             continue
         to = _reply_to(row)
+        card = _question_card(row)
         waiting.append({
-            "kind": "question", "id": row["msg_id"],
-            "title": _clip(_title(row) or _body(row).get("text"), 300) or row["msg_id"],
+            "kind": "question", "id": row["msg_id"], **card,
             "asked_by": _clip(str(row.get("actor")), 60) or "?", "asked_at": _stamp(row.get("ts")),
             "msg_id": row["msg_id"],
             "cli": f"{CLI} --kind answer --to {to} --in-reply-to {row['msg_id']} --body '{{\"text\": \"...\"}}'",
@@ -452,7 +656,7 @@ def _closures(repo: Path) -> list[dict]:
 
 
 def accomplishments(repo: Path, rows: list[dict], windows: dict, git: _Git, now: datetime,
-                    plans: dict) -> list[dict]:
+                    plans: dict, catalog: dict[str, tuple[str, str | None]]) -> list[dict]:
     since = now - timedelta(days=WINDOW_DAYS)
     found = []
     oldest = (now.astimezone(LAB_TZ) - timedelta(days=WINDOW_DAYS)).date().isoformat()
@@ -460,18 +664,27 @@ def accomplishments(repo: Path, rows: list[dict], windows: dict, git: _Git, now:
         if date < oldest:
             continue
         try:
-            plan, _, written = _load_plan(repo, revisions[-1][1])
             first = datetime.fromtimestamp(
                 os.stat(repo / "run_state" / "daily_plans" / revisions[0][1]).st_mtime, timezone.utc)
-        except (OSError, ValueError):
+        except OSError:
             continue
-        items, _ = work_items(plan, rows, windows, git, now, first)
-        for item in items:
-            if item["status"] in {"merged", "validated"}:
-                evidence = item["evidence_sha"] or item["evidence_msg_id"] or revisions[-1][1]
-                found.append({"id": f"{date}:{item['id']}", "kind": item["status"],
-                              "title": f"{date} {item['id']} ({item['goal']}): {item['title']}",
-                              "at": item["evidence_at"] or _iso(written), "evidence": evidence})
+        for _, name in revisions:
+            try:
+                plan, sha, written = _load_plan(repo, name)
+            except (OSError, ValueError):
+                continue
+            items, _ = work_items(plan, rows, windows, git, now, first, name, sha, catalog)
+            historical = name != revisions[-1][1]
+            for item in items:
+                if item["status"] in {"merged", "validated"}:
+                    evidence = item["evidence_sha"] or item["evidence_msg_id"] or name
+                    # The latest revision keeps the established identifier.  An
+                    # older same-day revision remains visible under its own
+                    # immutable name rather than colliding with a reused dN.
+                    identifier = f"{date}:{name[:-5]}:{item['id']}" if historical else f"{date}:{item['id']}"
+                    found.append({"id": identifier, "kind": item["status"],
+                                  "title": f"{date} {item['id']} ({item['goal']}): {item['title']}",
+                                  "at": item["evidence_at"] or _iso(written), "evidence": evidence})
     for closure in _closures(repo):
         at = _when(closure.get("closed_at"))
         if at and at >= since:
@@ -513,6 +726,11 @@ def build(repo: Path, now: datetime) -> dict:
     if not git.available:
         warnings.append("Read-only git on main is unavailable; merged status and improvements are not derived.")
     plans = plan_files(repo)
+    oldest = (now.astimezone(LAB_TZ) - timedelta(days=WINDOW_DAYS)).date().isoformat()
+    catalog_plans = {date: revisions for date, revisions in plans.items() if date >= oldest}
+    if plans and max(plans) not in catalog_plans:  # retain a stale plan of record
+        catalog_plans[max(plans)] = plans[max(plans)]
+    catalog = _plan_catalog(repo, catalog_plans)
     windows = plan_windows(rows)
     daily_plan, items, claimed, plan_id = None, [], {}, None
     if plans:
@@ -534,7 +752,7 @@ def build(repo: Path, now: datetime) -> dict:
                 "review": plan_review(rows, name, sha),
             }
             if not mailbox_error:
-                items, claimed = work_items(plan, rows, windows, git, now, first)
+                items, claimed = work_items(plan, rows, windows, git, now, first, name, sha, catalog)
         except (OSError, ValueError) as exc:
             warnings.append(_clip(f"Newest daily plan {name} is unreadable: {exc}", 480))
     newest_row = _stamp(rows[-1].get("ts")) if rows else None
@@ -548,7 +766,8 @@ def build(repo: Path, now: datetime) -> dict:
         "work_items": items,
         "waiting_on_you": waiting_on_you(plan_id, items, claimed, rows,
                                          daily_plan["written_at"] if daily_plan else None),
-        "accomplishments": accomplishments(repo, rows, windows, git, now, plans),
+        "question_updates": question_updates(rows),
+        "accomplishments": accomplishments(repo, rows, windows, git, now, plans, catalog),
         "improvements": improvements(git, now),
         "warnings": warnings,
         "sources": {
@@ -590,7 +809,7 @@ def _rows(value, keys, maximum, check):
 def validate_live(value: dict, agents_ok) -> None:
     """Raise ValueError unless ``value`` is an exact v3 summary."""
     expected = {"schema_version", "generated_at", "current_plan_revision", "daily_plan", "research_focus",
-                "work_items", "waiting_on_you", "accomplishments", "improvements", "agents",
+                "work_items", "waiting_on_you", "question_updates", "accomplishments", "improvements", "agents",
                 "warnings", "sources"}
     if set(value) != expected or value["schema_version"] != LIVE_SCHEMA or not _time(value["generated_at"]):
         raise ValueError("v3 summary fields or timestamp are invalid")
@@ -647,12 +866,33 @@ def validate_live(value: dict, agents_ok) -> None:
             and _text(r["evidence_msg_id"], 80, optional=True) and _text(r["evidence_sha"], 40, optional=True)
             and _time(r["evidence_at"], optional=True))):
         raise ValueError("v3 work items are invalid")
-    if not _rows(value["waiting_on_you"], {"kind", "id", "title", "asked_by", "asked_at", "msg_id", "cli"},
+    if not _rows(value["waiting_on_you"], {"kind", "id", "title", "question", "context", "choices",
+                                             "recommendation", "consequence", "asked_by", "asked_at", "msg_id", "cli"},
                  MAX_ROWS, lambda r: (
                      r["kind"] in {"question", "owner_decision"} and _text(r["id"], 120)
-                     and _text(r["title"], 300) and _text(r["asked_by"], 60) and _time(r["asked_at"], optional=True)
+                     and _text(r["title"], 300) and _text(r["question"], 300)
+                     and _text(r["context"], 1200, optional=True)
+                     and isinstance(r["choices"], list) and len(r["choices"]) <= 8
+                     and all(_text(choice, 300) for choice in r["choices"])
+                     and _text(r["recommendation"], 600, optional=True)
+                     and _text(r["consequence"], 600, optional=True)
+                     and _text(r["asked_by"], 60) and _time(r["asked_at"], optional=True)
                      and _text(r["msg_id"], 80, optional=True) and _text(r["cli"], 600))):
         raise ValueError("v3 owner requests are invalid")
+    if not _rows(value["question_updates"], {"id", "question_id", "title", "question", "disposition",
+                                               "summary", "reason", "blocking_artifact", "resolved_by",
+                                               "resolved_at", "evidence_msg_ids"}, 10, lambda r: (
+                                                   _text(r["id"], 80) and _text(r["question_id"], 80)
+                                                   and _text(r["title"], 300) and _text(r["question"], 300)
+                                                   and r["disposition"] in QUESTION_RESOLUTIONS
+                                                   and _text(r["summary"], 1200) and _text(r["reason"], 1200)
+                                                   and _text(r["blocking_artifact"], 240, optional=True)
+                                                   and _text(r["resolved_by"], 60)
+                                                   and _time(r["resolved_at"])
+                                                   and isinstance(r["evidence_msg_ids"], list)
+                                                   and len(r["evidence_msg_ids"]) <= 8
+                                                   and all(_text(value, 80) for value in r["evidence_msg_ids"]))):
+        raise ValueError("v3 question updates are invalid")
     if not _rows(value["accomplishments"], {"id", "kind", "title", "at", "evidence"}, MAX_ROWS, lambda r: (
             r["kind"] in {"merged", "validated", "focus_closed", "day_closed"} and _text(r["id"], 120)
             and _text(r["title"], 400) and _time(r["at"]) and _text(r["evidence"], 120))):

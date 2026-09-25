@@ -65,6 +65,58 @@ def test_actor_and_shape_rules(tmp_path):
     mailbox.post("oracle", "answer", {"text": "v2"}, to="nara", in_reply_to=question["msg_id"], path=path)
 
 
+def test_question_resolution_is_explicit_and_preserves_question_provenance(tmp_path):
+    path = tmp_path / "mb.jsonl"
+    question = mailbox.post("oracle", "question", {"question": "Install the timer?"},
+                            to="owner", path=path)
+    withdrawn = mailbox.post("oracle", "question_resolution", {
+        "disposition": "withdrawn", "summary": "No action is needed.",
+        "reason": "The timer question was based on a mistaken premise.",
+    }, to="owner", in_reply_to=question["msg_id"], path=path)
+    assert withdrawn["in_reply_to"] == question["msg_id"]
+
+    # A reviewer may annotate with a normal note, but cannot hide a question
+    # even when it cites a valid, preceding mailbox row.
+    with pytest.raises(mailbox.MailboxError, match="question asker or a human"):
+        mailbox.post("claude", "question_resolution", {
+            "disposition": "withdrawn", "summary": "No action.", "reason": "review",
+            "evidence_msg_ids": [question["msg_id"]],
+        }, to="owner", in_reply_to=question["msg_id"], path=path)
+    with pytest.raises(mailbox.MailboxError, match="preceding mailbox rows"):
+        mailbox.post("codex", "question_resolution", {
+            "disposition": "withdrawn", "summary": "No action.", "reason": "review",
+            "evidence_msg_ids": ["codex-not-yet-posted"],
+        }, to="owner", in_reply_to=question["msg_id"], path=path)
+    with pytest.raises(mailbox.MailboxError, match="question asker or a human"):
+        mailbox.post("nara", "question_resolution", {
+            "disposition": "withdrawn", "summary": "No action.", "reason": "not my question",
+        }, to="owner", in_reply_to=question["msg_id"], path=path)
+    with pytest.raises(mailbox.MailboxError, match="must reply to a question"):
+        mailbox.post("oracle", "question_resolution", {
+            "disposition": "withdrawn", "summary": "No action.", "reason": "wrong parent",
+        }, to="owner", in_reply_to=withdrawn["msg_id"], path=path)
+
+
+def test_post_once_does_not_close_on_a_forged_question_resolution(tmp_path, monkeypatch):
+    """The write-side open check shares projection's resolution predicate."""
+    path = tmp_path / "mb.jsonl"
+    question = {"msg_id": "q", "kind": "question", "actor": "oracle", "to": "owner", "body": {}}
+    forged = {
+        "msg_id": "r", "kind": "question_resolution", "actor": "claude", "to": "owner",
+        "in_reply_to": "q",
+        "body": {"disposition": "withdrawn", "summary": "No action.", "reason": "review"},
+    }
+    monkeypatch.setattr(mailbox, "read", lambda _path: [question, forged])
+    monkeypatch.setattr(mailbox, "_append_locked", lambda actor, kind, body, **_kwargs: {
+        "actor": actor, "kind": kind, "body": body,
+    })
+    row, duplicate = mailbox.post_once(
+        "human:derrick", "answer", {"text": "Proceed", "request_id": "req-1"}, to="oracle",
+        in_reply_to="q", idempotency_key="req-1", require_open_question=True, path=path)
+    assert row["kind"] == "answer"
+    assert duplicate is False
+
+
 def test_admission_fence(monkeypatch):
     _stub_the_precheck_gate(monkeypatch)
     assert lane.admission({"actor": "oracle", "body": _plan()}) == []

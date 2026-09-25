@@ -81,6 +81,7 @@ function summary(overrides: Loose = {}): Loose {
       { kind: "question", id: "claude-18ae939243e70e7d", title: "Two authority rulings", asked_by: "claude",
         asked_at: now, msg_id: "claude-18ae939243e70e7d", cli: "answer claude-18ae939243e70e7d" },
     ],
+    question_updates: [],
     accomplishments: [
       { id: "2026-09-20:d1", kind: "merged", title: "2026-09-20 d1 (G7.1): Lane precheck", at: now, evidence: "2cbe6dbe8a39" },
       { id: "closure:c", kind: "focus_closed", title: "Focus killed: payoff assistance", at: now, evidence: "cccccccccccc" },
@@ -207,6 +208,44 @@ describe("DailyOpsPanel", () => {
     expect(within(question).getByRole("button", { name: "Approve" })).toBeInTheDocument();
   });
 
+  it("shows the decision, context, options and recommendation instead of a log-derived title", () => {
+    const base = summary();
+    D.summary = summary({ waiting_on_you: [{
+      ...base.waiting_on_you[1], title: "Choose review shape",
+      question: "Should the lane change be split into three reviewed branches?",
+      context: "The unsplit branch also loses five newer protections.",
+      choices: ["A — split it (recommended)", "B — review one large branch"],
+      recommendation: "A — split it", consequence: "B delays the next safe lane run.",
+    }] });
+    show();
+    const card = screen.getByTestId("daily-waiting-claude-18ae939243e70e7d");
+    expect(card).toHaveTextContent("Should the lane change be split into three reviewed branches?");
+    expect(card).toHaveTextContent("The unsplit branch also loses five newer protections.");
+    expect(card).toHaveTextContent("A — split it (recommended)");
+    expect(card).toHaveTextContent("Recommendation: A — split it");
+    expect(card).toHaveTextContent("If deferred: B delays the next safe lane run.");
+    expect(within(card).queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(within(card).getByRole("button", { name: "Choose / reply" })).toBeInTheDocument();
+  });
+
+  it("keeps resolved and prerequisite questions in a non-action update feed", () => {
+    D.summary = summary({ waiting_on_you: [], question_updates: [{
+      id: "codex-resolution-1", question_id: "oracle-old-question", title: "Timer concurrency",
+      question: "Should the timer change?", disposition: "prerequisite",
+      summary: "No owner decision is needed until the service audit is complete.",
+      reason: "The current measurements do not establish a timer fault.",
+      blocking_artifact: "run_state/timer-audit.json", resolved_by: "oracle", resolved_at: now,
+      evidence_msg_ids: ["claude-review-1"],
+    }] });
+    show();
+    const updates = screen.getByTestId("daily-question-updates");
+    expect(updates).toHaveTextContent("Updated / prerequisites");
+    expect(updates).toHaveTextContent("No owner decision is needed until the service audit is complete.");
+    expect(updates).toHaveTextContent("Blocking artifact: run_state/timer-audit.json");
+    expect(updates).toHaveTextContent("source codex-resolution-1");
+    expect(within(updates).queryByRole("button", { name: "Approve" })).toBeNull();
+  });
+
   it("sends an owner decision on a waiting item and shows it was sent", async () => {
     sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
     show();
@@ -215,7 +254,7 @@ describe("DailyOpsPanel", () => {
     const editor = screen.getByTestId("daily-decision-editor");
     fireEvent.click(within(editor).getByRole("button", { name: "Send approval" }));
     await waitFor(() => expect(D.postDecision).toHaveBeenCalledWith(expect.objectContaining({
-      accessKey: "owner-secret", targetKind: "work_card", targetId: "d5", action: "approve",
+      accessKey: "owner-secret", targetKind: "question", targetId: "claude-81a020b8a67564fb", action: "approve",
       expectedPlanRevision: PLAN,
     })));
     expect(await within(editor).findByText(/Sent to Oracle|Request queued/)).toBeInTheDocument();
@@ -265,6 +304,47 @@ describe("DailyOpsPanel", () => {
       note: "Wait for d1.",
     }));
     expect(await within(editor).findByText(/Sent to Oracle/)).toHaveTextContent("No execution is implied");
+  });
+
+  it("retries a lost decision response with its original revision after a plan roll-over", async () => {
+    sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
+    const firstId = "11111111-1111-4111-8111-111111111111";
+    const freshId = "22222222-2222-4222-8222-222222222222";
+    let generated = 0;
+    vi.stubGlobal("crypto", { randomUUID: () => [firstId, freshId][generated++] });
+    D.postDecision.mockRejectedValueOnce(new Error("response lost after delivery"));
+    const view = show();
+    fireEvent.click(within(screen.getByTestId("daily-work-card-d2")).getByRole("button", { name: "Ask to modify" }));
+    let editor = screen.getByTestId("daily-decision-editor");
+    fireEvent.change(within(editor).getByLabelText("Required change"), { target: { value: "Wait for d1." } });
+    fireEvent.click(within(editor).getByRole("button", { name: "Queue modification request" }));
+    expect(await within(editor).findByText(/Delivery unconfirmed/)).toBeInTheDocument();
+
+    const newerRevision = "2026-09-21-r1";
+    const base = summary();
+    D.summary = summary({ current_plan_revision: newerRevision, daily_plan: {
+      ...base.daily_plan, id: newerRevision, date: "2026-09-21", revision: "r1",
+      path: `run_state/daily_plans/${newerRevision}.json`,
+    } });
+    view.rerender(<MemoryRouter><DailyOpsPanel legacyResearchOps={null} /></MemoryRouter>);
+
+    editor = screen.getByTestId("daily-decision-editor");
+    fireEvent.click(within(editor).getByRole("button", { name: "Queue modification request" }));
+    await waitFor(() => expect(D.postDecision).toHaveBeenCalledTimes(2));
+    expect(D.postDecision.mock.calls[0][0]).toEqual(expect.objectContaining({
+      requestId: firstId, expectedPlanRevision: PLAN,
+    }));
+    expect(D.postDecision.mock.calls[1][0]).toEqual(expect.objectContaining({
+      requestId: firstId, expectedPlanRevision: PLAN,
+    }));
+
+    fireEvent.click(within(screen.getByTestId("daily-work-card-d4")).getByRole("button", { name: "Ask to skip" }));
+    editor = screen.getByTestId("daily-decision-editor");
+    fireEvent.click(within(editor).getByRole("button", { name: "Queue skip request" }));
+    await waitFor(() => expect(D.postDecision).toHaveBeenCalledTimes(3));
+    expect(D.postDecision.mock.calls[2][0]).toEqual(expect.objectContaining({
+      requestId: freshId, expectedPlanRevision: newerRevision,
+    }));
   });
 
   it("does not apply a late request result to a different card editor", async () => {
