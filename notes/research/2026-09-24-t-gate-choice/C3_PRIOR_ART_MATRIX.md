@@ -2,9 +2,10 @@
 
 Date: 2026-09-24 UTC
 
-Evidence snapshot: C3 proposal at `oracle/2026-09-24-d3-r11`
-`346d10c100159a74e95ae721eb25b50a69c33341` (mailbox seq 418, as
-clarified in the choice note); this note is authored from C4 base
+Evidence snapshot: C3 choice note landed on `main` at
+`e023d74eb7b15ad25582816129f28e9168517dd6` (patch-equivalent to
+`oracle/2026-09-24-d3-r11` at `346d10c100159a74e95ae721eb25b50a69c33341`;
+mailbox seq 418, as clarified in that note); this matrix is authored from C4 base
 `9fc48c9b66ac5ebc1da03635272f4cecebc64545`.
 
 Epistemic labels below are literal: **observed** means stated or derived
@@ -13,7 +14,7 @@ this review; **unknown** means the current C3 definitions do not settle it.
 
 Division of labor: the full design analysis is maintained separately at
 `notes/research/2026-09-24-c3-t0-prereg/PREREG_DESIGN_CONSTRAINTS.md`
-(`8ed2644`). This file is the primary-source collision record. It retains only
+(`e6d3dbd`). This file is the primary-source collision record. It retains only
 the algebra and definition checks needed to evaluate the literature claim.
 
 ## Bottom line
@@ -115,8 +116,9 @@ The proof **does not apply** if any of the following is intended:
   different worst-case or selector score;
 - specialist excess uses a `q`-specific floor,
   `R_lambda(a,q)-min_a R_lambda(a,q)`, rather than the common `v_lambda`;
-- the selector is a history-dependent meta-policy whose feasible class is
-  larger than `A`;
+- the specialist or selector side has information or policies unavailable to
+  the generalist (reverse inclusion); a larger class for the common-score
+  generalist does not escape the no-go and makes the gap more negative;
 - the generalist, specialist, and selector scores use different information,
   priors, counterfactual partner responses, normalizations, or signs; or
 - "exploitability" is the partner's unilateral gain rather than the focal
