@@ -1,13 +1,54 @@
 # Flash C4-M20 minimum-pool attended retry
 
-Status: **v12 published and independently tested offline; live qualification
-is pending.** The release is one combined
-forward pin from the verified C1 rollback commit
+## Status and authority boundary
+
+**Observed current process state (2026-09-25):** `flash-resident.service` has
+been active since `2026-09-24 08:21:43 UTC`. Its matching start time and the
+recorded cutover receipt make the current C4 guarded-profile identity an
+**inference**, not a fresh lifecycle inspection. The recorded attended result is
+`/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-18/flash-personal-recovery/c4-min224-cutover-20260924T0818Z/cutover-receipt.json` (SHA-256
+`4511cabeba2ca3e71a4f8c2c1c9965fea90006b1d030cb901643e683f3008315`).
+That receipt is **observed evidence for the September 24 cutover**, while the
+decision recorded in it is explicitly `proposed`; this document does not
+create live-operation authority.
+
+No new C4 cutover, restart, or traffic expansion is qualified by this status
+update. The current operating direction is to wait for an interactive Claude
+attended window before any new live C4 action. A service `active/running`
+observation establishes residency only; it does not substitute for a fresh
+preflight, attended authorization, or a new receipt after a future restart.
+
+**Historical state:** v12 was published and independently tested offline before
+the September 24 attended cutover. The release is one combined forward pin
+from the verified C1 rollback commit
 `08827e74857416406ed9dad58364607f12cc9b27`. It incorporates the reviewed
 M20 and minimum-pool changes. The rejected strict-pool commit
 `001b57ede172466e9aab04b30b0f084f93af434e` remains in history but was
 reverted; it is not an intermediate live tree in this cutover.
 The already-published v11 files remain immutable.
+
+### Observed September 24 attended result, and remaining limits
+
+The above receipt records the forward commit
+`a958f91c3493814944df7b7ee061c6cc0e981595`, 262,144 context tokens, a
+237,440-token realized pool (above the 229,376-token minimum), requested and
+effective R4, and Mamba cache 20. It binds
+`c4-server-info.json` (SHA-256
+`c399e3bd511565f39b3977abaaa1211e24d540c4c493dee77e6233508fa8bee3`) and
+`c4-four-stream-smoke.json` (SHA-256
+`8ac02d745537ec9f686865aafee44f842aa4c718f090a28f7cb25e1a48de3117`), both
+in that exact artifact directory. Two short four-stream runs completed with
+overlapping generation windows and no scheduler retractions; the same directory
+contains `metrics-before.txt` (SHA-256
+`824bc591a67027ce35e10118efc4e555b5a739e8506e7bc3aa3470f56e3b1c85`) and
+`metrics-after.txt` (SHA-256
+`d4e763454059239114740cde275e64d9d14121c3944d1427f68b20447da1844e`).
+
+This is **not yet qualification** for four concurrent near-200K contexts,
+mixed long-load traffic, benchmark paths that use `runtime_context.py`, or
+overlapping long clients. Maintain K=1 for Nara/other overlapping calls and
+permit only one near-196K client at a time until representative mixed-load
+testing has a separately reviewed receipt.
 
 ## Evidence and bounded policy change
 
@@ -71,7 +112,8 @@ The published copy additionally checks exact reported context/requested pool and
 the minimum realized-pool boundary. It loads deployment policy from the exact
 repository named by `A_BGT_RSI_SMOKE_REPO`, defaulting to the canonical checkout.
 
-Run the external offline tests from a scratch working directory:
+For historical reproducibility, run the external offline tests from a scratch
+working directory:
 
 ```bash
 PREP=/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-18/flash-personal-recovery/sglang-fallback-prep
@@ -86,16 +128,22 @@ A_BGT_RSI_SMOKE_REPO="$CANDIDATE" PYTHONDONTWRITEBYTECODE=1 \
   "$PREP/test_flash_concurrency_smoke_min224_v1.py"
 ```
 
-The smoke fixture must bind the reviewed C4 candidate before the live merge;
-the canonical checkout is deliberately still C1 then. After applying the pin,
-rerun it with `A_BGT_RSI_SMOKE_REPO` set to the canonical checkout.
+The smoke fixture had to bind the reviewed C4 candidate before the historical
+live merge, when the canonical checkout was deliberately still C1. For any
+future authorized restart, rerun it with `A_BGT_RSI_SMOKE_REPO` set to the
+exact checkout selected for that restart.
 
-Before the live stop, record the candidate commit as `V12_PIN_COMMIT`; it must
-be the one reviewed combined forward pin directly on C1 rollback commit
+## Historical cutover procedure and future restart guard
+
+The following attended cutover steps were performed for the September 24
+receipt. They remain the mandatory guard for a **future authorized restart**;
+they are not instructions to stop the currently resident C4 service. Before a
+future live stop, record the candidate commit as `V12_PIN_COMMIT`; it must be
+the one reviewed combined forward pin directly on C1 rollback commit
 `08827e7`. Run `flash_resident selected`, the focused repository tests, and the
 artifact manifest check before the live stop.
 
-## Preconditions and stop budget
+### Preconditions and stop budget for a future restart
 
 The delegated live coordinator must remain available for the attended window.
 Confirm C1 is ready and idle, Nara/coordinator work is quiescent, and no planner
@@ -117,7 +165,7 @@ window must retain enough time for a second approximately 12.5-minute C1 cold
 boot if rollback is needed. Follow the coordinated launch-hygiene checklist;
 pool variation between boots is a known material risk.
 
-## Qualification
+### Qualification requirements for a future restart
 
 Apply only `V12_PIN_COMMIT`, rerun `selected` and focused tests, start the
 resident, and monitor every 30 seconds. Stop immediately if a readiness
@@ -162,12 +210,12 @@ The smoke uses short prompts; it does not prove four near-200K requests fit or
 exclude a retraction between first and last token. Capture scheduler metrics
 before and after smoke and require no increase in retracted requests.
 
-Keep C4 only if readiness and smoke pass, the post-smoke host-memory low-water
-is at least 12 GiB and no more than 3 GiB below the measured C1 reference, and
-there are no new kernel `NV_ERR`/`Xid` records or scheduler retractions during
-smoke. Archive full server info, before/after scheduler metrics, smoke JSON,
-host-memory window, kernel query, exact Git/artifact hashes, and the final
-decision in a new receipt.
+For a future restart, keep C4 only if readiness and smoke pass, the post-smoke
+host-memory low-water is at least 12 GiB and no more than 3 GiB below the
+measured C1 reference, and there are no new kernel `NV_ERR`/`Xid` records or
+scheduler retractions during smoke. Archive full server info, before/after
+scheduler metrics, smoke JSON, host-memory window, kernel query, exact
+Git/artifact hashes, and the final decision in a new receipt.
 
 Before releasing the lab pause markers, verify `reserveTokens=65536` in both
 Pi settings files and restrict long-context operation to one such client at a
@@ -175,7 +223,7 @@ time. Keep overlapping Nara/other calls short and bounded (initially K=1)
 until a representative mixed-load test passes. Queuing or retraction under
 shared-pool pressure is not contradicted by a passing four-short-stream smoke.
 
-## Rollback and fault boundary
+## Rollback and fault boundary for a future restart
 
 For a clean mismatch or failed keep gate: stop under v12, require clean cleanup,
 archive the stopped v12 state, move its `artifact_dir` to `prior_artifact_dir`,
