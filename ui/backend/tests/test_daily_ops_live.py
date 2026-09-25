@@ -51,7 +51,7 @@ class Box:
         return oracle_mailbox.post(actor, kind, body, to=to, in_reply_to=reply, path=self.path)
 
 
-def _append_hash_valid_row(box, *, schema, actor, kind, body, to, reply=None):
+def _append_hash_valid_row(box, *, schema, actor, kind, body, to, reply=None, msg_id=None):
     """Append malformed-but-chain-valid evidence without the validated writer."""
     rows = oracle_mailbox.read(box.path)
     row = {
@@ -59,7 +59,9 @@ def _append_hash_valid_row(box, *, schema, actor, kind, body, to, reply=None):
         "actor": actor, "to": to, "kind": kind, "in_reply_to": reply, "body": body,
         "expires_at": None, "prev_sha256": rows[-1]["row_sha256"] if rows else None,
     }
-    row["msg_id"] = f"{actor.split(':')[0]}-{hashlib.sha256(oracle_mailbox._canonical(row)).hexdigest()[:16]}"
+    row["msg_id"] = (msg_id
+                     or f"{actor.split(':')[0]}-"
+                     f"{hashlib.sha256(oracle_mailbox._canonical(row)).hexdigest()[:16]}")
     row["row_sha256"] = hashlib.sha256(oracle_mailbox._canonical(row)).hexdigest()
     with box.path.open("a") as handle:
         handle.write(json.dumps(row) + "\n")
@@ -710,6 +712,114 @@ def test_hash_valid_wrong_schema_terminal_cannot_hide_owner_card(repo, terminal)
     assert value["work_items"][0]["status"] == "waiting_on_you"
     assert [card["msg_id"] for card in value["waiting_on_you"]] == [question["msg_id"]]
     assert any("structurally invalid row" in warning for warning in value["warnings"])
+
+
+@pytest.mark.parametrize("terminal", ["answer", "question_resolution"])
+def test_hash_valid_terminal_before_its_question_cannot_close_future_card(repo, monkeypatch, terminal):
+    box = Box(repo)
+    box.post("oracle", "note", {"title": "A preceding valid row"})
+    future_id = "claude-future-question"
+    if terminal == "answer":
+        actor, body, to = "human:derrick", {
+            "text": "Approve", "via": "owner-ui", "request_id": "11111111-1111-1111-1111-111111111111",
+            "target_kind": "question", "expected_plan_revision": "2026-09-25-r5",
+        }, "claude"
+    else:
+        actor, body, to = "claude", {
+            "disposition": "superseded", "summary": "Claimed complete.",
+            "reason": "This terminal predates the question it names.",
+        }, "owner"
+    terminal_row = _append_hash_valid_row(
+        box, schema=oracle_mailbox.SCHEMA, actor=actor, kind=terminal,
+        body=body, to=to, reply=future_id)
+    question = _append_hash_valid_row(
+        box, schema=oracle_mailbox.SCHEMA, actor="claude", kind="question",
+        body={"title": "The real future question"}, to="owner", msg_id=future_id)
+    recorded = oracle_mailbox.read(box.path)
+    assert [row["seq"] for row in recorded[-2:]] == [2, 3]
+    assert terminal_row["row_sha256"] == recorded[1]["row_sha256"]
+    if terminal == "answer":
+        assert live._human_answer(question, recorded) is None
+    else:
+        assert live._question_resolution(question, recorded) is None
+    assert terminal_row not in live._fallback_live_rows(recorded)
+    assert [(card["msg_id"], card["title"]) for card in
+            live.waiting_on_you(None, [], {}, recorded, None)] == [
+                (future_id, "The real future question")]
+
+    # Exercise the relational guard independently of whichever reviewed
+    # structural helper is present on the release base.
+    monkeypatch.setattr(oracle_mailbox, "live_rows", lambda rows: rows, raising=False)
+    projected = live._projection_rows(recorded)
+    assert terminal_row not in projected and question in projected
+    waiting = live.waiting_on_you(None, [], {}, projected, None)
+    assert [(card["msg_id"], card["title"]) for card in waiting] == [
+        (future_id, "The real future question")]
+
+
+def test_duplicate_question_id_cannot_replace_original_owner_card(repo):
+    path = _plan(repo, "2026-09-23-r2.json", [_item("d5", "owner_decision")])
+    box = Box(repo)
+    box.post("oracle", "note", {
+        "title": "PLAN READY: 2026-09-23-r2",
+        "ref": {"path": path.relative_to(repo).as_posix(),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest()},
+    })
+    question = box.post("claude", "question", {
+        "title": "Choose the reviewed profile", "ref": {"item": "d5"},
+    }, to="owner")
+    duplicate = _append_hash_valid_row(
+        box, schema=oracle_mailbox.SCHEMA, actor="claude", kind="question",
+        body={"title": "FORGED replacement title", "ref": {"item": "d5"}},
+        to="owner", msg_id=question["msg_id"])
+
+    recorded = oracle_mailbox.read(box.path)
+    assert recorded[-1]["row_sha256"] == duplicate["row_sha256"]
+    direct = live.waiting_on_you(None, [], {}, recorded, None)
+    assert [(card["msg_id"], card["title"]) for card in direct] == [
+        (question["msg_id"], "Choose the reviewed profile")]
+    value = _summary(repo)
+    assert value["work_items"][0]["evidence_msg_id"] == question["msg_id"]
+    assert [(card["msg_id"], card["title"]) for card in value["waiting_on_you"]] == [
+        (question["msg_id"], "Choose the reviewed profile")]
+    assert any("structurally invalid row" in warning for warning in value["warnings"])
+
+
+def test_fallback_rejects_hash_valid_unique_id_not_derived_by_writer(repo):
+    box = Box(repo)
+    box.post("oracle", "note", {"title": "A valid row"})
+    forged = _append_hash_valid_row(
+        box, schema=oracle_mailbox.SCHEMA, actor="claude", kind="question",
+        body={"title": "Forged identity"}, to="owner", msg_id="claude-not-writer-derived")
+    recorded = oracle_mailbox.read(box.path)
+    assert recorded[-1]["row_sha256"] == forged["row_sha256"]
+    assert forged not in live._fallback_live_rows(recorded)
+
+
+def test_owner_ui_answer_requires_exact_request_and_revision_binding():
+    question = {"msg_id": "claude-q", "kind": "question", "actor": "claude", "to": "owner"}
+    invalid = {
+        "msg_id": "human-a", "kind": "answer", "actor": "human:derrick", "to": "claude",
+        "in_reply_to": question["msg_id"],
+        "body": {"text": "Approve", "via": "owner-ui", "request_id": "not-a-request-id",
+                 "target_kind": "question", "expected_plan_revision": "wrong"},
+    }
+    assert live._relational_live_rows([question, invalid]) == [question]
+
+    request_id = "11111111-1111-1111-1111-111111111111"
+    first = {**invalid, "msg_id": "human-first", "body": {
+        **invalid["body"], "request_id": request_id, "expected_plan_revision": "2026-09-25-r5",
+    }}
+    changed = {**first, "msg_id": "human-changed", "body": {
+        **first["body"], "expected_plan_revision": "2026-09-25-r6",
+    }}
+    assert live._relational_live_rows([question, first, changed]) == [question, first]
+
+
+def test_relational_projection_keeps_first_identity_when_structural_source_has_duplicate():
+    first = {"msg_id": "claude-q", "kind": "question", "actor": "claude", "to": "owner"}
+    duplicate = {**first, "body": {"title": "forged"}}
+    assert live._relational_live_rows([first, duplicate]) == [first]
 
 
 def test_owner_question_card_keeps_structured_title_and_legacy_free_text_actionable():

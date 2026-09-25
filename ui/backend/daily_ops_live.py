@@ -130,16 +130,42 @@ def _title(row: dict) -> str:
 
 def _human_answer(question: dict, rows: list[dict]) -> dict | None:
     """A card closes as answered only on a direct human reply."""
-    answers = [row for row in rows if row.get("kind") == "answer"
-               and row.get("in_reply_to") == question.get("msg_id")
-               and isinstance(row.get("actor"), str) and row["actor"].startswith("human:")]
+    question_id = question.get("msg_id") if isinstance(question, dict) else None
+    question_positions = [position for position, row in enumerate(rows)
+                          if row.get("msg_id") == question_id]
+    if (not isinstance(question_id, str) or len(question_positions) != 1
+            or rows[question_positions[0]] is not question):
+        return None
+    question_position = question_positions[0]
+    answers = []
+    for position, row in enumerate(rows):
+        if (position <= question_position or row.get("kind") != "answer"
+                or row.get("in_reply_to") != question_id
+                or not isinstance(row.get("actor"), str) or not row["actor"].startswith("human:")):
+            continue
+        # A duplicated terminal identity is ambiguous even if one copy has the
+        # desired actor label. Projection input normally removes it earlier;
+        # this guard keeps direct helper callers fail closed too.
+        if sum(candidate.get("msg_id") == row.get("msg_id") for candidate in rows) == 1:
+            answers.append(row)
     return answers[-1] if answers else None
 
 
 def _question_resolution(question: dict, rows: list[dict]) -> dict | None:
     """Return the latest valid original-asker/human disposition."""
     oracle_mailbox, _ = _orchestrator()
-    for row in reversed(rows):
+    question_id = question.get("msg_id") if isinstance(question, dict) else None
+    question_positions = [position for position, row in enumerate(rows)
+                          if row.get("msg_id") == question_id]
+    if (not isinstance(question_id, str) or len(question_positions) != 1
+            or rows[question_positions[0]] is not question):
+        return None
+    question_position = question_positions[0]
+    for position in range(len(rows) - 1, question_position, -1):
+        row = rows[position]
+        if (row.get("kind") != "question_resolution" or row.get("in_reply_to") != question_id
+                or sum(candidate.get("msg_id") == row.get("msg_id") for candidate in rows) != 1):
+            continue
         if oracle_mailbox.is_valid_question_resolution(question, row, rows):
             return row
     return None
@@ -199,6 +225,7 @@ def _question_card(row: dict) -> dict:
 
 def question_updates(rows: list[dict]) -> list[dict]:
     """Recent explicit non-answer dispositions, kept separate from actions."""
+    rows = _relational_live_rows(rows)
     found = []
     for question in rows:
         if question.get("kind") != "question" or question.get("to") != "owner":
@@ -345,15 +372,86 @@ def _fallback_live_rows(rows: list[dict]) -> list[dict]:
                 oracle_mailbox.validate_question_resolution(body)
         except Exception:
             continue
+        previous = rows[position - 1] if position else None
+        previous_sha = previous.get("row_sha256") if isinstance(previous, dict) else None
+        if row.get("prev_sha256") != previous_sha:
+            continue
+        claimed_sha = row.get("row_sha256")
+        if not isinstance(claimed_sha, str) or re.fullmatch(r"[0-9a-f]{64}", claimed_sha) is None:
+            continue
+        without_sha = dict(row)
+        without_sha.pop("row_sha256")
+        if hashlib.sha256(oracle_mailbox._canonical(without_sha)).hexdigest() != claimed_sha:
+            continue
+        msg_id = without_sha.pop("msg_id")
+        expected_id = (
+            f"{actor.split(':')[0]}-"
+            f"{hashlib.sha256(oracle_mailbox._canonical(without_sha)).hexdigest()[:16]}"
+        )
+        if msg_id != expected_id:
+            continue
         found.append(row)
-    return found
+    return _relational_live_rows(found)
+
+
+def _relational_live_rows(rows: list[dict]) -> list[dict]:
+    """Keep only first identities and replies to one preceding admitted question.
+
+    Structural validity is not enough for owner actions. A future row cannot
+    retroactively make an earlier direct-human answer or resolution valid, and
+    a later duplicate id cannot replace the question object the owner originally
+    saw. The first admitted identity wins; later duplicates remain append-only
+    evidence but are not projection state. Model answer rows remain context,
+    never terminal authority.
+    """
+    admitted: list[dict] = []
+    seen_ids: set[str] = set()
+    questions: dict[str, dict] = {}
+    owner_requests: dict[str, tuple[str, str, str]] = {}
+    for row in rows:
+        msg_id = row["msg_id"]
+        if msg_id in seen_ids:
+            continue
+        seen_ids.add(msg_id)
+        kind = row.get("kind")
+        human_answer = (kind == "answer" and isinstance(row.get("actor"), str)
+                        and row["actor"].startswith("human:"))
+        if kind == "question_resolution" or human_answer:
+            question = questions.get(row.get("in_reply_to"))
+            if question is None:
+                continue
+            if kind == "question_resolution":
+                actor = row.get("actor")
+                if not (isinstance(actor, str)
+                        and (actor == question.get("actor") or actor.startswith("human:"))):
+                    continue
+            if human_answer:
+                body = _body(row)
+                if body.get("via") == "owner-ui":
+                    request_id = body.get("request_id")
+                    revision = body.get("expected_plan_revision")
+                    if (not isinstance(request_id, str)
+                            or re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", request_id) is None
+                            or body.get("target_kind") != "question"
+                            or not isinstance(revision, str)
+                            or PLAN_NAME.fullmatch(f"{revision}.json") is None):
+                        continue
+                    binding = (str(row.get("in_reply_to")), revision,
+                               json.dumps(body, sort_keys=True, separators=(",", ":")))
+                    if request_id in owner_requests and owner_requests[request_id] != binding:
+                        continue
+                    owner_requests[request_id] = binding
+        admitted.append(row)
+        if kind == "question":
+            questions[msg_id] = row
+    return admitted
 
 
 def _projection_rows(rows: list[dict]) -> list[dict]:
-    """Structurally live mailbox rows, without mutating append-only evidence."""
+    """Structurally and relationally live rows, without mutating evidence."""
     oracle_mailbox, _ = _orchestrator()
     shared = getattr(oracle_mailbox, "live_rows", None)
-    return shared(rows) if callable(shared) else _fallback_live_rows(rows)
+    return _relational_live_rows(shared(rows)) if callable(shared) else _fallback_live_rows(rows)
 
 
 def _project_focus(repo: Path) -> dict:
@@ -697,6 +795,7 @@ def _reply_to(row: dict | None) -> str:
 
 def waiting_on_you(plan_id: str | None, items: list[dict], claimed: dict, rows: list[dict],
                    plan_written: str | None) -> list[dict]:
+    rows = _relational_live_rows(rows)
     by_id = {row["msg_id"]: row for row in rows}
     waiting = []
     for item in items:
