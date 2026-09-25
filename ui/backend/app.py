@@ -23,6 +23,7 @@ from .chat_seam import register as register_chat_seam
 from .coordinator import register as register_coordinator
 from .daily_ops import register as register_daily_ops
 from .daily_ops_bridge import configured_bridge
+from .daily_ops_live_api import register as register_daily_ops_live_api
 from .doc_titles import register as register_doc_titles
 from .experiments import register as register_experiments
 from .finding_detail import register as register_finding_detail
@@ -285,6 +286,9 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
         decision_router=daily_ops_decision_router,
         projection_refresher=daily_ops_refresher,
     )
+    # This is intentionally a separate route and live read model.  It does
+    # not alter the existing daily-ops summary/decision bridge or its cache.
+    register_daily_ops_live_api(app, repo_root=Path(loop_v0_repo))
 
     # 2026-08-14 work order A+C: loop-alert flag + ideas-board read seams.
     # Same primary-checkout run_state/memory split as the coordinator reads.
