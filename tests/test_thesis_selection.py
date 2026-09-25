@@ -74,21 +74,47 @@ def _focus() -> dict:
     return {"focus_id": "thesis-c-alpha", "title": "Candidate c-alpha", "selection_reason": "Reviewed canonical selection.", "next_action": "Write the preregistered protocol.", "next_gate": {"from": "thesis_selected", "to": "study_ready", "artifact": "protocol", "status": "pending", "owner": "Oracle"}, "blockers": ["Execution remains separately gated."], "stage": "needs_clean_refinement", "intake_policy": "focus_before_new_topics", "initial_convictions": {"nara": _card("c-alpha")["conviction"], "oracle": _conviction(0.5), "claude": _conviction(0.45)}}
 
 
-def _produce(root: Path, monkeypatch, *, nonce: str = "") -> tuple[dict, dict, dict]:
+def _produce(
+    root: Path, monkeypatch, *, nonce: str = "", builder_creates_prior: bool = False,
+    builder_modifies_prior: bool = False, plan_expires_hours: float | None = None,
+) -> tuple[dict, dict, dict]:
     """Run the actual Nara plan -> implementation -> terminal receipt route."""
+    assert not (builder_creates_prior and builder_modifies_prior)
     candidates = [_card("c-zeta", nonce=nonce), _card("c-alpha", nonce=nonce), _card("c-mid", "unknown", nonce)]
+    primary_files = {path: raw.decode() for candidate in candidates for path, raw in [_primary(candidate["candidate_id"], nonce)] if candidate["prior_work"]["status"] == "verified"}
+    if not builder_creates_prior:
+        base_files = (
+            {
+                path: raw.decode()
+                for candidate in candidates
+                for path, raw in [_primary(candidate["candidate_id"], f"base-{nonce}")]
+                if candidate["prior_work"]["status"] == "verified"
+            }
+            if builder_modifies_prior else primary_files
+        )
+        for relative, contents in base_files.items():
+            target = root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(contents)
+        subprocess.run(["git", "add", *sorted(base_files)], cwd=root, check=True)
+        if subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=root, check=False).returncode:
+            subprocess.run(["git", "commit", "-qm", "pin accepted prior-work sources"], cwd=root, check=True)
     declaration = {"schema_version": "nara-thesis-candidate-source/v1", "set_id": "g11-candidates", "path": "notes/nara_candidates.json", "base_sha": subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, text=True, capture_output=True).stdout.strip()}
     content = thesis._canonical({"schema_version": declaration["schema_version"], "set_id": declaration["set_id"], "candidates": candidates}).decode()
-    primary_files = {path: raw.decode() for candidate in candidates for path, raw in [_primary(candidate["candidate_id"], nonce)] if candidate["prior_work"]["status"] == "verified"}
     acceptance = "import json\nfrom pathlib import Path\ndef test_candidate_source():\n payload=json.loads(Path('notes/nara_candidates.json').read_text())\n assert payload['schema_version']=='nara-thesis-candidate-source/v1'\n assert payload['set_id']=='g11-candidates'\n assert len(payload['candidates']) == 3\n"
     mailbox_path = root / "run_state/oracle_nara_mailbox.jsonl"
-    plan = mailbox.post("oracle", "plan_item", {"title": "Nara candidate source", "objective": "Commit the declared candidate source.", "task_class": "documentation", "allowed_write_paths": [declaration["path"], *sorted(primary_files)], "acceptance": {"test_path": "tests/test_candidate_source.py", "test_content": acceptance, "test_argv": ["python", "-m", "pytest", "-q", "tests/test_candidate_source.py"]}, "budget": {"attempts": 1, "wall_clock_minutes": 5}, "thesis_candidate_source": declaration}, to="nara", path=mailbox_path)
+    builder_writes_prior = builder_creates_prior or builder_modifies_prior
+    allowed = [declaration["path"], *sorted(primary_files)] if builder_writes_prior else [declaration["path"]]
+    plan = mailbox.post("oracle", "plan_item", {"title": "Nara candidate source", "objective": "Commit the declared candidate source.", "task_class": "documentation", "allowed_write_paths": allowed, "acceptance": {"test_path": "tests/test_candidate_source.py", "test_content": acceptance, "test_argv": ["python", "-m", "pytest", "-q", "tests/test_candidate_source.py"]}, "budget": {"attempts": 1, "wall_clock_minutes": 5}, "thesis_candidate_source": declaration}, to="nara", path=mailbox_path, expires_hours=plan_expires_hours)
     mailbox.post("claude", "review", {"verdict": "accept"}, to="oracle", in_reply_to=plan["msg_id"], path=mailbox_path)
     monkeypatch.setattr(lane, "ROOT", root); monkeypatch.setattr(lane, "WORKTREES", root.parent / "nara-worktrees")
     monkeypatch.setattr(lane, "RUN_LOG", root.parent / "nara-run.jsonl"); monkeypatch.setattr(lane, "_prechecked", lambda _item, **_kwargs: True)
     posted = lane.run_queue(
         mailbox_path,
-        build=lambda *_args, **_kwargs: {declaration["path"]: content, **primary_files},
+        build=lambda *_args, **_kwargs: {
+            declaration["path"]: content,
+            **(primary_files if builder_writes_prior else {}),
+        },
         sandbox=_sandbox,
         ready=lambda: True,
     )
@@ -183,7 +209,7 @@ def test_old_empty_generation_review_cannot_win_after_select_then_kill_aba(tmp_p
                                 reopening_conditions=["Fresh primary evidence."], evidence_refs=["receipt"],
                                 closed_by="oracle", authority="review", expected_receipt_sha256=selected["receipt_sha256"])
     assert research_focus.project_focus(root)["status"] == "none"
-    with pytest.raises(thesis.ThesisSelectionError, match="focus generation"):
+    with pytest.raises(thesis.ThesisSelectionError, match="reviewed head is stale|focus generation"):
         thesis.select_thesis_focus(root, meta_accept_sha256=old["meta_accept_sha256"], reason="Reviewed canonical selection.")
 
 
@@ -229,7 +255,41 @@ def test_candidate_head_must_descend_from_the_plan_pinned_base(tmp_path, monkeyp
         row["row_sha256"] for row in mailbox.read(root / "run_state/oracle_nara_mailbox.jsonl") if row["msg_id"] == source_id
     )
     with pytest.raises(thesis.ThesisSelectionError, match="does not descend from the plan base"):
-        thesis._verify_candidate_provenance(root, bad, "0" * 64, admission=False)
+        thesis._verify_candidate_provenance(
+            root, bad, "0" * 64, admission=False,
+            rows=mailbox.read(root / "run_state/oracle_nara_mailbox.jsonl"),
+        )
+
+
+def test_nara_candidate_commit_cannot_create_its_own_prior_work(tmp_path, monkeypatch):
+    root = _git_root(tmp_path)
+    source_set, _terminal, _plan = _produce(
+        root, monkeypatch, builder_creates_prior=True,
+    )
+    with pytest.raises(thesis.ThesisSelectionError, match="absent from the plan base"):
+        thesis._verify_candidate_provenance(root, source_set, "0" * 64, admission=True)
+
+
+def test_nara_candidate_commit_cannot_modify_preexisting_prior_work(tmp_path, monkeypatch):
+    root = _git_root(tmp_path)
+    source_set, _terminal, _plan = _produce(
+        root, monkeypatch, nonce="replacement", builder_modifies_prior=True,
+    )
+    with pytest.raises(thesis.ThesisSelectionError, match="differs from the plan base"):
+        thesis._verify_candidate_provenance(root, source_set, "0" * 64, admission=True)
+
+
+def test_base_bound_source_does_not_replace_explicit_oracle_relevance_screen(tmp_path, monkeypatch):
+    root = _git_root(tmp_path)
+    source_set, terminal, _plan = _produce(root, monkeypatch)
+    source_set["proposed_at"] = terminal["ts"]
+    thesis._verify_candidate_provenance(root, source_set, "0" * 64, admission=True)
+    proposed = thesis.create_candidate_set(root, source_set)
+    screen = _screen(proposed["candidate_set_sha256"], terminal["ts"])
+    alpha = next(row for row in screen["evaluations"] if row["candidate_id"] == "c-alpha")
+    alpha["verdicts"]["prior_work"] = "fail"
+    screened = thesis.create_screen(root, proposed["candidate_set_sha256"], screen)
+    assert "c-alpha" not in screened["eligible_ids"]
 
 
 def test_git_evidence_rejects_a_symlink_blob(tmp_path):
@@ -515,6 +575,69 @@ def test_commit_refuses_a_fabricated_prepared_object_without_touching_ledger(tmp
     assert thesis.select_thesis_focus(root, meta_accept_sha256=created["meta_accept_sha256"], reason="Reviewed canonical selection.")["status"] == "selected"
 
 
+def test_over_capacity_prepared_journal_cannot_mutate_and_valid_retry_recovers(tmp_path, monkeypatch):
+    root = _git_root(tmp_path)
+    accept, _source = _staged(root, monkeypatch)
+    created = thesis.create_meta_accept(root, accept)
+    captured = {}
+    original_commit = research_focus.commit_prepared_thesis_focus
+
+    def capture_prepared(_root, prepared):
+        captured["prepared"] = copy.deepcopy(prepared)
+        raise OSError("stop after durable preparation")
+
+    monkeypatch.setattr(research_focus, "commit_prepared_thesis_focus", capture_prepared)
+    with pytest.raises(OSError, match="durable preparation"):
+        thesis.select_thesis_focus(
+            root, meta_accept_sha256=created["meta_accept_sha256"],
+            reason="Reviewed canonical selection.",
+        )
+    monkeypatch.setattr(research_focus, "commit_prepared_thesis_focus", original_commit)
+    prepared_path = next((root / research_focus.PREPARED).glob("*.json"))
+    original = prepared_path.read_bytes()
+    poisoned = json.loads(original)
+    poisoned["ledger_prefix_bytes"] = research_focus.MAX_CONVICTION_LEDGER_BYTES
+    prepared_path.write_bytes(research_focus.canonical(poisoned) + b"\n")
+    with pytest.raises(research_focus.FocusError, match="would exceed conviction ledger bound"):
+        research_focus.commit_prepared_thesis_focus(root, captured["prepared"])
+    assert not (root / research_focus.CONVICTION_LEDGER).exists()
+    assert not (root / research_focus.POINTER).exists()
+    prepared_path.write_bytes(original)
+    assert research_focus.commit_prepared_thesis_focus(root, captured["prepared"])["status"] == "selected"
+
+
+def test_near_capacity_selection_refuses_before_mutation_then_retries_at_exact_limit(tmp_path, monkeypatch):
+    root = _git_root(tmp_path)
+    accept, _source = _staged(root, monkeypatch)
+    created = thesis.create_meta_accept(root, accept)
+    rows = research_focus._initial_conviction_rows(
+        "thesis-c-alpha", accept["accepted_at"], _focus()["initial_convictions"],
+    )
+    append = b"".join(rows[name][1] for name in ("nara", "oracle", "claude"))
+    ledger = root / research_focus.CONVICTION_LEDGER
+    too_large_prefix = research_focus.MAX_CONVICTION_LEDGER_BYTES - len(append) + 1
+    original = b"x" * (too_large_prefix - 1) + b"\n"
+    ledger.write_bytes(original)
+
+    with pytest.raises(research_focus.FocusError, match="would exceed conviction ledger bound"):
+        thesis.select_thesis_focus(
+            root, meta_accept_sha256=created["meta_accept_sha256"],
+            reason="Reviewed canonical selection.",
+        )
+    assert ledger.read_bytes() == original
+    assert not (root / research_focus.DIRECTORY).exists()
+    assert not (root / research_focus.POINTER).exists()
+
+    exact_prefix = b"x" * (too_large_prefix - 2) + b"\n"
+    ledger.write_bytes(exact_prefix)
+    selected = thesis.select_thesis_focus(
+        root, meta_accept_sha256=created["meta_accept_sha256"],
+        reason="Reviewed canonical selection.",
+    )
+    assert selected["status"] == "selected"
+    assert ledger.stat().st_size == research_focus.MAX_CONVICTION_LEDGER_BYTES
+
+
 def test_new_prepared_journal_ancestry_is_fsynced_before_ledger_append(tmp_path, monkeypatch):
     root = _git_root(tmp_path)
     accept, _source = _staged(root, monkeypatch)
@@ -700,17 +823,26 @@ def test_causal_closure_tip_ignores_equal_rollback_and_offset_timestamps():
 
 
 def test_receipt_expiry_uses_aware_receipt_order_not_wall_clock(tmp_path, monkeypatch):
-    root = _git_root(tmp_path); accept, source_set = _staged(root, monkeypatch); source_id = source_set["source"]["receipt_msg_id"]
-    plan_id = source_set["source"]["branch"].removeprefix("nara/")
-    _rehash(root, lambda rows: [row.update({"ts": "2026-08-31T19:00:00-05:00"}) for row in rows if row["msg_id"] == source_id] + [row.update({"ts": "2026-08-31T18:00:00-05:00", "expires_at": "2026-09-01T01:00:00+01:00"}) for row in rows if row["msg_id"] == plan_id])
-    receipt = next(row for row in mailbox.read(root / "run_state/oracle_nara_mailbox.jsonl") if row["msg_id"] == source_id)
-    source_set["source"]["receipt_row_sha256"] = receipt["row_sha256"]
-    proposed = thesis.create_candidate_set(root, source_set); screened = thesis.create_screen(root, proposed["candidate_set_sha256"], _screen(proposed["candidate_set_sha256"], source_set["proposed_at"]))
-    accept["candidate_set_sha256"], accept["screen_sha256"] = proposed["candidate_set_sha256"], screened["screen_sha256"]
-    _rehash(root, lambda rows: [row["body"]["thesis_selection"].update({"candidate_set_sha256": accept["candidate_set_sha256"], "screen_sha256": accept["screen_sha256"]}) for row in rows if row["msg_id"] in {accept["proposal_msg_id"], accept["review_msg_id"]}])
-    hashes = {row["msg_id"]: row["row_sha256"] for row in mailbox.read(root / "run_state/oracle_nara_mailbox.jsonl")}
-    accept["proposal_row_sha256"], accept["review_row_sha256"] = hashes[accept["proposal_msg_id"]], hashes[accept["review_msg_id"]]
-    assert thesis.create_meta_accept(root, accept)["chosen_candidate_id"] == "c-alpha"
+    root = _git_root(tmp_path)
+    real_datetime = mailbox.datetime
+    base = real_datetime.fromisoformat("2026-09-01T00:00:00+00:00")
+    calls = {"count": 0}
+
+    class OffsetClock(real_datetime):
+        @classmethod
+        def now(cls, _tz=None):
+            calls["count"] += 1
+            instant = base + mailbox.timedelta(minutes=calls["count"])
+            offset = mailbox.timezone(mailbox.timedelta(hours=-5 if calls["count"] % 2 else 1))
+            return instant.astimezone(offset)
+
+    monkeypatch.setattr(mailbox, "datetime", OffsetClock)
+    source_set, terminal, plan = _produce(root, monkeypatch, plan_expires_hours=1)
+    assert thesis._mailbox_time(plan["ts"], "plan") < thesis._mailbox_time(terminal["ts"], "receipt")
+    assert thesis._mailbox_time(terminal["ts"], "receipt") <= thesis._mailbox_time(
+        plan["expires_at"], "expiry", allow_future=True,
+    )
+    thesis._verify_candidate_provenance(root, source_set, "0" * 64, admission=True)
 
 
 def test_later_meta_reject_blocks_accept_then_select_but_not_frozen_projection(tmp_path, monkeypatch):
@@ -732,9 +864,29 @@ def test_killed_focus_refuses_exact_replay_but_allows_fresh_review_and_graduatio
     fresh, _source = _staged(root, monkeypatch, nonce="fresh"); second = thesis.create_meta_accept(root, fresh)
     closure = research_focus.project_focus(root)["last_closure"]
     new_ref = _primary_source_ref(_source)
-    _rehash(root, lambda rows: [row["body"].update({"reopening": {"closure_sha256": closure["closure_sha256"], "condition": "A fresh Oracle proposal and independent meta review.", "evidence_refs": [new_ref]}}) for row in rows if row["msg_id"] == fresh["review_msg_id"]])
-    row = next(row for row in mailbox.read(root / "run_state/oracle_nara_mailbox.jsonl") if row["msg_id"] == fresh["review_msg_id"])
-    fresh["review_row_sha256"] = row["row_sha256"]
+    reopening = mailbox.post(
+        "claude", "review",
+        {
+            "verdict": "accept",
+            "thesis_selection": {
+                key: fresh[key] for key in (
+                    "candidate_set_sha256", "screen_sha256", "chosen_candidate_id",
+                    "reviewed_head", "focus_generation",
+                )
+            },
+            "thesis_focus": _focus(),
+            "reopening": {
+                "closure_sha256": closure["closure_sha256"],
+                "condition": "A fresh Oracle proposal and independent meta review.",
+                "evidence_refs": [new_ref],
+            },
+        },
+        to="all", in_reply_to=fresh["proposal_msg_id"],
+        path=root / "run_state/oracle_nara_mailbox.jsonl",
+    )
+    fresh["accepted_at"] = reopening["ts"]
+    fresh["review_msg_id"] = reopening["msg_id"]
+    fresh["review_row_sha256"] = reopening["row_sha256"]
     second = thesis.create_meta_accept(root, fresh)
     selected = thesis.select_thesis_focus(root, meta_accept_sha256=second["meta_accept_sha256"], reason="Reviewed canonical selection.")
     research_focus.close_focus(root, disposition="graduated", reason="The focus graduated.", reopening_conditions=[], evidence_refs=["receipt"], closed_by="oracle", authority="review", expected_receipt_sha256=selected["receipt_sha256"])
@@ -822,7 +974,10 @@ def test_malformed_naive_or_future_receipt_time_refuses_selection(tmp_path, monk
     source_set["source"]["receipt_row_sha256"] = receipt["row_sha256"]
     proposed = thesis.create_candidate_set(root, source_set); screened = thesis.create_screen(root, proposed["candidate_set_sha256"], _screen(proposed["candidate_set_sha256"]))
     accept["candidate_set_sha256"], accept["screen_sha256"] = proposed["candidate_set_sha256"], screened["screen_sha256"]
-    with pytest.raises(thesis.ThesisSelectionError, match="mailbox ts"): thesis.create_meta_accept(root, accept)
+    with pytest.raises(thesis.ThesisSelectionError, match="terminal receipt identity differs"):
+        thesis.create_meta_accept(root, accept)
+    with pytest.raises(thesis.ThesisSelectionError, match="invalid mailbox ts"):
+        thesis._mailbox_time(timestamp, "mailbox ts")
 
 
 def test_invalid_mailbox_recipient_refuses_provenance(tmp_path, monkeypatch):
@@ -832,5 +987,30 @@ def test_invalid_mailbox_recipient_refuses_provenance(tmp_path, monkeypatch):
     source_set["source"]["receipt_row_sha256"] = receipt["row_sha256"]
     proposed = thesis.create_candidate_set(root, source_set); screened = thesis.create_screen(root, proposed["candidate_set_sha256"], _screen(proposed["candidate_set_sha256"]))
     accept["candidate_set_sha256"], accept["screen_sha256"] = proposed["candidate_set_sha256"], screened["screen_sha256"]
-    with pytest.raises(thesis.ThesisSelectionError, match="recipient"):
+    assert any(item["msg_id"] == source_id and item["reason"] == "recipient"
+               for item in mailbox.quarantine(mailbox.read(root / "run_state/oracle_nara_mailbox.jsonl")))
+    with pytest.raises(thesis.ThesisSelectionError, match="terminal receipt identity differs"):
         thesis.create_meta_accept(root, accept)
+
+
+def test_forged_writer_id_is_quarantined_from_candidate_provenance(tmp_path, monkeypatch):
+    root = _git_root(tmp_path)
+    source_set, _terminal, _plan = _produce(root, monkeypatch)
+    mailbox_path = root / "run_state/oracle_nara_mailbox.jsonl"
+    original_id = source_set["source"]["receipt_msg_id"]
+    forged_id = "nara-0000000000000000"
+    _rehash(
+        root,
+        lambda rows: [
+            row.update({"msg_id": forged_id})
+            for row in rows if row["msg_id"] == original_id
+        ],
+    )
+    recorded = mailbox.read(mailbox_path)
+    quarantine = mailbox.quarantine(recorded)
+    assert any(item["msg_id"] == forged_id and item["reason"] == "msg_id" for item in quarantine)
+    forged_row = next(row for row in recorded if row["msg_id"] == forged_id)
+    source_set["source"]["receipt_msg_id"] = forged_id
+    source_set["source"]["receipt_row_sha256"] = forged_row["row_sha256"]
+    with pytest.raises(thesis.ThesisSelectionError, match="terminal receipt identity differs"):
+        thesis._verify_candidate_provenance(root, source_set, "0" * 64, admission=False)
