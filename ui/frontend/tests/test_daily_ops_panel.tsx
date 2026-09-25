@@ -182,6 +182,28 @@ describe("DailyOpsPanel", () => {
     }] }))).toBeNull();
   });
 
+  it("admits a historical plan only as read-only context without a current revision", () => {
+    const base = v3Summary();
+    D.v3 = v3Summary({
+      current_plan_revision: null,
+      daily_plan: { ...base.daily_plan, is_current: false },
+    });
+    show();
+
+    expect(screen.getByTestId("daily-ops-v3-panel")).toBeInTheDocument();
+    expect(screen.getByText(/historical only/)).toBeInTheDocument();
+    expect(screen.queryByTestId("daily-ops-v3-fallback")).toBeNull();
+  });
+
+  it("rejects inconsistent current versus historical plan revision combinations", () => {
+    const base = v3Summary();
+    expect(admitDailyOpsV3Summary({ ...base, current_plan_revision: null })).toBeNull();
+    expect(admitDailyOpsV3Summary({
+      ...base,
+      daily_plan: { ...base.daily_plan, is_current: false },
+    })).toBeNull();
+  });
+
   it("fails closed on every widened or incomplete v3 boundary and retains v2", () => {
     const base = v3Summary();
     const invalid = [

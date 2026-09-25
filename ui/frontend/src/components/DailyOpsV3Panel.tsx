@@ -50,12 +50,15 @@ function strings(value: unknown, limit: number, length: number): string[] | null
 
 function plan(value: unknown, revision: unknown): V3Plan | undefined {
   if (value === null) return revision === null ? null : undefined;
-  if (!record(value) || !text(value.id, 64) || value.id !== revision || !text(value.revision, 12) ||
+  if (!record(value) || !text(value.id, 64) || !text(value.revision, 12) ||
       !text(value.path, 200) || !stamp(value.written_at) || typeof value.is_current !== "boolean" ||
       !keys(value, ["id", "date", "revision", "path", "sha256", "written_at", "is_current", "week_alignment", "bottlenecks", "review"]) ||
       !/^\d{4}-\d\d-\d\d$/.test(String(value.date)) || !/^[0-9a-f]{64}$/.test(String(value.sha256)) ||
       optionalText(value.week_alignment, 1200) === undefined || !Array.isArray(value.bottlenecks) ||
       value.bottlenecks.length > 5 || !value.bottlenecks.every(item => text(item, 400))) return undefined;
+  // A historical plan is evidence only.  It must never carry an actionable
+  // current revision, while a current plan must bind its own immutable id.
+  if ((value.is_current && value.id !== revision) || (!value.is_current && revision !== null)) return undefined;
   if (value.review !== null) {
     if (!record(value.review) || !keys(value.review, ["note_msg_id", "sha_matches", "verdict", "review_msg_id", "reviewed_at", "summary", "accepted_items"]) ||
         !text(value.review.note_msg_id, 80) || typeof value.review.sha_matches !== "boolean" ||
