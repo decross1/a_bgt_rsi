@@ -229,6 +229,21 @@ describe("DailyOpsPanel", () => {
     expect(within(card).getByRole("button", { name: "Choose / reply" })).toBeInTheDocument();
   });
 
+  it("does not repeat a concise owner-question headline before its long source context", () => {
+    const base = summary();
+    const title = "Should the Nara lane build on main?";
+    const context = "The Flash checkout and main have divergent inputs, so the attended lane-base decision remains open.";
+    D.summary = summary({ waiting_on_you: [{
+      ...base.waiting_on_you[1], title, question: title, context,
+      choices: ["reconcile", "pin", "hold"], recommendation: "reconcile", consequence: "Nara remains held",
+    }] });
+    show();
+    const card = screen.getByTestId("daily-waiting-claude-18ae939243e70e7d");
+    expect(within(card).queryByTestId("daily-waiting-claude-18ae939243e70e7d-question")).toBeNull();
+    expect(card).toHaveTextContent(context);
+    expect(within(card).getByRole("button", { name: "Choose / reply" })).toBeInTheDocument();
+  });
+
   it("keeps resolved and prerequisite questions in a non-action update feed", () => {
     D.summary = summary({ waiting_on_you: [], question_updates: [{
       id: "codex-resolution-1", question_id: "oracle-old-question", title: "Timer concurrency",

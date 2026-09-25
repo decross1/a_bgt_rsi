@@ -225,7 +225,8 @@ function WaitingOnYou({ items, requestAvailable, openEditor }: {
           </div>
           <p className="mt-1 text-xs text-[var(--fg-muted)]">Asked by {ownerWord(item.askedBy)}
             {item.askedAt ? ` · ${timeLabel(item.askedAt)}` : ""}</p>
-          <p className="mt-2 text-sm" data-testid={`daily-waiting-${item.id}-question`}>{item.question}</p>
+          {item.question !== headline && <p className="mt-2 text-sm"
+            data-testid={`daily-waiting-${item.id}-question`}>{item.question}</p>}
           {item.context && <p className="mt-2 text-sm text-[var(--fg-muted)]">{item.context}</p>}
           {item.choices.length > 0 && <div className="mt-2 text-sm">
             <p className="font-medium">Choices</p>

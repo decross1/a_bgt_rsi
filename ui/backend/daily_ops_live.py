@@ -97,6 +97,15 @@ def _clip(value: object, maximum: int = 240) -> str | None:
     return text if len(text) <= maximum else text[:maximum - 1].rstrip() + "…"
 
 
+def _first_clip(*values: object, maximum: int) -> str | None:
+    """Return the first usable bounded display value, not merely the first truthy value."""
+    for value in values:
+        clipped = _clip(value, maximum)
+        if clipped is not None:
+            return clipped
+    return None
+
+
 def _body(row: dict) -> dict:
     return row["body"] if isinstance(row.get("body"), dict) else {}
 
@@ -144,10 +153,20 @@ def _question_resolution(question: dict, rows: list[dict]) -> dict | None:
 def _question_card(row: dict) -> dict:
     """Bounded, typed display fields for a genuine owner question."""
     body = _body(row)
-    title = _clip(body.get("title") or body.get("question") or body.get("text"), 300) or row["msg_id"]
-    question = _clip(body.get("question") or body.get("title") or body.get("text"), 300) or row["msg_id"]
-    context = _clip(body.get("context") or body.get("decision_context") or body.get("why")
-                    or (body.get("question") if body.get("title") else None) or body.get("text"), 1200)
+    title_from_body = _clip(body.get("title"), 300)
+    title = _first_clip(body.get("title"), body.get("question"), body.get("text"), maximum=300) or row["msg_id"]
+    question = title
+    full_question = _clip(body.get("question"), 1200)
+    short_question = _clip(body.get("question"), 300)
+    context = _first_clip(body.get("context"), body.get("decision_context"), body.get("why"), maximum=1200)
+    if context is None and full_question is not None and (
+            (title_from_body is not None and short_question != title)
+            or (title_from_body is None and full_question != short_question)):
+        context = full_question
+    if context is None:
+        text = _clip(body.get("text"), 1200)
+        if text is not None and _clip(body.get("text"), 300) != title:
+            context = text
     choices = body.get("options")
     if not isinstance(choices, list):
         choices = []
