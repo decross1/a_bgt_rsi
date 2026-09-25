@@ -3865,3 +3865,141 @@ and evidence record is [LOOP_V2.md](LOOP_V2.md), with
 unchanged. This maintenance decision does not promote a model/runtime, relax
 research gates, convert local CPU controls into validated findings, or authorize
 paid frontier API calls. The weekly Spark cap remains 120 minutes.
+
+> **2026-09-25 source-port/reconciliation note.** The D-084–D-087 bodies below
+> are historical text copied byte-for-byte from committed Flash sources; this
+> note is not part of those bodies. Their current implementation status,
+> host-service boundary, and current-session thesis-selection instruction are
+> qualified in
+> [docs/v2/THESIS_GOVERNANCE_RECONCILIATION_2026-09-25.md](docs/v2/THESIS_GOVERNANCE_RECONCILIATION_2026-09-25.md).
+
+## D-084 — Owner authority narrows to live trading; theses pass a T/S/A validation ladder (owner direction, 2026-09-22)
+
+**Authority.** Derrick's direct instructions in the primary Claude session on
+2026-09-22, quoted verbatim below. Recorded by Claude (`claude-code-main`, acting
+as meta-oracle); this entry does not impersonate the owner.
+
+> The only thing today that should never happen without me are things that
+> implement live trading (we are far off from this place today)
+
+> you can show me the analysis but mostly yes - this should be the proposed
+> decision. But to be clear this still needs all of the proper upstream vetting,
+> works and upheld in a simulated game a theorectical experiment that upholds the
+> thesis/hypothesis - we have openspiel for this (but nara/oracle/you can help
+> design any experiment that can validate the thesis/hypothesis). Then it should
+> go into a simulated applied game. Either with agents, or some other medium that
+> we can actually test it outside of just theory, the semi-synthetic layer. And
+> then finally a proposal for the applied layer, how to test it either paper trade
+> or other wise in one of the 3 proposed markets.
+
+> ratify it, wire the goals into oracle, and commit
+
+**Decision 1 — the owner-required gate is live trading.** Anything that places a
+real order, connects a funded account or implements a live-trading path needs the
+owner's explicit approval. Everything else (focus selection, study registration,
+research gates, merges, timers) may proceed once it has passed its reviews: Oracle's
+plan, the meta-oracle's review, the tests, and the ladder in Decision 2. This
+supersedes D-082's "`research_focus.select_focus` stays operator-only" and the human
+gates on registration and research progress. It keeps D-061 (frontier models review
+and never generate research content or findings), L5 as the owner's verdict (the top
+rung, not a gate on progress), the pause files as kill switches, and the Polymarket
+live-trading guardrail. CLAUDE.md inviolate rule 3 is to be reconciled with this
+entry in the documentation pass (goal G6.4).
+
+**Decision 2 — the validation ladder.** A thesis advances only through: **T**, a
+game-theoretic model tested in simulation (OpenSpiel, installed in `.venv-chroma`),
+whose preregistered decision rule upholds the hypothesis; **S**, a semi-synthetic
+applied game (agents on local Flash or another measurable medium) with a
+preregistered outcome; **A**, a written proposal to test it in one of the three
+candidate markets (options preferred, prediction markets, crypto only if justified;
+`docs/v2/APPLICATION_RESEARCH_AGENDA.md`) by paper trading or another no-capital
+method, with a data-readiness audit. Paper trials may run; going live is the
+owner's gate. Each stage needs a preregistered design, an independent review and
+retained results, including negative ones; results are never re-run toward a better
+outcome.
+
+**Decision 3 — pursue until killed, then regenerate.** A kill is a recorded
+disposition (failed at T, S or A under its decision rule, or closed for low expected
+value) with its reason and reopening conditions, retained as negative knowledge.
+A kill immediately triggers successor generation without waiting for the owner.
+
+**Decision 4 — the goal plan.** `docs/v2/ALIGNMENT_AND_GOALS.md` (audit, target
+lifecycle and goals G0–G7) is the plan Oracle's daily plans work toward. Every plan
+item cites a goal ID, and the meta-oracle checks it. The first bottleneck is G0:
+research has been gated on `focus_pending` since 2026-09-20 06:00 UTC because the
+focus model has no terminal state and nothing reads the disposition artifact. The
+payoff-assistance line is to be closed (owner answer "B", mailbox seq 45) once G0.1
+provides a way to close a focus.
+
+**Reserved number.** D-083 stays reserved for the writer and ownership matrix
+(`docs/ORACLE_NARA_BUILDOUT_PLAN.md` A5).
+
+## D-085 — No daily budget on Nara (owner direction, 2026-09-23)
+
+**Authority.** Derrick, in the primary Claude session on 2026-09-23, verbatim:
+
+> can you remove any "daily" budget from nara...nara is also running on a local
+> open source model (the same one the pi oracle is going through)
+
+**Decision.** Nara's daily limits are off by default: the coordinator's daily cap,
+its clock pacing and per-class shares (`COORDINATOR_DAILY_CAP`, default now 0 =
+none; D-063 had set 60), the daemon's matching pre-check, and the 3-topics-per-UTC-day
+registration limit (`TOPIC_DAILY_CAP`, default 0 = none). Setting either variable
+restores a cap. What still paces Nara: cycle cadence (30-minute daemon heartbeat plus
+the hourly cron), one Flash request at a time, the one-unconsumed-topic rule, and the
+campaign registry's 512-receipt limit (without a daily limit this fills in days, so a
+successor campaign becomes a regular need, not a rare one). Spend is still written to
+`run_state/coordinator_budget.jsonl`. Frontier calls are unaffected: the frontier
+screen runs only on finding promotion. The weekly frontier budget (D-061) is unchanged.
+
+## D-086 — Research direction: information and beliefs; learn from anomalies; scouting always on (owner direction, 2026-09-23)
+
+**Authority.** Derrick, in the primary Claude session's research planning session on 2026-09-23, verbatim:
+
+> let's stick to information and beliefs - i am interested in behavioral
+> economics (khaneman), quantum theory and how it relates to information
+> dissemintion (david duetch) and also agents in games like counter swapping or
+> being a one trick or cheesy strategies, civ6. But I also want to think about not
+> just falisying the hypothesis, but also consider, okay if something failed or
+> behavied differently, well what does this relate to or can we expand on this, or
+> did we get a novel insight that let's us refine the campaign/hypothesis.
+
+> I want the literature scouting to always happen, as this should be an ever
+> growing repository of knowledge. You could imagine we are building or trying to
+> validate some research, and a new paper comes out that is related or helps
+> progress the research, we want to have an understanding of that. If it doesn't
+> relate store it/embed it as it should be part of future research work as well.
+
+Selection answers in the same session: the owner sets the direction and Nara
+proposes 3–5 candidates; each thesis names its own market.
+
+**Decision.** (1) The next thesis comes from the area of information and
+beliefs, using the lenses in `docs/v2/THESIS_BRIEF_2026-09-23.md`. (2) Refinement
+protocol: an unexpected or failed result is recorded unchanged, explained in an
+anomaly note, and may spawn a new, separately preregistered branch hypothesis;
+confirmatory data is never reused for the branch that it suggested. This extends
+D-084 Decision 3 ("pursue until killed"). (3) Literature scouting runs
+permanently: every paper is embedded and stored, and while a thesis is active each
+paper is scored for relevance and linked to it when related (goal G1.2).
+Unrelated single-paper hypotheses stop being the default cycle output once G1.2
+lands.
+
+## D-087 — Thesis conviction scores, a kill threshold, and a calibration benchmark (owner direction, 2026-09-23)
+
+**Authority.** Derrick, in the same planning session, verbatim:
+
+> We should have a score or conviction that this will lead to a dead end, or if
+> the question becomes uninteresting. We can kill it. We can try to use this as an
+> oracle/nara benchmark on how to best refine and update the lab.
+
+**Decision.** Every active thesis carries conviction forecasts: the probability of
+passing T, S and A, the probability of a dead end, and an interest score, each
+with its reasons. They are recorded when the thesis is selected and re-forecast
+after every stage result or anomaly note, append-only, in
+`run_state/thesis_convictions.jsonl`. A thesis may be killed when its dead-end
+probability crosses the threshold (initially 0.8) or its interest score falls to
+the floor, once the meta-oracle's review agrees; the kill records the forecasts
+that justified it. When outcomes resolve, each forecaster (Nara, Oracle, and the
+meta-oracle as a comparison) is scored for calibration (Brier score and
+reliability). That score is a standing benchmark of how well each agent judges
+and refines the research, and it feeds the trust ramp (docs/META_ORACLE_DAILY_LOOP.md §6).
