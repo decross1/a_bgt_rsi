@@ -144,18 +144,21 @@ def _question_resolution(question: dict, rows: list[dict]) -> dict | None:
 def _question_card(row: dict) -> dict:
     """Bounded, typed display fields for a genuine owner question."""
     body = _body(row)
+    title = _clip(body.get("title") or body.get("question") or body.get("text"), 300) or row["msg_id"]
     question = _clip(body.get("question") or body.get("title") or body.get("text"), 300) or row["msg_id"]
-    context = _clip(body.get("context") or body.get("decision_context") or body.get("why") or body.get("text"), 1200)
+    context = _clip(body.get("context") or body.get("decision_context") or body.get("why")
+                    or (body.get("question") if body.get("title") else None) or body.get("text"), 1200)
     choices = body.get("options")
     if not isinstance(choices, list):
         choices = []
     return {
-        "title": question,
+        "title": title,
         "question": question,
         "context": context,
         "choices": [_clip(choice, 300) for choice in choices[:8] if _clip(choice, 300)],
         "recommendation": _clip(body.get("recommendation"), 600),
-        "consequence": _clip(body.get("consequence") or body.get("impact") or body.get("if_deferred"), 600),
+        "consequence": _clip(body.get("consequence") or body.get("impact") or body.get("if_deferred")
+                             or body.get("consequence_of_deferring"), 600),
     }
 
 

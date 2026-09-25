@@ -196,8 +196,6 @@ function WorkCard({ card, requestAvailable, openEditor }: {
   </article>;
 }
 
-const WAITING_ACTIONS: DailyOpsDecisionAction[] = ["approve", "decline", "defer", "reply"];
-
 function WaitingOnYou({ items, requestAvailable, openEditor }: {
   items: DailyWaitingItem[];
   requestAvailable: boolean;
@@ -216,7 +214,10 @@ function WaitingOnYou({ items, requestAvailable, openEditor }: {
         const targetKind: DailyOpsDecisionTarget = "question";
         const targetId = item.msgId ?? item.id;
         const canAct = item.msgId != null;
-        const actions = item.choices.length > 0 ? ["reply" as const] : WAITING_ACTIONS;
+        // A structured source can make its choices visible, but the owner still
+        // replies in their own words.  Legacy free-text questions must not be
+        // rendered as an invented approve/decline/defer decision.
+        const actions: DailyOpsDecisionAction[] = ["reply"];
         return <li key={item.id} data-testid={`daily-waiting-${item.id}`}>
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <span className="font-medium">{headline}</span>

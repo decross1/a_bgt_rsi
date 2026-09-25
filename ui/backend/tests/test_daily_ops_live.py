@@ -255,6 +255,38 @@ def test_owner_cards_require_a_real_question_and_direct_human_answer_or_explicit
     }]
 
 
+def test_owner_question_card_keeps_structured_title_and_legacy_free_text_actionable():
+    structured = {
+        "msg_id": "claude-lane-base", "body": {
+            "title": "Should the Nara lane build on main?",
+            "question": "The live checkout is on a Flash branch while main has the reviewed lane inputs.",
+            "options": ["reconcile in an attended window", "pin the lane base", "keep items held"],
+            "recommendation": "Reconcile in an attended window.",
+            "consequence_of_deferring": "Nara items remain held on the divergent checkout.",
+        },
+    }
+    card = live._question_card(structured)
+    assert card == {
+        "title": "Should the Nara lane build on main?",
+        "question": "The live checkout is on a Flash branch while main has the reviewed lane inputs.",
+        "context": "The live checkout is on a Flash branch while main has the reviewed lane inputs.",
+        "choices": ["reconcile in an attended window", "pin the lane base", "keep items held"],
+        "recommendation": "Reconcile in an attended window.",
+        "consequence": "Nara items remain held on the divergent checkout.",
+    }
+
+    legacy = {"msg_id": "claude-retro", "body": {
+        "title": "Two authority rulings from the retro",
+        "text": "The first ruling needs a named state-root exception; the second asks about a canary.",
+    }}
+    assert live._question_card(legacy) == {
+        "title": "Two authority rulings from the retro",
+        "question": "Two authority rulings from the retro",
+        "context": "The first ruling needs a named state-root exception; the second asks about a canary.",
+        "choices": [], "recommendation": None, "consequence": None,
+    }
+
+
 def test_projection_rejects_resolution_evidence_from_a_later_or_self_row_or_reviewer():
     question = {"seq": 1, "msg_id": "oracle-q", "actor": "oracle", "to": "owner", "kind": "question",
                 "body": {"question": "Run it?"}, "ts": "2026-09-23T18:00:00+00:00"}
