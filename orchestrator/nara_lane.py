@@ -1,7 +1,8 @@
 """Nara's implementor lane (owner direction 2026-09-22, D-082).
 
 Turns Oracle plan items from the mailbox into validated branches, one at a
-time and outside the research coordinator. Per item: admit deterministically,
+time unless concurrency is raised (below) and outside the research
+coordinator. Per item: admit deterministically,
 write Oracle's red-first test into a fresh worktree, confirm it fails, let a
 local-Flash builder edit only the allowed paths, run the test in a network-less
 bubblewrap sandbox, then commit on nara/<id> and post a receipt. It never
@@ -23,13 +24,27 @@ an acceptance test discriminates was asserted without being run twice, and the
 cost was three postings, two withdrawals and six lane holds. `precheck()` runs
 the claim instead: in the sandbox with no implementation (it must be red) and
 again with an author-supplied known-good stub (it must be green), then writes a
-receipt named for sha256(test_content) under run_state/precheck_receipts/. An
-item whose test has no matching green receipt is held by admission(). The gate
+receipt named for a descriptor of test content, path, argv, and exact checkout
+commit/tree under run_state/precheck_receipts/. An item whose test has no
+matching green receipt is held by admission(). The gate
 is deliberately not in oracle_mailbox.post() - the mailbox is a generic channel
 and its own tests post plan items without receipts - so it can only be enforced
 at the lane, which means a hold costs a withdraw-and-repost (a `held` receipt is
 terminal in the fold, as an `amend` verdict already found). The receipt is a
 discipline, not authentication: the actor who writes the test writes the receipt.
+
+Concurrency (2026-09-24): one runner holds run_state/.nara_lane.lock for its
+whole pass, as before, and may run up to K items at once in a bounded thread
+pool. K is `max_concurrent_items` in config/nara_lane.json (default 1, the
+serial lane), overridable by --max-concurrent or NARA_LANE_MAX_CONCURRENT, and
+always capped at the server's max_running_requests - 1 from
+config/model_deployment.json (floor 1), so the lane never takes every server
+slot. Only the runner's dispatcher claims, in mailbox order; every claim takes a
+per-item flock under run_state/nara_lane_claims/ and re-reads the mailbox under
+it before posting `claimed`, and the lock is held until the terminal receipt is
+posted. A `claimed` item is recovered as abandoned only when its claim lock is
+free (its claimant died). Admission, the review gate, the fence, the sandbox and
+the per-item checks are unchanged and run per item exactly as in the serial lane.
 """
 from __future__ import annotations
 
@@ -44,8 +59,10 @@ import stat
 import sys
 import subprocess
 import tempfile
+import threading
 import time
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -64,20 +81,207 @@ DENIED_PATTERN = re.compile(r"PREREGISTRATION|^experiments/research_campaign_|[*
                             r"|(^|/)\.git(/|$)|(^|/)\.gitattributes$|(^|/)\.gitmodules$")
 GIT_SAFE = ("-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.sshCommand=false",
             "-c", "submodule.recurse=false")
-MAX_ATTEMPTS, MAX_WALL_MINUTES = 3, 30
+# 60 minutes / 1800 s (2026-09-24): with K items sharing the server's decode, a
+# 12K-token build at ~15-20 tok/s takes 10-14 minutes, so the serial budgets
+# (30 minutes / 900 s) would time out a correct build. Retries stay at zero.
+MAX_ATTEMPTS, MAX_WALL_MINUTES = 3, 60
 MAX_TEST_BYTES, MAX_FILE_BYTES, BUILDER_MAX_TOKENS = 8 * 1024, 48 * 1024, 12000
 TEST_TIMEOUT_S = 300
+BUILDER_TIMEOUT_S = 1800.0
+CONCURRENCY_ENV = "NARA_LANE_MAX_CONCURRENT"
+MAX_CONCURRENT_ITEMS = 4  # hard ceiling, whatever the config or the server says
+# nara-lane.service stops a pass at TimeoutStartSec=5400; a pass stops claiming
+# before an item's full budget would run past that, less a safety margin.
+PASS_BUDGET_ENV = "NARA_LANE_PASS_BUDGET_S"
+DEFAULT_PASS_BUDGET_S = 5400 - 300
+_GIT_SERIAL = threading.Lock()  # worktree creation and commits, one at a time per runner
+_LOG_SERIAL = threading.Lock()
 
 
 class LaneError(RuntimeError):
     pass
 
 
+class FixtureCheckError(RuntimeError):
+    """A declared fixture source cannot be read, parsed or judged. Refuse the item
+    rather than skip the row: a silently-skipped row is how a gate starts lying."""
+    pass
+
+
+def _fixture_objects(path: Path) -> list[dict]:
+    """The live rows a fixture is checked against: one object for a JSON file, one per
+    non-blank line for JSONL, which is the shape of most live lab state
+    (run_state/oracle_nara_mailbox.jsonl, run_state/week1.run.jsonl).
+
+    Raises FixtureCheckError naming the file when it cannot be read, when a line does
+    not parse, or when a row is not an object.
+    """
+    try:
+        text = path.read_text(errors="replace")
+    except OSError as exc:
+        raise FixtureCheckError(f"cannot read {path}: {exc}") from exc
+    if path.suffix == ".jsonl":
+        rows = []
+        for number, line in enumerate(text.splitlines(), 1):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                raise FixtureCheckError(f"{path} line {number} is not JSON") from None
+            if not isinstance(row, dict):
+                raise FixtureCheckError(f"{path} line {number} is not a JSON object")
+            rows.append(row)
+        return rows
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        raise FixtureCheckError(f"{path} is not parseable JSON") from None
+    if not isinstance(doc, dict):
+        raise FixtureCheckError(f"{path} is a JSON {type(doc).__name__}, not an object")
+    return [doc]
+
+
+def _observed_keys(rows: list[dict], fixture: dict) -> set:
+    """Top-level keys the live file really holds. Where rows carry a `kind` field, the
+    union is over rows of the fixture's own kind, because rows of another kind
+    legitimately differ in shape (a mailbox `note` and a `receipt` share few keys).
+    A fixture of a kind the file never holds is judged against all rows and refused
+    below, where the real kinds are listed.
+    """
+    kinds = {r["kind"] for r in rows if isinstance(r.get("kind"), str)}
+    kind = fixture.get("kind")
+    if kinds and isinstance(kind, str) and kind in kinds:
+        rows = [r for r in rows if r.get("kind") == kind]
+    return {key for row in rows for key in row}
+
+
+def _fixture_is_tracked(path: Path, root: Path) -> bool:
+    """Whether git tracks `path` in `root`. A live source a fixture claims to come from
+    has to be a file other people can read and would notice changing; an untracked file
+    in a working tree proves nothing about the lab's data.
+
+    Separate and monkeypatchable, because the real answer needs `git ls-files` against
+    the root that runs admission() - and a test that assumed one particular checkout is
+    what the rejected d3 did wrong (review claude-0404f2c56845b56f, seq 216)."""
+    try:
+        out = subprocess.run(["git", *GIT_SAFE, "-C", str(root), "ls-files", "--error-unmatch",
+                              str(path.relative_to(root))],
+                             capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return False
+    return out.returncode == 0
+
+
+def check_fixtures(item: dict) -> list[str]:
+    """Refuse a plan item whose test fixtures do not match the live files it declares.
+
+    Three days of lane holds came from one authoring defect (retro
+    claude-fd99b8f6159965c4, cause missing_context), and plan 2026-09-24 d1 cost nine
+    postings of the same shape: a fixture was derived by hand from a live file and got
+    its shape wrong - a key the file does not have, or an enum value it never holds -
+    or a plan item named a source file that exists nowhere. The lane found each one
+    only after a sandbox run, so every mistake cost a posting, a review round and a
+    hold. This refuses it before the sandbox rather than asking the author to be
+    careful.
+
+    A plan item declares `fixture_sources` {fixture name: repo-relative live path} and
+    `fixtures` {fixture name: the object its test uses}; `fixture_enums` {fixture name:
+    [field, ...]} names the fields whose values must also occur in the live file. Enum
+    fields are declared, never inferred - a str-valued field is not assumed to be an
+    enum, which would refuse most string fields in the lab's history.
+
+    Deliberately loose where looseness costs nothing: a fixture named in no source map
+    is unchecked (synthetic fixtures are fine), nested keys are not compared (top level
+    only, which is where the drift showed), and an enum field the fixture omits is
+    skipped. Sources, enums and fixtures are shape-checked by
+    mailbox.validate_plan_item(), so they are objects of the right type by here.
+
+    Raises FixtureCheckError on a live file that cannot be read, parsed or judged;
+    otherwise returns refusal reasons (empty means everything declared is observed).
+    """
+    body = item["body"]
+    sources, enums = body.get("fixture_sources") or {}, body.get("fixture_enums") or {}
+    fixtures = body.get("fixtures", {})
+    if not isinstance(fixtures, dict):
+        return ["fixtures must be an object mapping fixture name -> the object the test uses"]
+    reasons: list[str] = []
+    root = Path(ROOT)
+    for name, rel in sorted(sources.items()):
+        if rel.startswith("/") or ".." in Path(rel).parts:
+            reasons.append(f"fixture_sources.{name} points outside the repo root: {rel}")
+            continue
+        live = root / rel
+        try:
+            live.resolve().relative_to(root.resolve())
+        except ValueError:
+            reasons.append(f"fixture_sources.{name} points outside the repo root: {rel}")
+            continue
+        if not live.is_file():
+            reasons.append(f"fixture_sources.{name} names a live file that does not exist: {rel}")
+            continue
+        if not _fixture_is_tracked(live, root):
+            reasons.append(f"fixture_sources.{name} is not tracked by git, so it is not the "
+                           f"lab's data: {rel}")
+            continue
+        fixture = fixtures.get(name)
+        if fixture is None:
+            continue                       # case 6 (check_declared_sources_ship_fixtures)
+        if not isinstance(fixture, dict):
+            reasons.append(f"fixtures.{name} must be an object, got {type(fixture).__name__}")
+            continue
+        rows = _fixture_objects(live)
+        observed = _observed_keys(rows, fixture)
+        for key in sorted(set(fixture) - observed):
+            reasons.append(f"fixtures.{name} has a key no live row of {rel} has: {key} "
+                           f"(live keys: {sorted(observed)[:20]})")
+        kinds = {r["kind"] for r in rows if isinstance(r.get("kind"), str)}
+        kind = fixture.get("kind")
+        if kinds and isinstance(kind, str) and kind not in kinds:
+            reasons.append(f"fixtures.{name} has kind {kind!r}, which {rel} never holds "
+                           f"(live kinds: {sorted(kinds)})")
+        for field in sorted(enums.get(name, [])):
+            if field not in fixture:
+                continue
+            value = fixture[field]
+            values = {r[field] for r in rows if field in r and isinstance(r[field], str)}
+            if isinstance(value, str) and value not in values:
+                reasons.append(f"fixtures.{name}.{field}={value!r} is a value the live file {rel} "
+                               f"never holds (live values: {sorted(values)[:20]})")
+    return reasons
+
+
+def check_declared_sources_ship_fixtures(item: dict) -> list[str]:
+    """Refuse an item that declares fixture_sources or fixture_enums without the fixture
+    data that declaration is about.
+
+    A declaration claims the lane can check a fixture against a live file. That is only
+    meaningful if the item also ships the fixture object, because the fixture is what
+    the test uses and what the check compares. On the rejected d3 branch a bare
+    `fixture_sources` entry passed every check - `fixtures` was an unknown key to
+    validate_plan_item - so the gate was decorative (review claude-56275cf790bac03c,
+    finding 1). Both maps take the rule and both are keyed by fixture name, so a name
+    the shipped fixtures do not hold is a declaration about nothing.
+    """
+    body = item["body"]
+    sources = set(body.get("fixture_sources") or {})
+    enums = set(body.get("fixture_enums") or {})
+    shipped = {k for k, v in (body.get("fixtures") or {}).items() if isinstance(v, dict)}
+    reasons = [f"fixture_sources.{name} declares a live file but the item ships no fixtures.{name}, "
+               f"so nothing is compared and Nara's worktree gets no fixture: ship "
+               f"fixtures.{name} or drop the declaration"
+               for name in sorted(sources - shipped)]
+    reasons += [f"fixture_enums.{name} declares enum fields for a fixture the item does not ship, "
+                f"so no value is ever checked: ship fixtures.{name} or drop the declaration"
+                for name in sorted(enums - shipped)]
+    return reasons
+
+
 def log(task: str, status: str, actual: str, expected: str, duration_ms: int = 0) -> None:
     row = dict(timestamp=datetime.now(timezone.utc).isoformat(), task_id=f"nara-lane:{task}", agent="nara",
                status=status, observable_actual=actual[:2000], observable_expected=expected,
                duration_ms=duration_ms)
-    with RUN_LOG.open("a") as handle:
+    with _LOG_SERIAL, RUN_LOG.open("a") as handle:
         handle.write(json.dumps(row) + "\n")
 
 
@@ -86,7 +290,65 @@ def _path_ok(path: str) -> bool:
             and not DENIED_PATTERN.search(path) and not path.startswith("/"))
 
 
-def admission(item: dict) -> list[str]:
+# What builder() reports for an input path it cannot read. A missing input used to reach
+# the model as current_contents[path] = None, which reads as "an empty file to fill in":
+# review claude-e347ce59ca643116 (seq 165), material - plan 2026-09-24 d1 told its builder
+# to copy 19 paper titles from a reading list that exists nowhere, because implement()
+# creates the worktree as checkout HEAD plus the acceptance test and builder() shows
+# contents only for writable paths.
+INPUT_MISSING = ("NOT PRESENT in this worktree: it is not committed at the checkout HEAD, and "
+                 "a worktree is created from HEAD plus the acceptance test only. Do not copy, "
+                 "quote or invent its content; report the missing input in your output instead.")
+INPUT_PRESENT = "PRESENT"
+INPUT_OUTSIDE_FENCE = ("OUTSIDE THE LANE FENCE: the sandbox denies this path, so its content "
+                       "is never handed over. Do not copy, quote or invent content for it.")
+BUILDER_SYSTEM = (
+    "You are Nara's builder for the lab. Make the acceptance test pass by writing complete file "
+    "contents. Reply with ONLY a JSON object {\"files\": {\"<path>\": \"<full content>\"}} using only "
+    "the writable_paths. Never modify the acceptance test. Standard library only unless the file "
+    "already imports something else.")
+
+
+def _tree_kind(rev: str, rel: str, *, cwd: Path | None = None) -> str | None:
+    """Return 'blob' only for a regular file at the exact path in `rev`."""
+    done = subprocess.run(["git", "ls-tree", rev, "--", rel], cwd=str(cwd or ROOT),
+                          capture_output=True, text=True)
+    if done.returncode != 0:
+        return None
+    for line in done.stdout.splitlines():
+        metadata, separator, path = line.partition("\t")
+        if not separator or path != rel:
+            continue
+        parts = metadata.split()
+        if len(parts) == 3 and parts[0] in ("100644", "100755") and parts[1] == "blob":
+            return "blob"
+    return None
+
+
+def _input_visibility(input_paths: list, writable: list, *, cwd: Path | None = None,
+                      worktree: Path | None = None) -> dict[str, str]:
+    """Per declared input: can builder() actually hand it over? Readable means a blob
+    tracked at the checkout HEAD, or a writable path already present in the worktree.
+    A path the lane fence denies gets its own verdict: it is not a readability question,
+    and calling it 'not a file tracked at the checkout HEAD' is false (review
+    claude-80ce66157b935e62 seq 188, amendment 3 - run_state/secrets.json can be tracked)."""
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(cwd or ROOT),
+                          capture_output=True, text=True).stdout.strip()
+    verdicts: dict[str, str] = {}
+    for rel in input_paths:
+        if not isinstance(rel, str) or (not _path_ok(rel) and f"{rel}/" not in ALLOWED_PREFIXES):
+            verdicts[rel] = INPUT_OUTSIDE_FENCE
+            continue
+        if _tree_kind(head, rel, cwd=cwd) != "blob":
+            if not (isinstance(rel, str) and rel in writable and worktree is not None
+                    and (worktree / rel).is_file()):
+                verdicts[rel] = INPUT_MISSING
+                continue
+        verdicts[rel] = INPUT_PRESENT
+    return verdicts
+
+
+def admission(item: dict, *, repo_root: Path | None = None) -> list[str]:
     """Deterministic policy; an empty list means admissible."""
     body, reasons = item["body"], []
     if item["actor"] != "oracle":
@@ -94,6 +356,18 @@ def admission(item: dict) -> list[str]:
     for path in body["allowed_write_paths"]:
         if not _path_ok(path):
             reasons.append(f"path outside the lane fence: {path}")
+    # Declared inputs must be readable by the builder. An input that is not tracked at the
+    # checkout HEAD makes the objective unexecutable, and the path fence cannot catch it:
+    # notes/... is inside the fence. Checked before the precheck rule so the held receipt
+    # names the real cause instead of a missing receipt.
+    for path, verdict in _input_visibility(body.get("input_paths") or [],
+                                          list(body["allowed_write_paths"]), cwd=repo_root).items():
+        if verdict == INPUT_OUTSIDE_FENCE:
+            reasons.append(f"declared input path is outside the lane fence: {path}")
+        elif verdict == INPUT_MISSING:
+            reasons.append(f"declared input path is not readable by the builder: {path} (not a "
+                           f"file tracked at the checkout HEAD); put the content inline in the "
+                           f"objective instead")
     acceptance = body["acceptance"]
     test_path, argv = acceptance["test_path"], acceptance["test_argv"]
     if not (_path_ok(test_path) and re.search(r"(^|/)test_[^/]+\.py$", test_path)):
@@ -106,11 +380,17 @@ def admission(item: dict) -> list[str]:
     budget = body.get("budget") or {}
     if budget.get("attempts", 1) > MAX_ATTEMPTS or budget.get("wall_clock_minutes", 1) > MAX_WALL_MINUTES:
         reasons.append(f"budget exceeds {MAX_ATTEMPTS} attempts / {MAX_WALL_MINUTES} minutes")
+    if not reasons:  # declared fixtures must match the live files (plan 2026-09-24 d3)
+        try:
+            reasons.extend(check_declared_sources_ship_fixtures(item))
+            reasons.extend(check_fixtures(item))
+        except FixtureCheckError as exc:
+            reasons.append(f"fixture_sources cannot be checked: {exc}")
     if not reasons and not _prechecked(item):  # last, so it never masks an earlier reason
         sha = test_sha256(acceptance["test_content"])
-        reasons.append(f"no green precheck receipt for sha256(test_content) {sha}: run "
+        reasons.append(f"no green precheck receipt for test descriptor (content sha256 {sha}) at this exact checkout HEAD: run "
                        "`python -m orchestrator.nara_lane precheck --test-path P --test-file F --stub S`; "
-                       f"the receipt would be {receipt_path(sha)}")
+                       "the receipt is keyed by test content, argv, and the exact checkout base")
     return reasons
 
 
@@ -125,24 +405,58 @@ def _receipt_dir(root: Path | None = None) -> Path:
     return (Path(root) if root is not None else Path(ROOT)) / "run_state/precheck_receipts"
 
 
-def receipt_path(sha: str, *, root: Path | None = None) -> Path:
-    """The receipt for one exact acceptance-test content, named for its sha256."""
-    return _receipt_dir(root) / f"{sha}.json"
+def _build_base(*, cwd: Path | None = None) -> tuple[str, str]:
+    """Exact commit/tree identity shared by precheck and implementation."""
+    base = _git("rev-parse", "--verify", "HEAD^{commit}", cwd=cwd).strip()
+    return base, _git("rev-parse", "--verify", f"{base}^{{tree}}", cwd=cwd).strip()
 
 
-def _prechecked(item: dict) -> bool:
-    """True when a green precheck receipt covers this exact test content."""
+def _argv_sha256(argv: list[str]) -> str:
+    return hashlib.sha256(json.dumps(argv, separators=(",", ":")).encode()).hexdigest()
+
+
+def _receipt_sha(test_sha: str, test_path: str, argv: list[str], base: str, tree: str) -> str:
+    return hashlib.sha256(json.dumps({"test_sha256": test_sha, "test_path": test_path,
+        "test_argv_sha256": _argv_sha256(argv), "base_sha": base, "base_tree_oid": tree},
+        sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def receipt_path(receipt_sha: str, *, root: Path | None = None) -> Path:
+    """Receipt named by exact test-and-build-base descriptor, not test text alone."""
+    return _receipt_dir(root) / f"{receipt_sha}.json"
+
+
+def _prechecked(item: dict, *, base: tuple[str, str] | None = None) -> bool:
+    """True only when the receipt binds this exact current HEAD and tree."""
     acceptance = item["body"]["acceptance"]
+    try:
+        base_sha, tree_sha = base or _build_base()
+    except (OSError, subprocess.SubprocessError):
+        # A receipt cannot bind a redirected/non-repository root.  This is a
+        # precheck-gate refusal, not a malformed-plan exception.
+        return False
+    test_sha = test_sha256(acceptance["test_content"])
+    expected = _receipt_sha(test_sha, acceptance["test_path"], list(acceptance["test_argv"]), base_sha, tree_sha)
     directory = _receipt_dir()
-    path = directory / f"{test_sha256(acceptance['test_content'])}.json"
+    path = directory / f"{expected}.json"
     if path.is_symlink() or not path.is_file():
         return False
     try:
         body = json.loads(path.read_text())
     except (OSError, ValueError):
         return False
-    return (isinstance(body, dict) and body.get("state") == "green"
-            and body.get("test_sha256") == test_sha256(acceptance["test_content"]) == path.stem)
+    if not isinstance(body, dict):
+        return False
+    # Receipt identity is exact, not ancestor-compatible.  Do not turn an
+    # untrusted receipt field into another Git query: it must be a canonical
+    # SHA-1 commit spelling and then equal the captured base below.
+    if not isinstance(body.get("base_sha"), str) or not re.fullmatch(r"[0-9a-f]{40}", body["base_sha"]):
+        return False
+    return (body.get("schema") == "nara-lane-precheck/v2" and body.get("state") == "green"
+            and body.get("test_sha256") == test_sha and body.get("test_path") == acceptance["test_path"]
+            and body.get("test_argv_sha256") == _argv_sha256(list(acceptance["test_argv"]))
+            and body.get("base_sha") == base_sha and body.get("base_tree_oid") == tree_sha
+            and body.get("receipt_sha256") == expected == path.stem)
 
 
 class PrecheckError(RuntimeError):
@@ -154,19 +468,22 @@ def precheck(test_path: str, test_content: str, test_argv: list[str], *,
              timeout: float = TEST_TIMEOUT_S) -> dict:
     """Run an acceptance test's discrimination claim in the sandbox before posting it.
 
-    Draws a fixture worktree from main, writes the test, and runs it with no
+    Draws a fixture worktree from the captured checkout HEAD, writes the test, and runs it with no
     implementation (must be red) and once per supplied stub (a green stub makes
     the item prechecked). Reports each run's output so a non-discriminating test
-    is diagnosable, and writes run_state/precheck_receipts/<sha256>.json only on
-    a green run. The stub is a fixture for this check only: it is never copied
+    is diagnosable, and writes a receipt named by the test/build-base descriptor
+    under run_state/precheck_receipts/ only on a green run. Its SHA-256 is an
+    integrity/correlation discipline, not authentication. The stub is a fixture
+    for this check only: it is never copied
     into Nara's worktree, which is created fresh by implement().
 
     Two things would otherwise let a green receipt record a claim that was never
     shown, so they are refused here (review claude-c0a841a1831ad8a6): a stub may
     not write the acceptance test - it would overwrite the test whose sha the
     receipt names, so the passing run would not be the posted test - and every
-    stub runs on a worktree reset to main including tracked modifications, so a
-    stub never passes on a previous stub's leftover edit.
+    stub runs on a worktree reset to its captured checkout HEAD, including
+    tracked modifications, so a stub never passes on a previous stub's leftover
+    edit. The reset uses an exact commit, not a symbolic branch.
 
     Raises PrecheckError on an inadmissible test (checked by admission(), not
     reimplemented here), a stub that writes the acceptance test, or a test that is
@@ -194,7 +511,7 @@ def precheck(test_path: str, test_content: str, test_argv: list[str], *,
     if reasons:
         raise PrecheckError("; ".join(reasons))
     sha = test_sha256(test_content)
-    base = _git("rev-parse", "main").strip()
+    base, base_tree = _build_base()
     fixture_root = tempfile.mkdtemp(prefix=f"precheck-{sha[:16]}-", dir=str(_precheck_root()))
     fixture = Path(fixture_root) / "wt"
     try:
@@ -223,14 +540,18 @@ def precheck(test_path: str, test_content: str, test_argv: list[str], *,
             if rc == 0:
                 green = {"stub": sorted(stub), "passed": True, "output": output[-3000:]}
                 break
-        report = {"test_sha256": sha, "test_path": test_path, "base_sha": base, "fixture": str(fixture),
+        receipt_sha = _receipt_sha(sha, test_path, list(test_argv), base, base_tree)
+        report = {"test_sha256": sha, "test_path": test_path, "base_sha": base,
+                  "base_tree_oid": base_tree, "receipt_sha256": receipt_sha, "fixture": str(fixture),
                   "red_run": red, "green_run": green, "green_receipt": None, "runs": runs}
         if green is not None:
-            path = receipt_path(sha)
+            path = receipt_path(receipt_sha)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps({
-                "schema": "nara-lane-precheck/v1", "test_sha256": sha, "test_path": test_path,
-                "state": "green", "stub_paths": green["stub"], "base_sha": base,
+                "schema": "nara-lane-precheck/v2", "test_sha256": sha, "test_path": test_path,
+                "test_argv_sha256": _argv_sha256(list(test_argv)), "state": "green",
+                "stub_paths": green["stub"], "base_sha": base, "base_tree_oid": base_tree,
+                "receipt_sha256": receipt_sha,
                 "prechecked_at": datetime.now(timezone.utc).isoformat(),
                 "note": "a discipline, not authentication: the test author writes this receipt"},
                 indent=2) + "\n")
@@ -255,7 +576,7 @@ def _precheck_root() -> Path:
 
 
 def _reset_fixture(worktree: Path) -> None:
-    """Put the fixture back to exactly `main`, so each stub is checked alone.
+    """Put the fixture back to its captured checkout HEAD, so each stub is checked alone.
 
     Both halves are needed: `reset --hard` reverts edits to tracked files (clean
     does not, so a later stub would otherwise pass on an earlier stub's leftover),
@@ -379,7 +700,8 @@ def _dotgit(worktree: Path) -> bytes:
     return pointer.read_bytes()
 
 
-def builder(body: dict, worktree: Path, feedback: str, timeout: float = 900) -> dict[str, str]:
+def builder(body: dict, worktree: Path, feedback: str, timeout: float = BUILDER_TIMEOUT_S, *,
+            caller_tag: str = "nara_lane_builder") -> dict[str, str]:
     """One local-Flash call proposing full contents for the allowed files."""
     from agent_wrapper.wrapper import call_sync
 
@@ -389,19 +711,44 @@ def builder(body: dict, worktree: Path, feedback: str, timeout: float = 900) -> 
     for path in writable:
         data = _read(worktree, path)
         current[path] = None if data is None else data[:MAX_FILE_BYTES].decode("utf-8", "replace")
+    declared = list(body.get("input_paths") or [])
     prompt = {
         "objective": body["objective"], "title": body["title"], "writable_paths": writable,
         "current_contents": current, "acceptance_test_path": test_path,
         "acceptance_test": body["acceptance"]["test_content"], "last_test_output": feedback[-4000:],
     }
+    system = BUILDER_SYSTEM
+    if declared:
+        # Judged before current_contents is read as truth: a None under a declared input means
+        # "absent", never "an empty file to fill in" (review claude-e347ce59ca643116, seq 165).
+        # cwd is the worktree, because that is where HEAD is read from here: implement()
+        # creates the worktree AT the lane base HEAD, and a process-wide cwd=ROOT would ask
+        # the wrong checkout (review claude-80ce66157b935e62 seq 188 needs the verdict and
+        # the bytes to describe the same tree the builder is looking at).
+        visibility = _input_visibility(declared, writable, cwd=worktree, worktree=worktree)
+        prompt["input_visibility"] = visibility
+        # A PRESENT verdict must ship the bytes. current_contents covers writable paths only,
+        # so a tracked-but-not-writable input used to be announced as PRESENT with no content
+        # beside it - review claude-80ce66157b935e62 (seq 188), amendment 1. Read from the
+        # worktree, which IS the checkout HEAD, and only where the file is really there, so
+        # no bytes are ever claimed for a file that is not present.
+        contents: dict[str, str] = {}
+        for path, verdict in visibility.items():
+            if verdict != INPUT_PRESENT or path in current:
+                continue
+            data = _read(worktree, path)
+            if data is not None:
+                contents[path] = data[:MAX_FILE_BYTES].decode("utf-8", "replace")
+        if contents:
+            prompt["input_contents"] = contents
+        system += (" Paths the objective names as inputs are judged in input_visibility: NOT PRESENT "
+                   "means the file is absent from your worktree - do not copy, quote or invent "
+                   "content for it; report the missing input in your output. PRESENT means its "
+                   "content is given in input_contents or current_contents.")
     record = call_sync(
-        [{"role": "system", "content": (
-            "You are Nara's builder for the lab. Make the acceptance test pass by writing complete file "
-            "contents. Reply with ONLY a JSON object {\"files\": {\"<path>\": \"<full content>\"}} using only "
-            "the writable_paths. Never modify the acceptance test. Standard library only unless the file "
-            "already imports something else.")},
+        [{"role": "system", "content": system},
          {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)}],
-        temperature=0.2, max_tokens=BUILDER_MAX_TOKENS, caller_tag="nara_lane_builder",
+        temperature=0.2, max_tokens=BUILDER_MAX_TOKENS, caller_tag=caller_tag,
         extra_body={"chat_template_kwargs": {"enable_thinking": False}}, request_timeout_s=timeout,
         log_path=os.environ.get("LOOP_V0_CALLS_LOG", str(ROOT / "logs/calls.jsonl")))  # durable provenance
     text = record["completion"]
@@ -422,6 +769,12 @@ def _left(deadline: float, cap: float) -> float:
     return min(cap, max(5.0, deadline - time.monotonic()))
 
 
+def item_budget_s(body: dict) -> int:
+    """An item's wall-clock budget in seconds, as implement() enforces it."""
+    budget = body.get("budget") or {}
+    return 60 * min(budget.get("wall_clock_minutes", MAX_WALL_MINUTES), MAX_WALL_MINUTES)
+
+
 def implement(entry: dict, build=builder, sandbox=sandbox_run) -> dict:
     """Run one admitted item to a terminal receipt body; never raises."""
     item = entry["item"]
@@ -429,7 +782,7 @@ def implement(entry: dict, build=builder, sandbox=sandbox_run) -> dict:
     acceptance = body["acceptance"]
     test_path, argv = acceptance["test_path"], acceptance["test_argv"]
     budget = body.get("budget") or {}
-    deadline = time.monotonic() + 60 * min(budget.get("wall_clock_minutes", MAX_WALL_MINUTES), MAX_WALL_MINUTES)
+    deadline = time.monotonic() + item_budget_s(body)
     attempts_allowed = min(budget.get("attempts", MAX_ATTEMPTS), MAX_ATTEMPTS)
     worktree, branch = WORKTREES / msg_id, f"nara/{msg_id}"
     base_sha = None
@@ -437,8 +790,18 @@ def implement(entry: dict, build=builder, sandbox=sandbox_run) -> dict:
         if worktree.exists():
             return {"state": "failed", "reason": f"worktree already exists: {worktree}"}
         WORKTREES.mkdir(parents=True, exist_ok=True)
-        base_sha = _git("rev-parse", "HEAD").strip()
-        _git("worktree", "add", "-b", branch, str(worktree), base_sha)
+        with _GIT_SERIAL:
+            base_sha, base_tree = _build_base()
+            if not _prechecked(item, base=(base_sha, base_tree)):
+                return {"state": "failed", "reason": "precheck receipt does not bind current checkout HEAD/tree",
+                        "branch": branch, "base_sha": base_sha}
+            _git("worktree", "add", "-b", branch, str(worktree), base_sha)
+            if _build_base() != (base_sha, base_tree):
+                return {"state": "failed", "reason": "checkout HEAD moved during worktree creation",
+                        "branch": branch, "base_sha": base_sha}
+        if _build_base(cwd=worktree) != (base_sha, base_tree):
+            return {"state": "failed", "reason": "worktree does not match captured checkout base",
+                    "branch": branch, "base_sha": base_sha}
         pointer = _dotgit(worktree)
         before = _snapshot(worktree)
         _write(worktree, test_path, acceptance["test_content"])
@@ -450,8 +813,14 @@ def implement(entry: dict, build=builder, sandbox=sandbox_run) -> dict:
         attempts = 0
         while attempts < attempts_allowed and time.monotonic() < deadline:
             attempts += 1
+            if _build_base() != (base_sha, base_tree):
+                return {"state": "failed", "reason": "checkout HEAD moved before builder dispatch",
+                        "branch": branch, "base_sha": base_sha}
             try:
-                files = build(body, worktree, output, timeout=_left(deadline, 900.0))
+                kwargs = {"timeout": _left(deadline, BUILDER_TIMEOUT_S)}
+                if build is builder:  # custom builders keep the historic four-argument seam
+                    kwargs["caller_tag"] = f"nara_lane_builder:{msg_id}"
+                files = build(body, worktree, output, **kwargs)
             except LaneError:
                 raise
             except Exception as exc:  # recorded as feedback for the next attempt
@@ -479,21 +848,34 @@ def implement(entry: dict, build=builder, sandbox=sandbox_run) -> dict:
             return {**result, "state": "failed", "reason": "acceptance test still failing"}
         if _dotgit(worktree) != pointer:
             return {**result, "state": "failed", "reason": "worktree .git pointer changed"}
-        _git("add", "--", *changed, cwd=worktree)
-        _git("-c", "user.name=Nara (lab lane)", "-c", "user.email=nara@lab.local", "commit", "-q", "-m",
-             f"Nara lane: {body['title']}\n\nOracle plan item {msg_id}; validated in the lane sandbox.", cwd=worktree)
+        with _GIT_SERIAL:
+            if _build_base() != (base_sha, base_tree):
+                return {**result, "state": "failed", "reason": "checkout HEAD moved before commit"}
+            _git("add", "--", *changed, cwd=worktree)
+            _git("-c", "user.name=Nara (lab lane)", "-c", "user.email=nara@lab.local", "commit", "-q", "-m",
+                 f"Nara lane: {body['title']}\n\nOracle plan item {msg_id}; validated in the lane sandbox.",
+                 cwd=worktree)
+            # Independent Git writers are outside this lane's mutex.  Detect a
+            # movement in the final commit window before calling the result valid.
+            if _build_base() != (base_sha, base_tree):
+                return {**result, "state": "failed", "reason": "checkout HEAD moved during commit"}
         return {**result, "state": "validated", "head_sha": _git("rev-parse", "HEAD", cwd=worktree).strip()}
     except Exception as exc:
         return {"state": "failed", "reason": f"{type(exc).__name__}: {exc}", "branch": branch, "base_sha": base_sha}
 
 
-def meta_verdict(rows: list[dict], item: dict) -> str:
-    """'accept', 'awaiting', or the latest non-accepting meta-oracle verdict on this item."""
+def _policy() -> dict:
+    """config/nara_lane.json, or {} when missing or unreadable (which requires review)."""
     try:
         policy = json.loads((ROOT / "config/nara_lane.json").read_text())
     except (OSError, ValueError):
         policy = {}
-    policy = policy if isinstance(policy, dict) else {}
+    return policy if isinstance(policy, dict) else {}
+
+
+def meta_verdict(rows: list[dict], item: dict) -> str:
+    """'accept', 'awaiting', or the latest non-accepting meta-oracle verdict on this item."""
+    policy = _policy()
     exempt = policy.get("review_optional_task_classes")
     if policy.get("require_meta_review") is False or (
             isinstance(exempt, list) and item["body"].get("task_class") in exempt):
@@ -504,9 +886,106 @@ def meta_verdict(rows: list[dict], item: dict) -> str:
     return verdicts[-1] if verdicts else "awaiting"
 
 
+def _positive_int(value) -> int | None:
+    return value if type(value) is int and value >= 1 else None
+
+
+def server_slots() -> int:
+    """max_running_requests from config/model_deployment.json; 1 when missing or unreadable."""
+    try:
+        deployment = json.loads((Path(ROOT) / "config/model_deployment.json").read_text())
+    except (OSError, ValueError):
+        return 1
+    return _positive_int(deployment.get("max_running_requests") if isinstance(deployment, dict) else None) or 1
+
+
+def _env_int(name: str) -> int | None:
+    """A positive decimal integer from the environment; None when unset, 0 when malformed."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return None
+    return int(raw) if raw.isascii() and raw.isdigit() else 0
+
+
+def lane_concurrency(requested: int | None = None) -> int:
+    """How many items one run may process at once.
+
+    The request is the argument (the --max-concurrent flag), else the
+    NARA_LANE_MAX_CONCURRENT environment variable, else `max_concurrent_items` in
+    config/nara_lane.json, else 1; anything that is not a positive integer counts
+    as 1. It is then capped at server_slots() - 1 so the lane always leaves the
+    server a slot, and at MAX_CONCURRENT_ITEMS, with a floor of 1 so a
+    single-slot server keeps today's serial lane.
+    """
+    if requested is None:
+        requested = _env_int(CONCURRENCY_ENV)
+    if requested is None:
+        requested = _policy().get("max_concurrent_items", 1)
+    return max(1, min(_positive_int(requested) or 1, server_slots() - 1, MAX_CONCURRENT_ITEMS))
+
+
+def pass_budget_s() -> int:
+    """Seconds one run may spend before it stops claiming: NARA_LANE_PASS_BUDGET_S,
+    else `pass_budget_s` in config/nara_lane.json, else DEFAULT_PASS_BUDGET_S
+    (the service's TimeoutStartSec less a margin). Malformed or oversized values
+    use the default, because a larger budget would let the service cut work off."""
+    value = _env_int(PASS_BUDGET_ENV)
+    if value is None:
+        value = _policy().get("pass_budget_s")
+    return min(_positive_int(value) or DEFAULT_PASS_BUDGET_S, DEFAULT_PASS_BUDGET_S)
+
+
+def _clock() -> float:
+    """The pass clock, separate from implement()'s deadlines so tests can drive it."""
+    return time.monotonic()
+
+
+def _read_mailbox(path: Path) -> list[dict]:
+    """mailbox.read() under a shared hold of the mailbox's own lock (the file
+    oracle_mailbox.post() holds exclusively), so a row being appended is never
+    read half-written."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with (path.parent / ".oracle_nara_mailbox.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_SH)
+        return mailbox.read(path)
+
+
 def _lane_lock_path() -> Path:
-    """The single-writer lock, under run_state/, resolved at call time with ROOT."""
+    """The lane-runner lock, under run_state/, resolved at call time with ROOT.
+    One runner dispatches at a time; items are claimed under _claim_lock_path."""
     return Path(ROOT) / "run_state/.nara_lane.lock"
+
+
+def _claim_lock_path(msg_id: str) -> Path:
+    """The per-item claim lock, named for sha256(msg_id): rows are not
+    schema-checked on read, so a msg_id never becomes a path component here."""
+    return Path(ROOT) / "run_state/nara_lane_claims" / f"{hashlib.sha256(msg_id.encode()).hexdigest()[:32]}.lock"
+
+
+def _claim(path: Path, msg_id: str, expected: str):
+    """The item's claim lock, held, if the item is still in `expected` state when
+    re-read under it; otherwise None. A live claimant holds this lock from before
+    its `claimed` receipt until after its terminal one, so a held lock means the
+    item is in progress and a free lock on a `claimed` item means it was abandoned.
+    flock is per open file, so this excludes other threads as well as processes.
+    Raises MailboxError, with the claim released, when the mailbox is unreadable."""
+    lock_path = _claim_lock_path(msg_id)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = os.fdopen(os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o644), "a")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        handle.close()
+        return None
+    try:
+        current = mailbox.fold(_read_mailbox(path)).get(msg_id)
+    except BaseException:
+        handle.close()
+        raise
+    if current is None or current["state"] != expected:
+        handle.close()
+        return None
+    return handle
 
 
 def _paused() -> bool:
@@ -534,14 +1013,154 @@ def _receipt(path: Path, msg_id: str, body: dict) -> dict:
                             to="oracle", in_reply_to=msg_id, path=path)
 
 
-def run_queue(path: Path | None = None, build=builder, sandbox=sandbox_run, ready=None) -> list[dict]:
-    """Process every open item once; returns the receipts posted."""
+def _open_item(rows: list[dict], item: dict) -> bool:
+    """Whether the current mailbox still has this item open."""
+    current = mailbox.fold(rows).get(item["msg_id"])
+    return current is not None and current["state"] == "open"
+
+
+def _open_with_verdict(rows: list[dict], item: dict, verdicts: set[str]) -> bool:
+    """Whether the current mailbox still has this open item at one of ``verdicts``."""
+    return _open_item(rows, item) and meta_verdict(rows, item) in verdicts
+
+
+def _mailbox_post_if(actor: str, kind: str, body: dict, *, to: str,
+                     in_reply_to: str | None = None, expires_hours: float | None = None,
+                     path: Path, condition) -> dict | None:
+    """Append only when ``condition`` accepts the locked mailbox prefix.
+
+    The live Flash/card base has the durable locked append primitives but not the
+    lane's reviewed public ``post_if`` helper.  Keep the compare-and-append at
+    the Nara boundary rather than splitting it into a read followed by
+    ``mailbox.post()``: that gap would let a review or withdrawal land between
+    the meta-verdict check and a ``claimed``/``held`` receipt.  This is pinned to
+    the exact accepted mailbox base; if that base no longer exposes all three
+    primitives, refuse rather than falling back to a non-atomic append.
+    """
+    required = ("_validate_expires_hours", "_validate_post", "_recover_torn_tail_locked", "_append_locked")
+    if any(not callable(getattr(mailbox, name, None)) for name in required):
+        raise LaneError("mailbox lacks the pinned durable conditional-append primitives")
+    mailbox._validate_expires_hours(expires_hours)
+    mailbox._validate_post(actor, kind, body, to, in_reply_to)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with (path.parent / ".oracle_nara_mailbox.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        mailbox._recover_torn_tail_locked(path)
+        rows = mailbox.read(path)
+        if not condition(rows):
+            return None
+        return mailbox._append_locked(actor, kind, body, to=to, in_reply_to=in_reply_to,
+                                      expires_hours=expires_hours, path=path, rows=rows)
+
+
+def _claim_if_meta_accepts(path: Path, entry: dict) -> dict | None:
+    """Atomically post ``claimed`` only for the mailbox's current accepting review.
+
+    The caller already holds the per-item claim lock.  The conditional append takes the
+    mailbox writer lock, so the review recheck and the claimed append share one
+    mailbox prefix (claim lock -> mailbox lock); a reviewer cannot amend or
+    reject in between them.
+    """
+    item = entry["item"]
+    return _mailbox_post_if("nara", "receipt", {"state": "claimed"}, to="oracle",
+                            in_reply_to=item["msg_id"], path=path,
+                            condition=lambda rows: _open_with_verdict(rows, item, {"accept"}))
+
+
+def _post_held(path: Path, entry: dict, reasons: list[str], verdicts: set[str] | None = None) -> dict | None:
+    """Append ``held`` only while the item remains open, and optionally rejected."""
+    item = entry["item"]
+    return _mailbox_post_if(
+        "nara", "receipt", {"state": "held", "reasons": reasons},
+        to="oracle", in_reply_to=item["msg_id"], path=path,
+        condition=(lambda rows: _open_with_verdict(rows, item, verdicts)) if verdicts else
+        (lambda rows: _open_item(rows, item)),
+    )
+
+
+def _hold_open(path: Path, entry: dict, reasons: list[str], verdicts: set[str] | None = None) -> dict | None:
+    """Claim an open item briefly to append a state-conditional held receipt.
+
+    This covers rejections before a worker claim too: claim lock then mailbox
+    lock prevents a withdrawal during admission from acquiring a stale hold.
+    """
+    claim = _claim(path, entry["item"]["msg_id"], "open")
+    if claim is None:
+        return None
+    try:
+        return _post_held(path, entry, reasons, verdicts)
+    finally:
+        claim.close()
+
+
+def _finish(path: Path, entry: dict, claim, build, sandbox, keep, contain: bool) -> None:
+    """Implement one claimed item and post its terminal receipt, then release the claim.
+
+    contain=False is the serial lane: anything implement() or the receipt raises
+    propagates, exactly as before. contain=True is a pool worker: a crash becomes
+    this item's own `failed` receipt, and a receipt that cannot be posted is
+    logged and left to the next run's abandoned-claim recovery, so one worker's
+    failure never touches another item's receipt.
+    """
+    msg_id = entry["item"]["msg_id"]
+    try:
+        started = time.monotonic()
+        try:
+            outcome = implement(entry, build, sandbox)
+        except BaseException as exc:
+            if not contain:
+                raise
+            outcome = {"state": "failed", "reason": f"lane worker crashed: {type(exc).__name__}: {exc}"}
+        try:
+            keep(_receipt(path, msg_id, outcome))
+        except BaseException as exc:
+            if not contain:
+                raise
+            log(msg_id, "failed", f"terminal receipt not posted: {type(exc).__name__}: {exc}",
+                "terminal receipt posted")
+            return
+        log(msg_id, "completed" if outcome["state"] == "validated" else "failed",
+            json.dumps({k: outcome.get(k) for k in ("state", "reason", "branch", "head_sha", "attempts")}),
+            "validated branch", duration_ms=int((time.monotonic() - started) * 1000))
+    finally:
+        claim.close()
+
+
+def _worker(path: Path, entry: dict, claim, build, sandbox, keep, slots) -> None:
+    try:
+        _finish(path, entry, claim, build, sandbox, keep, contain=True)
+    finally:
+        slots.release()
+
+
+def run_queue(path: Path | None = None, build=builder, sandbox=sandbox_run, ready=None,
+              max_concurrent: int | None = None) -> list[dict]:
+    """Process every open item once; returns the receipts posted, in mailbox order.
+
+    With lane_concurrency() == 1 each item runs to its terminal receipt before
+    the next is examined (the serial lane). Above 1, the dispatcher still
+    examines, admits and claims items one at a time in mailbox order, but hands
+    each claimed item to a pool worker and waits only for a free slot, checking
+    the pause files and Flash readiness again just before each claim.
+
+    At any K, the run stops claiming once the time it has run plus the next
+    item's budget would pass pass_budget_s(), so the service's stop timeout never
+    cuts an item short; unclaimed items stay open for the next run. An unreadable
+    mailbox mid-pass stops claiming as well.
+    """
     if _paused():
         return []
     path = mailbox.PATH if path is None else path  # resolved at call time, like _git's ROOT
     if ready is None:
         from orchestrator.flash_resident import check_ready as ready
     posted = []
+    posted_lock = threading.Lock()
+
+    def keep(receipt: dict) -> None:
+        with posted_lock:
+            posted.append(receipt)
+
+    pass_started, pass_budget = _clock(), pass_budget_s()
     lock_path = _lane_lock_path()
     with lock_path.open("a") as lock:
         try:
@@ -549,45 +1168,129 @@ def run_queue(path: Path | None = None, build=builder, sandbox=sandbox_run, read
         except BlockingIOError:
             return []
         try:
-            rows = mailbox.read(path)
+            rows = _read_mailbox(path)
             entries = sorted(mailbox.fold(rows).values(), key=lambda e: e["item"]["seq"])
         except mailbox.MailboxError as exc:
             log("mailbox", "failed", f"mailbox unreadable: {exc}", "readable mailbox")
             return []
-        for entry in entries:
-            if _paused():
-                break
-            msg_id = entry["item"]["msg_id"]
-            if entry["state"] == "claimed":  # a previous lane process died mid-item
-                posted.append(_receipt(path, msg_id, {"state": "failed", "reason": "lane interrupted; item abandoned"}))
-                continue
-            if entry["state"] != "open":
-                continue
-            try:
-                reasons = admission(entry["item"])
-            except Exception as exc:
-                reasons = [f"malformed plan item: {type(exc).__name__}: {exc}"]
-            if not reasons:
-                verdict = meta_verdict(rows, entry["item"])
-                if verdict == "awaiting":  # stays open; the review row wakes the lane again
-                    log(msg_id, "deferred", "awaiting meta-oracle review", "accepting review")
+        workers = lane_concurrency(max_concurrent)
+        pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="nara-lane-item") if workers > 1 else None
+        slots = threading.BoundedSemaphore(workers)
+        if pool is not None:
+            log("runner", "started", f"max_concurrent_items={workers} server_slots={server_slots()}",
+                "bounded concurrent lane")
+        try:
+            for entry in entries:
+                if _paused():
+                    break
+                msg_id = entry["item"]["msg_id"]
+                if entry["state"] == "claimed":  # a lane process died mid-item, unless its claim is still held
+                    try:
+                        claim = _claim(path, msg_id, "claimed")
+                    except mailbox.MailboxError as exc:
+                        log("mailbox", "failed", f"mailbox unreadable mid-pass: {exc}", "readable mailbox")
+                        break
+                    if claim is None:
+                        continue
+                    with claim:
+                        keep(_receipt(path, msg_id, {"state": "failed", "reason": "lane interrupted; item abandoned"}))
                     continue
-                if verdict != "accept":
-                    reasons = [f"meta-oracle verdict: {verdict}; withdraw and repost"]
-            if reasons:
-                posted.append(_receipt(path, msg_id, {"state": "held", "reasons": reasons}))
-                log(msg_id, "held", "; ".join(reasons), "admissible plan item")
-                continue
-            if not ready():
-                log(msg_id, "deferred", "Flash resident not ready", "Flash ready")
-                break
-            posted.append(_receipt(path, msg_id, {"state": "claimed"}))
-            started = time.monotonic()
-            outcome = implement(entry, build, sandbox)
-            posted.append(_receipt(path, msg_id, outcome))
-            log(msg_id, "completed" if outcome["state"] == "validated" else "failed",
-                json.dumps({k: outcome.get(k) for k in ("state", "reason", "branch", "head_sha", "attempts")}),
-                "validated branch", duration_ms=int((time.monotonic() - started) * 1000))
+                if entry["state"] != "open":
+                    continue
+                try:
+                    reasons = admission(entry["item"])
+                except Exception as exc:
+                    reasons = [f"malformed plan item: {type(exc).__name__}: {exc}"]
+                meta_rejection = False
+                if not reasons:
+                    verdict = meta_verdict(rows, entry["item"])
+                    if verdict == "awaiting":  # stays open; the review row wakes the lane again
+                        log(msg_id, "deferred", "awaiting meta-oracle review", "accepting review")
+                        continue
+                    if verdict != "accept":
+                        reasons = [f"meta-oracle verdict: {verdict}; withdraw and repost"]
+                        meta_rejection = True
+                if reasons:
+                    try:
+                        held = _hold_open(path, entry, reasons, {"amend", "reject"} if meta_rejection else None)
+                    except mailbox.MailboxError as exc:
+                        log("mailbox", "failed", f"mailbox unreadable mid-pass: {exc}", "readable mailbox")
+                        break
+                    if held is not None:
+                        keep(held)
+                        log(msg_id, "held", "; ".join(reasons), "admissible plan item")
+                    else:
+                        log(msg_id, "deferred", "item changed before held receipt", "open item")
+                    continue
+                slots.acquire()  # the serial lane never waits here: its slot is back before the next item
+                handed_off = False
+                try:
+                    if pool is not None and _paused():  # a pause may have landed while waiting for a slot
+                        break
+                    elapsed, budget_s = _clock() - pass_started, item_budget_s(entry["item"]["body"])
+                    if budget_s > pass_budget:
+                        reason = (f"item wall-clock budget {budget_s} s exceeds pass budget {pass_budget} s; "
+                                  "withdraw and repost with a fitting budget")
+                        try:
+                            held = _hold_open(path, entry, [reason])
+                        except mailbox.MailboxError as exc:
+                            log("mailbox", "failed", f"mailbox unreadable mid-pass: {exc}", "readable mailbox")
+                            break
+                        if held is not None:
+                            keep(held)
+                            log(msg_id, "held", reason, "item budget fits the pass")
+                        else:
+                            log(msg_id, "deferred", "item changed before held receipt", "open item")
+                        continue
+                    if elapsed + budget_s > pass_budget:
+                        log(msg_id, "deferred", f"pass budget: {elapsed:.0f} s run + item budget "
+                            f"{budget_s} s > {pass_budget} s", "time left in the pass")
+                        break
+                    if not ready():
+                        log(msg_id, "deferred", "Flash resident not ready", "Flash ready")
+                        break
+                    try:
+                        claim = _claim(path, msg_id, "open")
+                    except mailbox.MailboxError as exc:
+                        log("mailbox", "failed", f"mailbox unreadable mid-pass: {exc}", "readable mailbox")
+                        break
+                    if claim is None:  # withdrawn, expired or claimed elsewhere since the fold was read
+                        continue
+                    try:
+                        claimed = _claim_if_meta_accepts(path, entry)
+                    except BaseException:
+                        claim.close()
+                        raise
+                    if claimed is None:
+                        try:
+                            held = _post_held(path, entry,
+                                              ["meta-oracle verdict changed before claim; withdraw and repost"],
+                                              {"amend", "reject"})
+                        except BaseException:
+                            claim.close()
+                            raise
+                        if held is not None:
+                            keep(held)
+                            log(msg_id, "held", "meta-oracle verdict changed before claim", "accepting review")
+                        else:
+                            log(msg_id, "deferred", "meta-oracle review changed or item closed before claim",
+                                "accepting review")
+                        claim.close()
+                        continue
+                    keep(claimed)
+                    if pool is None:
+                        _finish(path, entry, claim, build, sandbox, keep, contain=False)
+                    else:
+                        pool.submit(_worker, path, entry, claim, build, sandbox, keep, slots)
+                        handed_off = True
+                finally:
+                    if not handed_off:
+                        slots.release()
+        finally:
+            if pool is not None:
+                pool.shutdown(wait=True)  # the runner lock is held until every worker has posted
+    if pool is not None:
+        posted.sort(key=lambda row: row["seq"])
     return posted
 
 
@@ -606,6 +1309,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--stub", action="append", default=[], type=Path,
                         help="precheck: a JSON file mapping repo path -> known-good content (repeatable)")
     parser.add_argument("--argv", help="precheck: JSON list, the test command (default: python -m pytest -q TEST)")
+    parser.add_argument("--max-concurrent", type=int,
+                        help=f"run: items processed at once (default: ${CONCURRENCY_ENV}, else "
+                             "config/nara_lane.json max_concurrent_items, else 1; capped at the server's "
+                             "max_running_requests - 1)")
     args = parser.parse_args(argv)
     if args.command == "status":
         view = {k: {"title": v["item"]["body"]["title"], "state": v["state"]}
@@ -626,7 +1333,7 @@ def main(argv: list[str] | None = None) -> int:
                           ("test_sha256", "test_path", "base_sha", "red_run", "green_run", "green_receipt")},
                          indent=2))
         return 0 if report["green_run"] else 1
-    for receipt in run_queue():
+    for receipt in run_queue(max_concurrent=args.max_concurrent):
         print(json.dumps({"re": receipt["in_reply_to"], "state": receipt["body"]["state"],
                           "reason": receipt["body"].get("reason") or receipt["body"].get("reasons")}))
     return 0
